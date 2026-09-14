@@ -1,0 +1,482 @@
+{
+  "revision": "511172b786248e29d7493bf954faa57f834dc5b3",
+  "wrapper": "#!/usr/bin/env python3\n# Copyright 2026 The Chromium Authors\n# Use of this source code is governed by a BSD-style license that can be\n# found in the LICENSE file.\nfrom os import path as os_path\nimport platform\nimport subprocess\nimport sys\nimport os\n\n\ndef GetBinaryPath():\n    if platform.machine() == 'arm64':\n        darwin_path = 'mac-arm64'\n    else:\n        darwin_path = 'mac-amd64'\n\n    relative = {\n        'Darwin': (darwin_path, 'src', 'lib', 'tsc'),\n        'Linux': ('linux-amd64', 'src', 'lib', 'tsc'),\n        'Windows': ('windows-amd64', 'src', 'lib', 'tsc.exe'),\n    }[platform.system()]\n\n    devtools_checkout_path = os_path.join(os_path.dirname(__file__), *relative)\n    if os_path.exists(devtools_checkout_path):\n        return os_path.normpath(devtools_checkout_path)\n\n    # Assume we are in a chromium checkout.\n    return os_path.normpath(\n        os_path.join(os_path.dirname(__file__), '..', '..', '..', '..',\n                     'typescript', *relative))\n\n\ndef RunTypeScriptRaw(cmd_parts, stdout=None):\n    cmd = [GetBinaryPath()] + cmd_parts\n    process = subprocess.Popen(cmd,\n                               cwd=os.getcwd(),\n                               stdout=subprocess.PIPE,\n                               stderr=subprocess.PIPE,\n                               universal_newlines=True,\n                               encoding='utf-8')\n    stdout, stderr = process.communicate()\n    return process.returncode, stdout, stderr\n\n\ndef RunTypeScript(cmd_parts, stdout=None):\n    code, stdout, stderr = RunTypeScriptRaw(cmd_parts, stdout)\n    if code != 0:\n        errs = []\n        if len(stderr) > 0:\n            errs.append(\"stderr:\\n\" + stderr)\n        if len(stdout) > 0:\n            # Handle cases where stderr is empty, even though the command failed, for\n            # example https://github.com/microsoft/TypeScript/issues/615\n            errs.append(\"stdout:\\n\" + stdout)\n        errs.append(\"exit=%d\" % code)\n        cmd = [GetBinaryPath()] + cmd_parts\n        raise RuntimeError('Command \\'%s\\' failed\\n%s' %\n                           (' '.join(cmd), '\\n'.join(errs)))\n    return stdout\n\n\nif __name__ == '__main__':\n    RunTypeScript(sys.argv[1:])\n",
+  "package": "{\n  \"name\": \"typescript\",\n  \"author\": \"Microsoft Corp.\",\n  \"homepage\": \"https://www.typescriptlang.org/\",\n  \"version\": \"6.0.2\",\n  \"license\": \"Apache-2.0\",\n  \"description\": \"TypeScript is a language for application scale JavaScript development\",\n  \"keywords\": [\n    \"TypeScript\",\n    \"Microsoft\",\n    \"compiler\",\n    \"language\",\n    \"javascript\"\n  ],\n  \"bugs\": {\n    \"url\": \"https://github.com/microsoft/TypeScript/issues\"\n  },\n  \"repository\": {\n    \"type\": \"git\",\n    \"url\": \"https://github.com/microsoft/TypeScript.git\"\n  },\n  \"main\": \"./lib/typescript.js\",\n  \"typings\": \"./lib/typescript.d.ts\",\n  \"bin\": {\n    \"tsc\": \"./bin/tsc\",\n    \"tsserver\": \"./bin/tsserver\"\n  },\n  \"engines\": {\n    \"node\": \">=14.17\"\n  },\n  \"files\": [\n    \"bin\",\n    \"lib\",\n    \"!lib/enu\",\n    \"LICENSE.txt\",\n    \"README.md\",\n    \"SECURITY.md\",\n    \"ThirdPartyNoticeText.txt\",\n    \"!**/.gitattributes\"\n  ],\n  \"devDependencies\": {\n    \"@dprint/formatter\": \"^0.4.1\",\n    \"@dprint/typescript\": \"0.93.4\",\n    \"@esfx/canceltoken\": \"^1.0.0\",\n    \"@eslint/js\": \"^10.0.1\",\n    \"@octokit/rest\": \"^22.0.1\",\n    \"@types/chai\": \"^4.3.20\",\n    \"@types/minimist\": \"^1.2.5\",\n    \"@types/mocha\": \"^10.0.10\",\n    \"@types/ms\": \"^2.1.0\",\n    \"@types/node\": \"latest\",\n    \"@types/source-map-support\": \"^0.5.10\",\n    \"@types/which\": \"^3.0.4\",\n    \"@typescript-eslint/rule-tester\": \"^8.56.1\",\n    \"@typescript-eslint/type-utils\": \"^8.56.1\",\n    \"@typescript-eslint/utils\": \"^8.56.1\",\n    \"azure-devops-node-api\": \"^15.1.3\",\n    \"c8\": \"^10.1.3\",\n    \"chai\": \"^4.5.0\",\n    \"chokidar\": \"^4.0.3\",\n    \"diff\": \"^8.0.3\",\n    \"dprint\": \"^0.49.1\",\n    \"esbuild\": \"^0.27.3\",\n    \"eslint\": \"^10.0.2\",\n    \"eslint-plugin-regexp\": \"^3.0.0\",\n    \"fast-xml-parser\": \"^5.4.1\",\n    \"glob\": \"^10.5.0\",\n    \"globals\": \"^17.4.0\",\n    \"hereby\": \"^1.12.0\",\n    \"jsonc-parser\": \"^3.3.1\",\n    \"knip\": \"^5.85.0\",\n    \"minimist\": \"^1.2.8\",\n    \"mocha\": \"^10.8.2\",\n    \"mocha-fivemat-progress-reporter\": \"^0.1.0\",\n    \"monocart-coverage-reports\": \"^2.12.9\",\n    \"ms\": \"^2.1.3\",\n    \"picocolors\": \"^1.1.1\",\n    \"playwright\": \"^1.58.2\",\n    \"source-map-support\": \"^0.5.21\",\n    \"tslib\": \"^2.8.1\",\n    \"typescript\": \"^5.9.3\",\n    \"typescript-eslint\": \"^8.56.1\",\n    \"which\": \"^3.0.1\"\n  },\n  \"overrides\": {\n    \"typescript@*\": \"$typescript\"\n  },\n  \"scripts\": {\n    \"test\": \"hereby runtests-parallel --light=false\",\n    \"test:eslint-rules\": \"hereby run-eslint-rules-tests\",\n    \"build\": \"npm run build:compiler && npm run build:tests\",\n    \"build:compiler\": \"hereby local\",\n    \"build:tests\": \"hereby tests\",\n    \"build:tests:notypecheck\": \"hereby tests --no-typecheck\",\n    \"clean\": \"hereby clean\",\n    \"gulp\": \"hereby\",\n    \"lint\": \"hereby lint\",\n    \"knip\": \"hereby knip\",\n    \"format\": \"dprint fmt\",\n    \"setup-hooks\": \"node scripts/link-hooks.mjs\"\n  },\n  \"browser\": {\n    \"fs\": false,\n    \"os\": false,\n    \"path\": false,\n    \"crypto\": false,\n    \"buffer\": false,\n    \"source-map-support\": false,\n    \"inspector\": false,\n    \"perf_hooks\": false\n  },\n  \"packageManager\": \"npm@8.19.4\",\n  \"volta\": {\n    \"node\": \"22.22.0\",\n    \"npm\": \"8.19.4\"\n  },\n  \"gitHead\": \"607a22a90d1a5a1b507ce01bb8cd7ec020f954e7\"\n}\n",
+  "shim": "// This file is a shim which defers loading the real module until the compile cache is enabled.\ntry {\n  const { enableCompileCache } = require(\"node:module\");\n  if (enableCompileCache) {\n    enableCompileCache();\n  }\n} catch {}\nmodule.exports = require(\"./_tsc.js\");\n",
+  "libraries": [
+    "lib.d.ts",
+    "lib.decorators.d.ts",
+    "lib.decorators.legacy.d.ts",
+    "lib.dom.asynciterable.d.ts",
+    "lib.dom.d.ts",
+    "lib.dom.iterable.d.ts",
+    "lib.es2015.collection.d.ts",
+    "lib.es2015.core.d.ts",
+    "lib.es2015.d.ts",
+    "lib.es2015.generator.d.ts",
+    "lib.es2015.iterable.d.ts",
+    "lib.es2015.promise.d.ts",
+    "lib.es2015.proxy.d.ts",
+    "lib.es2015.reflect.d.ts",
+    "lib.es2015.symbol.d.ts",
+    "lib.es2015.symbol.wellknown.d.ts",
+    "lib.es2016.array.include.d.ts",
+    "lib.es2016.d.ts",
+    "lib.es2016.full.d.ts",
+    "lib.es2016.intl.d.ts",
+    "lib.es2017.arraybuffer.d.ts",
+    "lib.es2017.d.ts",
+    "lib.es2017.date.d.ts",
+    "lib.es2017.full.d.ts",
+    "lib.es2017.intl.d.ts",
+    "lib.es2017.object.d.ts",
+    "lib.es2017.sharedmemory.d.ts",
+    "lib.es2017.string.d.ts",
+    "lib.es2017.typedarrays.d.ts",
+    "lib.es2018.asyncgenerator.d.ts",
+    "lib.es2018.asynciterable.d.ts",
+    "lib.es2018.d.ts",
+    "lib.es2018.full.d.ts",
+    "lib.es2018.intl.d.ts",
+    "lib.es2018.promise.d.ts",
+    "lib.es2018.regexp.d.ts",
+    "lib.es2019.array.d.ts",
+    "lib.es2019.d.ts",
+    "lib.es2019.full.d.ts",
+    "lib.es2019.intl.d.ts",
+    "lib.es2019.object.d.ts",
+    "lib.es2019.string.d.ts",
+    "lib.es2019.symbol.d.ts",
+    "lib.es2020.bigint.d.ts",
+    "lib.es2020.d.ts",
+    "lib.es2020.date.d.ts",
+    "lib.es2020.full.d.ts",
+    "lib.es2020.intl.d.ts",
+    "lib.es2020.number.d.ts",
+    "lib.es2020.promise.d.ts",
+    "lib.es2020.sharedmemory.d.ts",
+    "lib.es2020.string.d.ts",
+    "lib.es2020.symbol.wellknown.d.ts",
+    "lib.es2021.d.ts",
+    "lib.es2021.full.d.ts",
+    "lib.es2021.intl.d.ts",
+    "lib.es2021.promise.d.ts",
+    "lib.es2021.string.d.ts",
+    "lib.es2021.weakref.d.ts",
+    "lib.es2022.array.d.ts",
+    "lib.es2022.d.ts",
+    "lib.es2022.error.d.ts",
+    "lib.es2022.full.d.ts",
+    "lib.es2022.intl.d.ts",
+    "lib.es2022.object.d.ts",
+    "lib.es2022.regexp.d.ts",
+    "lib.es2022.string.d.ts",
+    "lib.es2023.array.d.ts",
+    "lib.es2023.collection.d.ts",
+    "lib.es2023.d.ts",
+    "lib.es2023.full.d.ts",
+    "lib.es2023.intl.d.ts",
+    "lib.es2024.arraybuffer.d.ts",
+    "lib.es2024.collection.d.ts",
+    "lib.es2024.d.ts",
+    "lib.es2024.full.d.ts",
+    "lib.es2024.object.d.ts",
+    "lib.es2024.promise.d.ts",
+    "lib.es2024.regexp.d.ts",
+    "lib.es2024.sharedmemory.d.ts",
+    "lib.es2024.string.d.ts",
+    "lib.es2025.collection.d.ts",
+    "lib.es2025.d.ts",
+    "lib.es2025.float16.d.ts",
+    "lib.es2025.full.d.ts",
+    "lib.es2025.intl.d.ts",
+    "lib.es2025.iterator.d.ts",
+    "lib.es2025.promise.d.ts",
+    "lib.es2025.regexp.d.ts",
+    "lib.es5.d.ts",
+    "lib.es6.d.ts",
+    "lib.esnext.array.d.ts",
+    "lib.esnext.collection.d.ts",
+    "lib.esnext.d.ts",
+    "lib.esnext.date.d.ts",
+    "lib.esnext.decorators.d.ts",
+    "lib.esnext.disposable.d.ts",
+    "lib.esnext.error.d.ts",
+    "lib.esnext.full.d.ts",
+    "lib.esnext.intl.d.ts",
+    "lib.esnext.sharedmemory.d.ts",
+    "lib.esnext.temporal.d.ts",
+    "lib.esnext.typedarrays.d.ts",
+    "lib.scripthost.d.ts",
+    "lib.webworker.asynciterable.d.ts",
+    "lib.webworker.d.ts",
+    "lib.webworker.importscripts.d.ts",
+    "lib.webworker.iterable.d.ts"
+  ],
+  "library_references": {
+    "lib.es2015.collection.d.ts": [],
+    "lib.es2021.d.ts": [
+      "es2020",
+      "es2021.promise",
+      "es2021.string",
+      "es2021.weakref",
+      "es2021.intl"
+    ],
+    "lib.es2025.iterator.d.ts": [
+      "es2015.iterable"
+    ],
+    "lib.es2016.d.ts": [
+      "es2015",
+      "es2016.array.include",
+      "es2016.intl"
+    ],
+    "lib.es6.d.ts": [
+      "es2015",
+      "dom",
+      "dom.iterable",
+      "webworker.importscripts",
+      "scripthost"
+    ],
+    "lib.es2020.symbol.wellknown.d.ts": [
+      "es2015.iterable",
+      "es2015.symbol"
+    ],
+    "lib.esnext.typedarrays.d.ts": [],
+    "lib.es2015.d.ts": [
+      "es5",
+      "es2015.core",
+      "es2015.collection",
+      "es2015.iterable",
+      "es2015.generator",
+      "es2015.promise",
+      "es2015.proxy",
+      "es2015.reflect",
+      "es2015.symbol",
+      "es2015.symbol.wellknown"
+    ],
+    "lib.es2019.d.ts": [
+      "es2018",
+      "es2019.array",
+      "es2019.object",
+      "es2019.string",
+      "es2019.symbol",
+      "es2019.intl"
+    ],
+    "lib.es2019.object.d.ts": [
+      "es2015.iterable"
+    ],
+    "lib.es2017.intl.d.ts": [],
+    "lib.es2018.regexp.d.ts": [],
+    "lib.es2015.symbol.wellknown.d.ts": [
+      "es2015.symbol"
+    ],
+    "lib.esnext.temporal.d.ts": [
+      "es2015.symbol.wellknown",
+      "es2020.intl",
+      "es2025.intl"
+    ],
+    "lib.es2022.full.d.ts": [
+      "es2022",
+      "dom",
+      "webworker.importscripts",
+      "scripthost",
+      "dom.iterable",
+      "dom.asynciterable"
+    ],
+    "lib.es2018.full.d.ts": [
+      "es2018",
+      "dom",
+      "webworker.importscripts",
+      "scripthost",
+      "dom.iterable",
+      "dom.asynciterable"
+    ],
+    "lib.es2023.array.d.ts": [],
+    "lib.decorators.legacy.d.ts": [],
+    "lib.es2016.intl.d.ts": [],
+    "lib.es2016.array.include.d.ts": [],
+    "lib.es2017.string.d.ts": [],
+    "lib.es2024.promise.d.ts": [],
+    "lib.es2021.string.d.ts": [],
+    "lib.es2023.intl.d.ts": [],
+    "lib.es2018.asynciterable.d.ts": [
+      "es2015.symbol",
+      "es2015.iterable"
+    ],
+    "lib.dom.iterable.d.ts": [],
+    "lib.es2018.promise.d.ts": [],
+    "lib.es2021.promise.d.ts": [],
+    "lib.es2025.full.d.ts": [
+      "es2025",
+      "dom",
+      "webworker.importscripts",
+      "scripthost",
+      "dom.iterable",
+      "dom.asynciterable"
+    ],
+    "lib.esnext.intl.d.ts": [
+      "esnext.temporal"
+    ],
+    "lib.es2019.string.d.ts": [],
+    "lib.esnext.collection.d.ts": [
+      "es2025.collection"
+    ],
+    "lib.es2019.symbol.d.ts": [],
+    "lib.webworker.asynciterable.d.ts": [],
+    "lib.es2024.string.d.ts": [],
+    "lib.es2025.promise.d.ts": [],
+    "lib.es2015.core.d.ts": [],
+    "lib.webworker.importscripts.d.ts": [],
+    "lib.es2017.full.d.ts": [
+      "es2017",
+      "dom",
+      "webworker.importscripts",
+      "scripthost",
+      "dom.iterable"
+    ],
+    "lib.esnext.disposable.d.ts": [
+      "es2015.symbol",
+      "es2015.iterable",
+      "es2018.asynciterable"
+    ],
+    "lib.es2020.d.ts": [
+      "es2019",
+      "es2020.bigint",
+      "es2020.date",
+      "es2020.number",
+      "es2020.promise",
+      "es2020.sharedmemory",
+      "es2020.string",
+      "es2020.symbol.wellknown",
+      "es2020.intl"
+    ],
+    "lib.es2017.arraybuffer.d.ts": [],
+    "lib.es2017.typedarrays.d.ts": [],
+    "lib.es2024.sharedmemory.d.ts": [
+      "es2020.bigint"
+    ],
+    "lib.es2022.string.d.ts": [],
+    "lib.es2024.arraybuffer.d.ts": [],
+    "lib.es2023.d.ts": [
+      "es2022",
+      "es2023.array",
+      "es2023.collection",
+      "es2023.intl"
+    ],
+    "lib.es2018.intl.d.ts": [],
+    "lib.esnext.d.ts": [
+      "es2025",
+      "esnext.intl",
+      "esnext.collection",
+      "esnext.decorators",
+      "esnext.disposable",
+      "esnext.array",
+      "esnext.error",
+      "esnext.sharedmemory",
+      "esnext.typedarrays",
+      "esnext.temporal",
+      "esnext.date"
+    ],
+    "lib.es2022.intl.d.ts": [],
+    "lib.es2025.regexp.d.ts": [],
+    "lib.es2022.object.d.ts": [],
+    "lib.es2018.asyncgenerator.d.ts": [
+      "es2018.asynciterable"
+    ],
+    "lib.es2023.full.d.ts": [
+      "es2023",
+      "dom",
+      "webworker.importscripts",
+      "scripthost",
+      "dom.iterable",
+      "dom.asynciterable"
+    ],
+    "lib.esnext.full.d.ts": [
+      "esnext",
+      "dom",
+      "webworker.importscripts",
+      "scripthost",
+      "dom.iterable",
+      "dom.asynciterable"
+    ],
+    "lib.esnext.date.d.ts": [
+      "esnext.temporal"
+    ],
+    "lib.es2022.error.d.ts": [
+      "es2021.promise"
+    ],
+    "lib.es2020.date.d.ts": [
+      "es2020.intl"
+    ],
+    "lib.es2015.symbol.d.ts": [],
+    "lib.es2017.d.ts": [
+      "es2016",
+      "es2017.arraybuffer",
+      "es2017.date",
+      "es2017.intl",
+      "es2017.object",
+      "es2017.sharedmemory",
+      "es2017.string",
+      "es2017.typedarrays"
+    ],
+    "lib.es2017.object.d.ts": [],
+    "lib.scripthost.d.ts": [],
+    "lib.webworker.iterable.d.ts": [],
+    "lib.es2018.d.ts": [
+      "es2017",
+      "es2018.asynciterable",
+      "es2018.asyncgenerator",
+      "es2018.promise",
+      "es2018.regexp",
+      "es2018.intl"
+    ],
+    "lib.es2017.date.d.ts": [],
+    "lib.es2015.reflect.d.ts": [],
+    "lib.esnext.sharedmemory.d.ts": [],
+    "lib.dom.asynciterable.d.ts": [],
+    "lib.es2025.d.ts": [
+      "es2024",
+      "es2025.collection",
+      "es2025.float16",
+      "es2025.intl",
+      "es2025.iterator",
+      "es2025.promise",
+      "es2025.regexp"
+    ],
+    "lib.es2019.intl.d.ts": [],
+    "lib.es5.d.ts": [
+      "decorators",
+      "decorators.legacy"
+    ],
+    "lib.es2015.generator.d.ts": [
+      "es2015.iterable"
+    ],
+    "lib.es2021.weakref.d.ts": [
+      "es2015.symbol.wellknown"
+    ],
+    "lib.esnext.decorators.d.ts": [
+      "es2015.symbol",
+      "decorators"
+    ],
+    "lib.es2023.collection.d.ts": [],
+    "lib.es2015.iterable.d.ts": [
+      "es2015.symbol"
+    ],
+    "lib.es2015.proxy.d.ts": [],
+    "lib.esnext.error.d.ts": [],
+    "lib.es2025.float16.d.ts": [
+      "es2015.symbol",
+      "es2015.iterable"
+    ],
+    "lib.es2025.intl.d.ts": [
+      "es2018.intl"
+    ],
+    "lib.es2020.sharedmemory.d.ts": [
+      "es2020.bigint"
+    ],
+    "lib.es2019.full.d.ts": [
+      "es2019",
+      "dom",
+      "webworker.importscripts",
+      "scripthost",
+      "dom.iterable",
+      "dom.asynciterable"
+    ],
+    "lib.es2024.d.ts": [
+      "es2023",
+      "es2024.arraybuffer",
+      "es2024.collection",
+      "es2024.object",
+      "es2024.promise",
+      "es2024.regexp",
+      "es2024.sharedmemory",
+      "es2024.string"
+    ],
+    "lib.d.ts": [
+      "es5",
+      "dom",
+      "webworker.importscripts",
+      "scripthost"
+    ],
+    "lib.decorators.d.ts": [],
+    "lib.es2022.array.d.ts": [],
+    "lib.es2015.promise.d.ts": [],
+    "lib.es2024.collection.d.ts": [],
+    "lib.es2024.object.d.ts": [],
+    "lib.dom.d.ts": [
+      "es2015",
+      "es2018.asynciterable"
+    ],
+    "lib.es2019.array.d.ts": [],
+    "lib.webworker.d.ts": [
+      "es2015",
+      "es2018.asynciterable"
+    ],
+    "lib.es2020.intl.d.ts": [
+      "es2018.intl"
+    ],
+    "lib.es2017.sharedmemory.d.ts": [
+      "es2015.symbol",
+      "es2015.symbol.wellknown"
+    ],
+    "lib.es2016.full.d.ts": [
+      "es2016",
+      "dom",
+      "webworker.importscripts",
+      "scripthost",
+      "dom.iterable"
+    ],
+    "lib.es2021.intl.d.ts": [],
+    "lib.es2022.regexp.d.ts": [],
+    "lib.es2020.bigint.d.ts": [
+      "es2020.intl"
+    ],
+    "lib.es2021.full.d.ts": [
+      "es2021",
+      "dom",
+      "webworker.importscripts",
+      "scripthost",
+      "dom.iterable",
+      "dom.asynciterable"
+    ],
+    "lib.es2022.d.ts": [
+      "es2021",
+      "es2022.array",
+      "es2022.error",
+      "es2022.intl",
+      "es2022.object",
+      "es2022.regexp",
+      "es2022.string"
+    ],
+    "lib.es2020.number.d.ts": [
+      "es2020.intl"
+    ],
+    "lib.es2020.string.d.ts": [
+      "es2015.iterable",
+      "es2020.intl",
+      "es2020.symbol.wellknown"
+    ],
+    "lib.es2025.collection.d.ts": [
+      "es2024.collection"
+    ],
+    "lib.es2024.full.d.ts": [
+      "es2024",
+      "dom",
+      "webworker.importscripts",
+      "scripthost",
+      "dom.iterable",
+      "dom.asynciterable"
+    ],
+    "lib.es2024.regexp.d.ts": [],
+    "lib.es2020.full.d.ts": [
+      "es2020",
+      "dom",
+      "webworker.importscripts",
+      "scripthost",
+      "dom.iterable",
+      "dom.asynciterable"
+    ],
+    "lib.es2020.promise.d.ts": [],
+    "lib.esnext.array.d.ts": []
+  }
+}

@@ -91,6 +91,9 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                 path.rename(destination)
                 path.symlink_to(Path("..") / name / "bin" / name)
             self.write(rust / "version", "1.91.0-nightly (2026-06-16)")
+        if platform == "linux":
+            from tools.tests.test_linux_typescript import install_typescript_fixture
+            install_typescript_fixture(self.src)
         return receipt
 
     def deps(self, records):
@@ -110,8 +113,9 @@ class PrepareRestoredBuildTest(unittest.TestCase):
     def native_context(self, platform="macos", arch="arm64"):
         stack = ExitStack()
         stack.enter_context(mock.patch.object(prepare, "host_identity", return_value=(platform, arch)))
-        stack.enter_context(mock.patch.object(prepare.subprocess, "run", return_value=mock.Mock(
-            returncode=0, stdout="thirdparty LLVM 23 / rustc nightly")))
+        stack.enter_context(mock.patch.object(prepare.subprocess, "run", side_effect=lambda command, **kwargs: mock.Mock(
+            returncode=0, stdout="Version 6.0.2" if str(command[1]).endswith("/lib/tsc.js")
+            else "thirdparty LLVM 23 / rustc nightly")))
         stack.enter_context(mock.patch.object(prepare, "environment_identity", return_value={
             "host": [platform, arch], "release": "fixture", "version": "fixture",
             "environment": {"ImageOS": "macos15", "ImageVersion": "1"},
