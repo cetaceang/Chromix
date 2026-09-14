@@ -72,6 +72,8 @@ on:
       - 'sdk/python/pyproject.toml'
       - '.github/workflows/build-linux-x64.yml'
       - '.github/workflows/build-posix-github.yml'
+      - 'tools/platform_pins.py'
+      - 'CHROMIUM_LINUX_VERSION'
       - 'CHROMIUM_VERSION'
       - 'UNGOOGLED_VERSION'
 

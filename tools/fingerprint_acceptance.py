@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 
+from platform_pins import load_pins
 from fingerprint_smoke import binary_identity, sha256_file
 from fingerprint_subprocess import run_command
 from verify_patch_stack import load_stack
@@ -311,13 +312,20 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--browser', type=Path, required=True)
     parser.add_argument('--expected-sha256', required=True)
-    parser.add_argument('--expected-version', default=(REPO / 'CHROMIUM_VERSION').read_text().strip())
+    parser.add_argument('--expected-version', help='expected browser version (default: platform repository pin)')
     parser.add_argument('--source-report', type=Path)
     parser.add_argument('--source-root', type=Path)
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--suite-timeout', type=int, default=240)
     parser.add_argument('--control', action='store_true', help='calibration only; can never pass the CI build gate')
     args = parser.parse_args(argv)
+    if args.expected_version is None:
+        try:
+            platform = {'linux': 'linux', 'win32': 'windows', 'darwin': 'macos'}.get(sys.platform)
+            args.expected_version = (load_pins(REPO, platform)['ChromiumVersion'] if platform
+                                     else (REPO / 'CHROMIUM_VERSION').read_text().strip())
+        except (OSError, ValueError) as exc:
+            parser.error(str(exc))
     if (not re.fullmatch('[0-9a-fA-F]{64}', args.expected_sha256) or
             not re.fullmatch(r'[0-9]+(?:\.[0-9]+){3}', args.expected_version) or not 30 <= args.suite_timeout <= 1800):
         parser.error('supply an executable hash, full version and timeout in [30, 1800] seconds')

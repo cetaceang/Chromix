@@ -20,8 +20,12 @@ import tempfile
 from pathlib import Path
 
 try:
+    from .fetch_upstream_cache import CacheMiss, load_manifest
+    from .platform_pins import PinError, load_pins
     from .upstream_script_identity import ScriptIdentity
 except ImportError:
+    from fetch_upstream_cache import CacheMiss, load_manifest
+    from platform_pins import PinError, load_pins
     from upstream_script_identity import ScriptIdentity
 
 REPO = Path(__file__).resolve().parents[1]
@@ -161,24 +165,33 @@ def expected_versions(src: Path) -> dict:
 
 
 def repository_identity(repo: Path, platform: str, arch: str) -> tuple[dict, dict]:
-    pins = dict(re.findall(r'^\s*(\w+) = "([^"\n]+)"',
-                          (repo / "build/ungoogled-revisions.psd1").read_text(), re.M))
+    try:
+        pins = load_pins(repo, platform)
+        global_pins = load_pins(repo, "macos")
+    except PinError as exc:
+        raise Miss(str(exc)) from exc
     manifest = read_json(repo / "build/upstream-cache.json")
     if manifest.get("schema_version") != 1:
         raise Miss("unsupported pinned cache manifest schema")
     source = manifest["sources"][platform]
-    artifact = source["artifacts"][arch]
     expected = {
         "chromium_version": pins["ChromiumVersion"],
         "ungoogled_commit": pins["UngoogledCommit"],
         "head_sha": pins[f"Ungoogled{PLATFORM_KEYS[platform]}Commit"],
     }
-    if (repo / "CHROMIUM_VERSION").read_text().strip() != expected["chromium_version"]:
-        raise Miss("repository Chromium version pins disagree")
-    if any(manifest.get(key) != expected[key] for key in ("chromium_version", "ungoogled_commit")):
+    if any(manifest.get(key) != global_pins[pin] for key, pin in (
+            ("chromium_version", "ChromiumVersion"), ("ungoogled_commit", "UngoogledCommit"))):
+        raise Miss("cache manifest global identity does not match repository pins")
+    if any(source.get(key, manifest.get(key)) != expected[key]
+           for key in ("chromium_version", "ungoogled_commit")):
         raise Miss("cache manifest does not match repository pins")
     if source.get("head_sha") != expected["head_sha"]:
         raise Miss("cache manifest platform commit does not match repository pins")
+    try:
+        pin, _ = load_manifest(platform, arch, root=repo)
+    except CacheMiss as exc:
+        raise Miss(f"invalid pinned cache manifest: {exc}") from exc
+    artifact = pin["artifact"]
     identity = dict(expected, platform=platform, arch=arch)
     for key in ("repository", "repository_id", "head_branch", "event", "workflow_path", "run_id"):
         identity[key] = source[key]

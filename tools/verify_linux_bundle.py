@@ -17,10 +17,15 @@ import sys
 import tempfile
 import time
 
+try:
+    from .platform_pins import load_pins
+except ImportError:
+    from platform_pins import load_pins
+
 MACHINES = {"x64": 62, "arm64": 183}
 REQUIRED_EXECUTABLES = ("chromix", "chrome", "chrome_crashpad_handler", "chrome-sandbox")
 REQUIRED_ELF = REQUIRED_EXECUTABLES[1:]
-VERSION_FILE = Path(__file__).resolve().parents[1] / "CHROMIUM_VERSION"
+REPO = Path(__file__).resolve().parents[1]
 VERSION_TIMEOUT = 30
 DOM_TIMEOUT = 60
 KILL_TIMEOUT = 5
@@ -199,7 +204,8 @@ def runtime_smoke(bundle: Path | str, arch: str, chromium_version: str | None = 
     if sys.platform != "linux" or host_arch != arch:
         raise VerificationError(
             f"runtime smoke requires a native Linux {arch} host; got {sys.platform}/{machine}")
-    version = (VERSION_FILE.read_text(encoding="utf-8") if chromium_version is None else chromium_version).strip()
+    version = (load_pins(REPO, "linux")["ChromiumVersion"]
+               if chromium_version is None else chromium_version).strip()
     if not re.fullmatch(r"\d+\.\d+\.\d+\.\d+", version):
         raise VerificationError(f"invalid Chromium version: {version!r}")
     launcher = Path(report["bundle_dir"]) / "chromix"
@@ -230,7 +236,7 @@ def main(argv=None) -> int:
     parser.add_argument("--bundle-dir", type=Path, required=True, help="extracted chromix directory")
     parser.add_argument("--arch", choices=tuple(MACHINES), required=True, help="package target architecture")
     parser.add_argument("--runtime", action="store_true", help="also run smoke checks on a native Linux host")
-    parser.add_argument("--chromium-version", help="expected runtime version (default: repository CHROMIUM_VERSION)")
+    parser.add_argument("--chromium-version", help="expected runtime version (default: repository Linux pin)")
     args = parser.parse_args(argv)
     try:
         report = (runtime_smoke(args.bundle_dir, args.arch, args.chromium_version) if args.runtime

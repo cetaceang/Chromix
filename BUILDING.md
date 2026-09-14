@@ -16,17 +16,35 @@ and GN arguments, not a different official Chromium checkout.
 
 | Layer | Version | Commit |
 |---|---|---|
-| Chromium | `152.0.7977.82` | source archive selected by ungoogled-chromium |
-| ungoogled-chromium | `152.0.7977.82-1` | `e71b91c6e336d0f25cfc6b9ef09298a9d2506e24` |
+| Chromium (Linux) | `153.0.8010.36` | source archive selected by ungoogled-chromium |
+| ungoogled-chromium (Linux) | `153.0.8010.36-1` | `dd8fb9b5c837982faf41ba58cd30a5664e77c329` |
+| Chromium (Windows/macOS) | `152.0.7977.82` | source archive selected by ungoogled-chromium |
+| ungoogled-chromium (Windows/macOS) | `152.0.7977.82-1` | `e71b91c6e336d0f25cfc6b9ef09298a9d2506e24` |
 | ungoogled-chromium-windows | `152.0.7977.82-1.1` | `333bc7dfff72ff4abc4d9cc76bc41de300a46e06` |
-| ungoogled-chromium-portablelinux | `152.0.7977.82-1` | `02c59ed68d1963a647bb478064823d114e466ffb` |
+| ungoogled-chromium-portablelinux | `153.0.8010.36-1` | `a5ffa5e4a9fb722b97a5cf7966e29450a150c3dd` |
 | ungoogled-chromium-macos | `152.0.7977.82-1.1` | `038db2b41f7aeb00bbceb2f5a56912b26eb5b284` |
 | Chromix patches | `patches/series` | content hash stored in source markers |
 
-The machine-readable pins are in `build/ungoogled-revisions.psd1`; the legacy
-version files remain available for tooling compatibility.
+The machine-readable pins are in `build/ungoogled-revisions.psd1`.
+`CHROMIUM_LINUX_VERSION` selects Linux independently; the shared version files
+and Windows/macOS pins remain at 152 in this Linux-only build branch.
 
 ## Linux x64/arm64 builds
+
+This branch requires the full source and `out/Default` caches from portablelinux
+[run 34757824818](https://github.com/ungoogled-software/ungoogled-chromium-portablelinux/actions/runs/34757824818):
+x64 artifact `10332136115` and final ARM64 artifact `10340607610`. Their exact
+sizes, SHA-256 digests and provenance are pinned in `build/upstream-cache.json`.
+Dispatch each Linux workflow with `use_upstream_cache=true`, `build_mode=staged`,
+`build_profile=fast` and `compile_jobs=auto`; leave `resume_run_id` and
+`resume_artifact_ids` empty. Those resume inputs select Chromix checkpoints,
+not upstream runs. A missing or invalid required cache fails instead of falling
+back to a cold build or a 152 checkpoint.
+
+This non-main branch is build-only and is excluded from automatic release
+publication. Before the first 153 release tag is created, its commit must contain
+matching Linux153 and Windows153 pins; otherwise the immutable tag cannot later
+accept Windows153 assets. This branch does not establish that release tag.
 
 The Linux ARM64 workflow builds on an x64 Ubuntu 24.04 host, matching the
 pinned portablelinux donor's cross-build environment. It restores ARM64 target
@@ -73,12 +91,13 @@ with a launcher, fonts, and Chromium/Chromix license files. These are runtime
 bundles, not fully static binaries; the target host still needs compatible
 system libraries and a working Chromium sandbox.
 
-The pinned portablelinux ARM64 patch has an incorrect Rust import hunk count
-(`7/7` instead of `8/8`). GNU patch can skip the following four Rust hunks,
-leaving x86_64 host-tool assumptions in place. Linux preparation corrects this
-specific patch header before applying the platform layer; the intended source
-changes and layer order stay unchanged. Prepared trees created with the old
-preparation hash require a clean work directory.
+Cold preparation for exactly `153.0.8010.36-1` uses the hash-guarded correction
+in `build/linux/recovery/153.0.8010.36-1-arm64.patch` for malformed hunk counts,
+Python expressions and Chromium153 contexts in the pinned ARM64 platform patch.
+Unknown revisions or changed patch hashes are rejected. Restored-cache builds
+keep the already prepared upstream source and do not reapply this cold-only
+correction. Full Chromium153 patch application, compilation and runtime
+acceptance remain required on the actual restored tree.
 
 ## Native macOS builds
 

@@ -82,7 +82,7 @@ def make_run(name="build-linux-x64", run_id=100, **changes):
     return run
 
 
-def write_bundle(path, missing=None, extra=None, corrupt=False):
+def write_bundle(path, missing=None, extra=None, corrupt=False, version="1.2.3.4"):
     if path.name in ("chromix-win-x64.zip", "chromix-win-arm64.zip"):
         members = ["chromix/chromix.cmd", "chromix/chrome.exe"]
         if path.name == "chromix-win-arm64.zip":
@@ -99,7 +99,7 @@ def write_bundle(path, missing=None, extra=None, corrupt=False):
         with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as archive:
             for name in members:
                 if name != missing:
-                    payload = (arm64_pe() if path.name == "chromix-win-arm64.zip"
+                    payload = (arm64_pe(version=version) if path.name == "chromix-win-arm64.zip"
                                and name.endswith((".exe", ".dll")) else b"fixture")
                     archive.writestr(zipfile.ZipInfo(name), payload)
             if extra:
@@ -107,6 +107,13 @@ def write_bundle(path, missing=None, extra=None, corrupt=False):
     if corrupt:
         data = path.read_bytes()
         path.write_bytes(data.replace(b"fixture", b"corrupt", 1))
+
+
+class GhCommandTest(unittest.TestCase):
+    def test_cli_captures_error_details_for_http_status_classification(self):
+        with patch.object(subprocess, "check_output", return_value="1.2.3.4\n") as output:
+            self.assertEqual(release.gh("api", "contents"), "1.2.3.4")
+        output.assert_called_once_with(["gh", "api", "contents"], text=True, stderr=subprocess.PIPE)
 
 
 class ReleaseFixtureTest(unittest.TestCase):
@@ -125,6 +132,9 @@ class ReleaseFixtureTest(unittest.TestCase):
         self.artifact_errors = {}
         self.version = "1.2.3.4"
         self.source_versions = {}
+        self.linux_source_versions = {}
+        self.windows_source_versions = {}
+        self.bundle_version = "1.2.3.4"
         self.uploaded_files = {}
         self.notes = []
         self.fail_upload = None
@@ -153,11 +163,20 @@ class ReleaseFixtureTest(unittest.TestCase):
         if args[0] == "api":
             if args[1] == f"repos/{REPO}/actions/runs/{self.event_run['id']}":
                 return json.dumps(self.event_response)
+            for filename, versions in (("CHROMIUM_LINUX_VERSION", self.linux_source_versions),
+                                       ("CHROMIUM_WINDOWS_VERSION", self.windows_source_versions)):
+                prefix = f"repos/{REPO}/contents/{filename}?ref="
+                if args[1].startswith(prefix):
+                    self.assertIn("Accept: application/vnd.github.raw+json", args)
+                    sha = args[1][len(prefix):]
+                    if sha not in versions:
+                        raise subprocess.CalledProcessError(1, ["gh", *args], stderr="gh: Not Found (HTTP 404)\n")
+                    return versions[sha]
             prefix = f"repos/{REPO}/contents/CHROMIUM_VERSION?ref="
             if args[1].startswith(prefix):
                 self.assertIn("Accept: application/vnd.github.raw+json", args)
                 return self.source_versions.get(args[1][len(prefix):], self.version)
-            if args[1] == f"repos/{REPO}/git/matching-refs/tags/{TAG}":
+            if args[1].startswith(f"repos/{REPO}/git/matching-refs/tags/"):
                 return json.dumps(self.refs)
             for sha, obj in self.tags.items():
                 if args[1] == f"repos/{REPO}/git/tags/{sha}":
@@ -172,11 +191,11 @@ class ReleaseFixtureTest(unittest.TestCase):
                 raise RuntimeError("Artifact expired")
             asset = dest / ("chromix-win-arm64.zip" if name == "win-arm64" else name + ".zip")
             write_bundle(asset, missing="chromix/LICENSE.chromium" if error == "layout" else None,
-                         corrupt=error == "corrupt")
+                         corrupt=error == "corrupt", version=self.bundle_version)
             if name == "win-arm64" and error in ("x64", "version"):
                 executable = "chromix/chrome.exe"
-                payload = arm64_pe(machine=0x8664) if error == "x64" else arm64_pe(version="9.9.9.9")
-                write_bundle(asset, missing=executable, extra=(executable, payload))
+                payload = arm64_pe(machine=0x8664, version=self.bundle_version) if error == "x64" else arm64_pe(version="9.9.9.9")
+                write_bundle(asset, missing=executable, extra=(executable, payload), version=self.bundle_version)
             if error != "missing-checksum":
                 checksum = "0" * 64 if error == "checksum" else release.digest(asset)
                 (dest / "SHA256SUMS").write_text(f"{checksum}  {asset.name}\n")
@@ -243,24 +262,24 @@ class ReleaseFixtureTest(unittest.TestCase):
         bundles = {}
         for name in sorted(release.ASSETS):
             path = self.root / "bundles" / name
-            write_bundle(path)
+            write_bundle(path, version=self.bundle_version)
             bundles[name] = path
         return bundles
 
     def incoming(self):
         name = EXPECTED_WORKFLOWS[self.event_run["name"]][0] + ".zip"
         path = self.root / "incoming" / name
-        write_bundle(path)
+        write_bundle(path, version=self.bundle_version)
         return {name: path}
 
-    def existing_release(self, bundles, draft=False, sha=SHA):
-        self.refs = [{"ref": f"refs/tags/{TAG}", "object": {"type": "commit", "sha": sha}}]
+    def existing_release(self, bundles, draft=False, sha=SHA, tag=TAG):
+        self.refs = [{"ref": f"refs/tags/{tag}", "object": {"type": "commit", "sha": sha}}]
         self.release_files = {name: path.read_bytes() for name, path in bundles.items()}
         self.release_files["SHA256SUMS"] = "".join(
             f"{release.digest(path)}  {name}\n" for name, path in sorted(bundles.items())
         ).encode("ascii")
         self.release = {
-            "tag_name": TAG, "target_commitish": sha, "draft": draft,
+            "tag_name": tag, "target_commitish": sha, "draft": draft,
             "body": f"Existing release\nSource commit: `{sha}`\n",
             "assets": [{"name": name} for name in self.release_files],
         }
@@ -270,6 +289,13 @@ class RunSelectionTest(ReleaseFixtureTest):
     def test_platform_workflows_each_own_exactly_one_asset(self):
         self.assertEqual(release.WORKFLOWS, EXPECTED_WORKFLOWS)
         self.assertEqual(release.ASSETS, {names[0] + ".zip" for names in EXPECTED_WORKFLOWS.values()})
+        self.assertEqual(set(release.WORKFLOW_PLATFORMS), set(EXPECTED_WORKFLOWS))
+        self.assertEqual(set(release.ASSET_PLATFORMS), release.ASSETS)
+        for workflow, names in EXPECTED_WORKFLOWS.items():
+            platform = "linux" if workflow.startswith("build-linux-") else (
+                "macos" if workflow.startswith("build-macos-") else "windows")
+            self.assertEqual(release.WORKFLOW_PLATFORMS[workflow], platform)
+            self.assertEqual(release.ASSET_PLATFORMS[names[0] + ".zip"], platform)
 
     def test_download_tables_list_each_registered_asset_without_claiming_acceptance(self):
         root = Path(__file__).resolve().parents[2]
@@ -682,6 +708,64 @@ class MainTest(ReleaseFixtureTest):
                 self.assertNotIn("All five", notes)
                 self.assertNotIn("only Windows", notes)
 
+    def test_same_sha_publishes_linux153_and_windows_macos152_separately(self):
+        self.version = self.bundle_version = "152.0.7977.82"
+        self.linux_source_versions[SHA] = "153.0.8010.36"
+        releases = {}
+        files = {}
+        for name, run in self.runs.items():
+            version = "153.0.8010.36" if name.startswith("build-linux-") else self.version
+            tag = "v" + version
+            self.event_run = self.event_response = run
+            self.release = releases.get(tag)
+            self.release_files = files.get(tag, {})
+            self.run_main()
+            releases[tag] = self.release
+            files[tag] = self.release_files
+            self.assertEqual(self.release["target_commitish"], SHA)
+            self.assertEqual(self.release["tag_name"], tag)
+            self.assertFalse(self.release["draft"])
+        self.assertEqual(set(releases), {"v153.0.8010.36", "v152.0.7977.82"})
+        for tag, assets in files.items():
+            expected = {name for name in release.ASSETS if ("-linux-" in name) == tag.startswith("v153")}
+            self.assertEqual(set(release.parse_manifest(assets["SHA256SUMS"].decode())), expected)
+        self.assertEqual(len([args for args in self.mutations if args[1] == "create"]), 2)
+        self.assertEqual({ref["object"]["sha"] for ref in self.refs}, {SHA})
+
+    def test_same_sha_publishes_linux_windows153_and_macos152_separately(self):
+        self.version = "152.0.7977.82"
+        self.bundle_version = "153.0.8010.36"
+        self.linux_source_versions[SHA] = self.windows_source_versions[SHA] = self.bundle_version
+        releases, files = {}, {}
+        for name, run in self.runs.items():
+            tag = "v" + (self.version if name.startswith("build-macos-") else self.bundle_version)
+            with self.subTest(workflow=name):
+                self.event_run = self.event_response = run
+                self.release = releases.get(tag)
+                self.release_files = files.get(tag, {})
+                self.run_main()
+                releases[tag], files[tag] = self.release, self.release_files
+                self.assertEqual(self.release["target_commitish"], SHA)
+                self.assertEqual(self.release["tag_name"], tag)
+                self.assertFalse(self.release["draft"])
+        self.assertEqual(set(releases), {"v153.0.8010.36", "v152.0.7977.82"})
+        for tag, assets in files.items():
+            expected = {name for name in release.ASSETS if ("-mac-" in name) == tag.startswith("v152")}
+            self.assertEqual(set(release.parse_manifest(assets["SHA256SUMS"].decode())), expected)
+            self.assertEqual(set(assets) & release.ASSETS, expected)
+            for name in expected:
+                self.assertEqual(release.parse_manifest(assets["SHA256SUMS"].decode())[name],
+                                 hashlib.sha256(assets[name]).hexdigest())
+            expected_workflows = {name for name in self.runs if name.startswith("build-macos-") == tag.startswith("v152")}
+            body = releases[tag]["body"]
+            self.assertEqual(body.count("Verified build:"), len(expected_workflows))
+            for name in self.runs:
+                self.assertEqual(f"Workflow: {name} (" in body, name in expected_workflows)
+        self.assertEqual(len([args for args in self.mutations if args[1] == "create"]), 2)
+        self.assertEqual(len(self.downloads), 6)
+        self.assertEqual({ref["object"]["sha"] for ref in self.refs}, {SHA})
+        self.assertTrue(all(Path(args[3]).name == "SHA256SUMS" for args in self.mutations if "--clobber" in args))
+
     def test_trigger_that_has_started_rerunning_is_pending(self):
         self.event_response = {**self.event_run, "status": "in_progress", "conclusion": None, "run_attempt": 2}
         self.run_main()
@@ -756,6 +840,116 @@ class MainTest(ReleaseFixtureTest):
                 self.assertEqual(self.mutations[0][1], "create")
                 self.assertIn("--draft", self.mutations[0])
                 self.assertNotIn("edit", [args[1] for args in self.mutations])
+
+
+class SourceVersionTest(ReleaseFixtureTest):
+    def test_defaults_and_macos_keep_shared_pin(self):
+        self.version = "152.0.7977.82"
+        self.linux_source_versions[SHA] = self.windows_source_versions[SHA] = "153.0.8010.36"
+        for platform in (None, "macos"):
+            with self.subTest(platform=platform):
+                self.assertEqual(release.source_version(REPO, SHA, platform), self.version)
+        self.assertTrue(all("contents/CHROMIUM_VERSION?ref=" in call.args[1]
+                            for call in self.gh.call_args_list))
+
+    def test_platforms_use_their_commit_pin_without_reading_shared_version(self):
+        self.version = "not-a-version"
+        self.linux_source_versions[SHA] = self.windows_source_versions[SHA] = "153.0.8010.36"
+        for platform in ("linux", "windows"):
+            with self.subTest(platform=platform):
+                self.gh.reset_mock()
+                self.assertEqual(release.source_version(REPO, SHA, platform), "153.0.8010.36")
+                self.gh.assert_called_once_with("api", f"repos/{REPO}/contents/CHROMIUM_{platform.upper()}_VERSION?ref={SHA}",
+                                               "-H", "Accept: application/vnd.github.raw+json")
+
+    def test_only_exact_missing_platform_file_falls_back_at_same_sha(self):
+        self.source_versions[OTHER_SHA] = "152.0.7977.82"
+        for platform in ("linux", "windows"):
+            with self.subTest(platform=platform):
+                self.gh.reset_mock()
+                self.assertEqual(release.source_version(REPO, OTHER_SHA, platform), "152.0.7977.82")
+                self.assertEqual([call.args[1] for call in self.gh.call_args_list],
+                                 [f"repos/{REPO}/contents/{name}?ref={OTHER_SHA}"
+                                  for name in (f"CHROMIUM_{platform.upper()}_VERSION", "CHROMIUM_VERSION")])
+
+    def test_exact_404_allows_only_line_ending_variants(self):
+        for platform in ("linux", "windows"):
+            for ending in ("", "\n", "\r\n"):
+                with self.subTest(platform=platform, ending=ending):
+                    self.gh.reset_mock()
+                    error = subprocess.CalledProcessError(1, ["gh", "api"],
+                                                         stderr="gh: Not Found (HTTP 404)" + ending)
+                    self.gh.side_effect = [error, "152.0.7977.82"]
+                    self.assertEqual(release.source_version(REPO, SHA, platform), "152.0.7977.82")
+                    self.assertEqual(self.gh.call_count, 2)
+                    self.assertEqual(self.gh.call_args.args[1], f"repos/{REPO}/contents/CHROMIUM_VERSION?ref={SHA}")
+
+    def test_malformed_platform_contents_never_fall_back(self):
+        for platform, versions in (("linux", self.linux_source_versions), ("windows", self.windows_source_versions)):
+            for value in ("", "153.0.8010.36-1", "153.0.8010.36-1.1", "153.0.8010", "153.0.8010.36\nextra",
+                          "153.0.8010.36\n", '{"message":"Not Found","status":"404"}', '[]'):
+                with self.subTest(platform=platform, value=value):
+                    self.gh.reset_mock()
+                    versions[SHA] = value
+                    with self.assertRaisesRegex(ValueError, "Invalid Chromium version"):
+                        release.source_version(REPO, SHA, platform)
+                    self.assertEqual(self.gh.call_count, 1)
+
+    def test_api_failures_and_404_lookalikes_never_fall_back(self):
+        for platform in ("linux", "windows"):
+            for message in (None, "", "HTTP 404", "gh: Not Found (HTTP 4040)",
+                            " gh: Not Found (HTTP 404)", "gh: Not Found (HTTP 404) ",
+                            "gh: Not Found (HTTP 404) extra", "gh: Not Found (HTTP 404)\nrate limited",
+                            b"gh: Not Found (HTTP 404)\n", "gh: Unauthorized (HTTP 401)",
+                            "gh: Forbidden (HTTP 403)", "gh: Server Error (HTTP 500)",
+                            "gh: API rate limit exceeded (HTTP 429)"):
+                with self.subTest(platform=platform, stderr=message):
+                    error = subprocess.CalledProcessError(1, ["gh", "api"],
+                                                         output='{"status":"404"}', stderr=message)
+                    self.gh.reset_mock()
+                    self.gh.side_effect = error
+                    with self.assertRaises(subprocess.CalledProcessError) as caught:
+                        release.source_version(REPO, SHA, platform)
+                    self.assertIs(caught.exception, error)
+                    self.assertEqual(self.gh.call_count, 1)
+
+    def test_non_http_failures_never_fall_back(self):
+        for platform in ("linux", "windows"):
+            for error in (subprocess.CalledProcessError(2, ["gh", "api"], stderr="gh: Not Found (HTTP 404)\n"),
+                          subprocess.TimeoutExpired(["gh", "api"], 30), OSError("connection reset")):
+                with self.subTest(platform=platform, error=type(error).__name__):
+                    self.gh.reset_mock()
+                    self.gh.side_effect = error
+                    with self.assertRaises(type(error)) as caught:
+                        release.source_version(REPO, SHA, platform)
+                    self.assertIs(caught.exception, error)
+                    self.assertEqual(self.gh.call_count, 1)
+
+    def test_shared_404_and_missing_legacy_pin_fail_closed(self):
+        error = subprocess.CalledProcessError(1, ["gh", "api"], stderr="gh: Not Found (HTTP 404)\n")
+        for platform in (None, "windows", "macos", "linux"):
+            with self.subTest(platform=platform):
+                self.gh.reset_mock()
+                self.gh.side_effect = error
+                with self.assertRaises(subprocess.CalledProcessError):
+                    release.source_version(REPO, SHA, platform)
+                self.assertEqual(self.gh.call_count, 2 if platform in ("linux", "windows") else 1)
+
+    def test_invalid_legacy_pin_still_fails_after_exact_404(self):
+        self.version = "malformed"
+        for platform in ("linux", "windows"):
+            with self.subTest(platform=platform):
+                self.gh.reset_mock()
+                with self.assertRaisesRegex(ValueError, "Invalid Chromium version"):
+                    release.source_version(REPO, SHA, platform)
+                self.assertEqual(self.gh.call_count, 2)
+
+    def test_invalid_sha_or_platform_never_reaches_github(self):
+        for sha, platform in (("main", "linux"), (SHA + "\n", "linux"), ("main", "windows"),
+                              (SHA + "\n", "windows"), (SHA, "linx")):
+            with self.subTest(sha=sha, platform=platform), self.assertRaises(ValueError):
+                release.source_version(REPO, sha, platform)
+        self.gh.assert_not_called()
 
 
 class RevisionTest(ReleaseFixtureTest):
@@ -847,6 +1041,233 @@ class RevisionTest(ReleaseFixtureTest):
         self.gh.side_effect = download_then_move_tag
         with self.assertRaisesRegex(ValueError, "Pinned release commit changed"):
             release.publish(REPO, self.event_run, TAG, self.incoming(), self.root)
+        self.assertEqual(self.mutations, [])
+
+
+class PlatformRevisionTest(ReleaseFixtureTest):
+    def setUp(self):
+        super().setUp()
+        self.version = self.bundle_version = "152.0.7977.82"
+        self.linux_source_versions = {SHA: "153.0.8010.36", OTHER_SHA: "153.0.8010.36"}
+        self.linux_tag = "v153.0.8010.36"
+
+    def test_incoming_and_pinned_commit_use_the_same_platform(self):
+        for platform, tag in (("linux", self.linux_tag), ("windows", "v" + self.version),
+                              ("macos", "v" + self.version)):
+            with self.subTest(platform=platform):
+                self.refs = [{"ref": f"refs/tags/{tag}", "object": {"type": "commit", "sha": OTHER_SHA}}]
+                self.assertEqual(release.validate_release_revision(REPO, tag, SHA, None, platform), OTHER_SHA)
+        self.source_versions[OTHER_SHA] = self.linux_tag[1:]
+        self.linux_source_versions[OTHER_SHA] = self.version
+        self.refs = [{"ref": f"refs/tags/{self.linux_tag}", "object": {"type": "commit", "sha": OTHER_SHA}}]
+        with self.assertRaisesRegex(ValueError, "Pinned tag commit Chromium version"):
+            release.validate_release_revision(REPO, self.linux_tag, SHA, None, "linux")
+
+    def test_wrong_platform_tag_is_rejected_even_at_same_sha(self):
+        for name, run in self.runs.items():
+            self.event_run = self.event_response = run
+            tag = "v" + self.version if name.startswith("build-linux-") else self.linux_tag
+            with self.subTest(workflow=name), self.assertRaisesRegex(ValueError, "Incoming source Chromium version"):
+                release.publish(REPO, run, tag, self.incoming(), self.root)
+        self.assertEqual(self.downloads, [])
+        self.assertEqual(self.release_downloads, [])
+        self.assertEqual(self.mutations, [])
+
+    def test_annotated_and_untagged_draft_linux_commits_keep_platform_verification(self):
+        tag_sha = "c" * 40
+        self.refs = [{"ref": f"refs/tags/{self.linux_tag}", "object": {"type": "tag", "sha": tag_sha}}]
+        self.tags[tag_sha] = {"type": "commit", "sha": OTHER_SHA}
+        self.assertEqual(release.validate_release_revision(REPO, self.linux_tag, SHA, None, "linux"), OTHER_SHA)
+        self.refs = []
+        draft = {"draft": True, "target_commitish": OTHER_SHA, "assets": []}
+        self.assertEqual(release.validate_release_revision(REPO, self.linux_tag, SHA, draft, "linux"), OTHER_SHA)
+        self.linux_source_versions[OTHER_SHA] = self.version
+        with self.assertRaisesRegex(ValueError, "Pinned tag commit Chromium version"):
+            release.validate_release_revision(REPO, self.linux_tag, SHA, draft, "linux")
+
+    def test_mixed_platform_assets_are_not_adopted_even_with_valid_hashes(self):
+        bundles = self.bundles()
+        for name, run in self.runs.items():
+            linux = name.startswith("build-linux-")
+            foreign = "chromix-win-x64.zip" if linux else "chromix-linux-x64.zip"
+            tag = self.linux_tag if linux else "v" + self.version
+            self.event_run = self.event_response = run
+            self.existing_release({foreign: bundles[foreign]}, tag=tag)
+            with self.subTest(workflow=name), self.assertRaisesRegex(ValueError, "Pinned tag commit Chromium version"):
+                release.publish(REPO, run, tag, self.incoming(), self.root)
+        self.assertEqual(self.release_downloads, [])
+        self.assertEqual(self.mutations, [])
+
+    def test_recovery_derives_all_known_asset_platforms_without_incoming_run(self):
+        bundles = self.bundles()
+        for tag, names in ((self.linux_tag, {"chromix-linux-x64.zip", "chromix-linux-arm64.zip"}),
+                           ("v" + self.version, {"chromix-win-x64.zip", "chromix-win-arm64.zip",
+                                                "chromix-mac-x64.zip", "chromix-mac-arm64.zip"})):
+            with self.subTest(tag=tag):
+                self.existing_release({name: bundles[name] for name in names}, tag=tag)
+                original = self.release_files.pop("SHA256SUMS")
+                self.release_files[backup_name(original)] = original
+                self.release["assets"] = [{"name": name} for name in self.release_files]
+                directory = self.root / tag
+                directory.mkdir()
+                hashes = release.restore_release_manifest(REPO, tag, self.release, directory)
+                self.assertEqual(set(hashes), names)
+                self.assertEqual(self.release_files["SHA256SUMS"], original)
+        self.assertEqual([args[1] for args in self.mutations], ["upload", "upload"])
+        self.assertEqual(self.downloads, [])
+
+    def test_recovery_rejects_mixed_assets_with_primary_backup_or_orphan(self):
+        bundles = self.bundles()
+        for tag in (self.linux_tag, "v" + self.version):
+            for state in ("primary", "backup", "orphan"):
+                self.existing_release({name: bundles[name] for name in ("chromix-linux-x64.zip", "chromix-win-x64.zip")},
+                                      tag=tag)
+                if state != "primary":
+                    original = self.release_files.pop("SHA256SUMS")
+                    if state == "backup":
+                        self.release_files[backup_name(original)] = original
+                    self.release["assets"] = [{"name": name} for name in self.release_files]
+                with self.subTest(tag=tag, state=state), self.assertRaisesRegex(ValueError, "Pinned tag commit Chromium version"):
+                    release.restore_release_manifest(REPO, tag, self.release, self.root)
+        self.assertEqual(self.release_downloads, [])
+        self.assertEqual(self.mutations, [])
+
+    def test_recovery_rechecks_linux_pin_before_manifest_upload(self):
+        bundles = self.bundles()
+        self.existing_release({"chromix-linux-x64.zip": bundles["chromix-linux-x64.zip"]}, tag=self.linux_tag)
+        original = self.release_files.pop("SHA256SUMS")
+        self.release_files[backup_name(original)] = original
+        self.release["assets"] = [{"name": name} for name in self.release_files]
+        original_gh = self.fake_gh
+
+        def download_then_change_version(*args):
+            result = original_gh(*args)
+            if args[:2] == ("release", "download") and "chromix-linux-x64.zip" in args:
+                self.linux_source_versions[SHA] = self.version
+            return result
+
+        self.gh.side_effect = download_then_change_version
+        with self.assertRaisesRegex(ValueError, "Pinned tag commit Chromium version"):
+            release.restore_release_manifest(REPO, self.linux_tag, self.release, self.root)
+        self.assertEqual(self.mutations, [])
+
+    def test_assetless_recovery_explicitly_retains_legacy_version_default(self):
+        self.existing_release({}, tag=self.linux_tag)
+        with self.assertRaisesRegex(ValueError, "Pinned tag commit Chromium version"):
+            release.restore_release_manifest(REPO, self.linux_tag, self.release, self.root)
+        self.assertEqual(self.mutations, [])
+
+
+class WindowsPlatformRevisionTest(ReleaseFixtureTest):
+    def setUp(self):
+        super().setUp()
+        self.version = "152.0.7977.82"
+        self.bundle_version = "153.0.8010.36"
+        self.tag = "v" + self.bundle_version
+        self.linux_source_versions = {SHA: self.bundle_version, OTHER_SHA: self.bundle_version}
+        self.windows_source_versions = dict(self.linux_source_versions)
+
+    def test_windows_incoming_and_pinned_commits_use_windows_pin(self):
+        self.refs = [{"ref": f"refs/tags/{self.tag}", "object": {"type": "commit", "sha": OTHER_SHA}}]
+        self.assertEqual(release.validate_release_revision(REPO, self.tag, SHA, None, "windows"), OTHER_SHA)
+        self.windows_source_versions = {SHA: self.bundle_version, OTHER_SHA: self.version}
+        self.source_versions[OTHER_SHA] = self.bundle_version
+        with self.assertRaisesRegex(ValueError, "Pinned tag commit Chromium version"):
+            release.validate_release_revision(REPO, self.tag, SHA, None, "windows")
+        self.assertEqual(self.mutations, [])
+
+    def test_wrong_version_group_is_rejected_before_downloads_or_writes(self):
+        for name, run in self.runs.items():
+            tag = self.tag if name.startswith("build-macos-") else "v" + self.version
+            self.event_run = self.event_response = run
+            with self.subTest(workflow=name), self.assertRaisesRegex(ValueError, "Incoming source Chromium version"):
+                release.publish(REPO, run, tag, self.incoming(), self.root)
+        self.assertEqual(self.downloads, [])
+        self.assertEqual(self.release_downloads, [])
+        self.assertEqual(self.mutations, [])
+
+    def test_recovery_accepts_linux_windows153_and_macos152_groups(self):
+        bundles = self.bundles()
+        for tag in (self.tag, "v" + self.version):
+            names = {name for name in bundles if ("-mac-" in name) == (tag == "v" + self.version)}
+            with self.subTest(tag=tag):
+                self.existing_release({name: bundles[name] for name in names}, tag=tag)
+                original = self.release_files.pop("SHA256SUMS")
+                self.release_files[backup_name(original)] = original
+                self.release["assets"] = [{"name": name} for name in self.release_files]
+                before = copy.deepcopy(self.release_files)
+                metadata = copy.deepcopy(self.release)
+                directory = self.root / tag
+                directory.mkdir()
+                self.assertEqual(set(release.restore_release_manifest(REPO, tag, self.release, directory)), names)
+                self.assertEqual(self.release_files, {**before, "SHA256SUMS": original})
+                self.assertEqual(self.release["body"], metadata["body"])
+                self.assertEqual(self.release["target_commitish"], SHA)
+        self.assertEqual([args[1] for args in self.mutations], ["upload", "upload"])
+        self.assertEqual(self.downloads, [])
+
+    def test_recovery_rejects_windows153_macos152_mix_in_every_manifest_state(self):
+        bundles = self.bundles()
+        for tag in (self.tag, "v" + self.version):
+            for state in ("primary", "backup", "orphan"):
+                self.existing_release({name: bundles[name] for name in ("chromix-win-x64.zip", "chromix-mac-x64.zip")},
+                                      tag=tag)
+                if state != "primary":
+                    original = self.release_files.pop("SHA256SUMS")
+                    if state == "backup":
+                        self.release_files[backup_name(original)] = original
+                    self.release["assets"] = [{"name": name} for name in self.release_files]
+                with self.subTest(tag=tag, state=state), self.assertRaisesRegex(ValueError, "Pinned tag commit Chromium version"):
+                    release.restore_release_manifest(REPO, tag, self.release, self.root)
+        self.assertEqual(self.release_downloads, [])
+        self.assertEqual(self.mutations, [])
+
+    def test_recovery_rechecks_windows_pin_before_manifest_upload(self):
+        bundles = self.bundles()
+        self.existing_release({name: bundles[name] for name in ("chromix-linux-x64.zip", "chromix-win-arm64.zip")},
+                              tag=self.tag)
+        original = self.release_files.pop("SHA256SUMS")
+        self.release_files[backup_name(original)] = original
+        self.release["assets"] = [{"name": name} for name in self.release_files]
+        before = copy.deepcopy(self.release_files)
+
+        def download_then_change_version(*args):
+            result = self.fake_gh(*args)
+            if args[:2] == ("release", "download") and "chromix-win-arm64.zip" in args:
+                self.windows_source_versions = {SHA: self.version}
+            return result
+
+        self.gh.side_effect = download_then_change_version
+        with self.assertRaisesRegex(ValueError, "Pinned tag commit Chromium version"):
+            release.restore_release_manifest(REPO, self.tag, self.release, self.root)
+        self.assertEqual(self.release_files, before)
+        self.assertEqual(self.mutations, [])
+
+    def test_windows153_arm64_requires_matching_file_and_product_resources(self):
+        self.event_run = self.event_response = self.runs["build-win-arm64-github"]
+        for member in ("chromix/chrome.exe", "chromix/chrome.dll"):
+            for field in ("version", "product_version"):
+                with self.subTest(member=member, field=field):
+                    bundles = self.incoming()
+                    path = next(iter(bundles.values()))
+                    values = {"version": self.bundle_version, field: self.version}
+                    write_bundle(path, missing=member, extra=(member, arm64_pe(**values)), version=self.bundle_version)
+                    with self.assertRaisesRegex(ValueError, "PE version does not match"):
+                        release.publish(REPO, self.event_run, self.tag, bundles, self.root)
+        self.assertEqual(self.mutations, [])
+
+    def test_windows153_arm64_keeps_native_attempt_and_machine_gates(self):
+        self.event_run = self.event_response = self.runs["build-win-arm64-github"]
+        valid = native_job(self.event_run)
+        for changes in ({"conclusion": "skipped"}, {"run_attempt": 2}, {"labels": ["windows-2022"]}):
+            with self.subTest(changes=changes):
+                self.native_jobs = [{**valid, **changes}]
+                self.run_main()
+        self.assertEqual(self.downloads, [])
+        self.native_jobs = [valid]
+        self.artifact_errors["win-arm64"] = "x64"
+        with self.assertRaisesRegex(ValueError, "ARM64 PE"):
+            self.run_main()
         self.assertEqual(self.mutations, [])
 
 

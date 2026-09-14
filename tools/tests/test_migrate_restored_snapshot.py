@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -80,7 +81,7 @@ def commit(root):
 class Fixture:
     platform = "macos"
 
-    def __init__(self, root, arch="x64"):
+    def __init__(self, root, arch="x64", *, legacy=False):
         self.previous, self.repo, self.work = (root / name for name in ("previous", "current", "work"))
         self.src = self.work / "src"
         self.core = self.work / "tooling/ungoogled-chromium"
@@ -100,21 +101,42 @@ class Fixture:
             "-c", "core.hooksPath=" + os.devnull, "commit", "-qm", "pin core submodule")
         platform_commit = git(self.tooling, "rev-parse", "HEAD").decode().strip()
         for repo in (self.previous, self.repo):
-            for name in (*migration.PIN_FILES, *migration.SCRIPT_FILES):
-                put(repo, name, (ROOT / name).read_bytes())
+            for name in (*migration.PIN_FILES, *migration.SCRIPT_FILES, "CHROMIUM_WINDOWS_VERSION"):
+                if (ROOT / name).is_file():
+                    put(repo, name, (ROOT / name).read_bytes())
             pins = (repo / migration.PIN_FILES[1]).read_text()
-            pins = pins.replace("e71b91c6e336d0f25cfc6b9ef09298a9d2506e24", core_commit)
-            old_platform_commit = ("038db2b41f7aeb00bbceb2f5a56912b26eb5b284" if self.platform == "macos"
-                                   else "02c59ed68d1963a647bb478064823d114e466ffb")
-            pins = pins.replace(old_platform_commit, platform_commit)
+            if legacy:
+                pins = re.sub(r'(?m)^\s*Linux(?:ChromiumVersion|UngoogledVersion|UngoogledCommit)\s*=.*\n',
+                              "", pins)
+                version = (repo / "CHROMIUM_VERSION").read_text().strip()
+                pins = re.sub(r'(?m)^(\s*UngoogledLinuxVersion\s*=\s*)"[^"\n]+"',
+                              lambda match: match[1] + '"' + version + '-1"', pins)
+                (repo / "CHROMIUM_LINUX_VERSION").unlink(missing_ok=True)
+            core_field = ("LinuxUngoogledCommit" if self.platform == "linux"
+                          and "LinuxUngoogledCommit" in pins else "UngoogledCommit")
+            platform_field = migration.PLATFORM_TOOLING[self.platform][1]
+            for field, value in ((core_field, core_commit), (platform_field, platform_commit)):
+                pins = re.sub(r'(?m)^(\s*' + field + r'\s*=\s*)"[^"\n]+"',
+                              lambda match: match[1] + '"' + value + '"', pins)
             put(repo, migration.PIN_FILES[1], pins)
             manifest = json.loads((repo / migration.PIN_FILES[2]).read_bytes())
-            manifest["ungoogled_commit"] = core_commit
-            manifest["sources"][self.platform]["head_sha"] = platform_commit
+            target = manifest["sources"][self.platform]
+            if legacy:
+                linux = manifest["sources"]["linux"]
+                for field in ("chromium_version", "ungoogled_commit"):
+                    linux.pop(field, None)
+                linux["head_branch"] = manifest["chromium_version"] + "-1"
+            if core_field == "LinuxUngoogledCommit":
+                target["ungoogled_commit"] = core_commit
+            else:
+                manifest["ungoogled_commit"] = core_commit
+                if "ungoogled_commit" in target:
+                    target["ungoogled_commit"] = core_commit
+            target["head_sha"] = platform_commit
             put(repo, migration.PIN_FILES[2], json.dumps(manifest))
             series(repo, patch())
         put(self.src, "listed.txt", "base blocked.test\n")
-        version = (self.repo / "CHROMIUM_VERSION").read_text().strip()
+        version = migration.load_pins(self.repo, self.platform)["ChromiumVersion"]
         put(self.src, "chrome/VERSION", "".join(f"{key}={value}\n" for key, value in
             zip(("MAJOR", "MINOR", "BUILD", "PATCH"), version.split("."))))
         put(self.src, "BUILD.gn", 'group("fixture") {}\n')
@@ -149,6 +171,89 @@ class Fixture:
             self.repo, self.platform, self.arch)
         assert not (self.src / migration.TRANSACTION).exists()
         assert not (self.src / arp.IN_PROGRESS).exists()
+
+
+def test_linux_version_file_is_a_platform_specific_migration_input(tmp_path):
+    fx = Fixture(tmp_path, legacy=True)
+    fx.prepare()
+    before = snapshot(fx.src)
+    put(fx.repo, "CHROMIUM_LINUX_VERSION", "153.0.8010.36\n")
+    if fx.platform == "linux":
+        with pytest.raises(arp.ApplyError, match="CHROMIUM_LINUX_VERSION"):
+            fx.run()
+        assert snapshot(fx.src) == before
+    else:
+        migration._same_inputs(fx.previous, fx.repo, "macos")
+        # The complete manifest still rejects an incomplete Linux pin set.
+        with pytest.raises(restore.importer.Miss, match="pin_mismatch"):
+            fx.run()
+        assert snapshot(fx.src) == before
+        fx.check()
+
+
+@pytest.mark.parametrize("change", ["different", "missing", "symlink"])
+def test_linux_version_file_change_or_missing_side_fails_closed(tmp_path, change):
+    fx = Fixture(tmp_path)
+    name = "CHROMIUM_LINUX_VERSION"
+    for root in (fx.previous, fx.repo):
+        put(root, name, "153.0.8010.36\n")
+    if change == "different":
+        put(fx.repo, name, "154.0.0.0\n")
+    else:
+        (fx.repo / name).unlink()
+        if change == "symlink":
+            (fx.repo / name).symlink_to(fx.previous / name)
+    with pytest.raises(arp.ApplyError):
+        migration._same_inputs(fx.previous, fx.repo, "linux")
+    migration._same_inputs(fx.previous, fx.repo, "macos")
+
+
+def test_absent_linux_version_file_on_both_sides_keeps_legacy_comparison(tmp_path):
+    fx = Fixture(tmp_path, legacy=True)
+    migration._same_inputs(fx.previous, fx.repo, fx.platform)
+    fx.prepare()
+    assert fx.run()["changed_files"] == []
+    fx.check()
+
+
+def test_linux_effective_core_is_used_for_key_and_tooling_verification(tmp_path, monkeypatch):
+    monkeypatch.setattr(Fixture, "platform", "linux")
+    fx = Fixture(tmp_path)
+    current = migration.load_pins(fx.repo, "linux")
+    for root in (fx.previous, fx.repo):
+        values = migration.load_pins(root, "macos")
+        values.update(LinuxChromiumVersion="153.0.8010.36",
+                      LinuxUngoogledVersion="153.0.8010.36-1",
+                      LinuxUngoogledCommit=current["UngoogledCommit"],
+                      UngoogledLinuxVersion="153.0.8010.36-1",
+                      UngoogledCommit="a" * 40)
+        put(root, "build/ungoogled-revisions.psd1",
+            "@{\n" + "".join(f'  {key} = "{value}"\n' for key, value in values.items()) + "}\n")
+        put(root, "CHROMIUM_LINUX_VERSION", "153.0.8010.36\n")
+        manifest = json.loads((root / "build/upstream-cache.json").read_bytes())
+        manifest["ungoogled_commit"] = "a" * 40
+        manifest["sources"]["linux"].update(
+            chromium_version="153.0.8010.36", ungoogled_commit=current["UngoogledCommit"],
+            head_branch="153.0.8010.36-1")
+        put(root, "build/upstream-cache.json", json.dumps(manifest))
+    put(fx.src, "chrome/VERSION", "MAJOR=153\nMINOR=0\nBUILD=8010\nPATCH=36\n")
+    fx.receipt()
+    fx.prepare()
+    assert migration.source_ready_key(fx.repo, "linux", fx.arch).split("|")[2:4] == [
+        "153.0.8010.36", current["UngoogledCommit"]]
+    assert fx.run()["changed_files"] == []
+    fx.check()
+
+
+def test_migration_never_upgrades_a_152_donor_to_153(tmp_path, monkeypatch):
+    monkeypatch.setattr(Fixture, "platform", "linux")
+    fx = Fixture(tmp_path, legacy=True)
+    fx.prepare()
+    before = snapshot(fx.src)
+    put(fx.repo, "CHROMIUM_LINUX_VERSION", "153.0.8010.36\n")
+    with pytest.raises(arp.ApplyError, match="identical pins"):
+        fx.run()
+    assert snapshot(fx.src) == before
 
 
 @pytest.mark.parametrize("arch", ["x64", "arm64"])
@@ -345,7 +450,7 @@ def test_key_matches_shell_hash_recipe_without_executing_previous_scripts(tmp_pa
             digest.update(str(path.relative_to(fx.previous)).encode())
             digest.update(path.read_bytes())
     assert migration.source_ready_key(fx.previous, fx.platform, fx.arch) == "|".join((
-        fx.platform, fx.arch, (fx.previous / "CHROMIUM_VERSION").read_text().strip(),
+        fx.platform, fx.arch, migration.load_pins(fx.previous, fx.platform)["ChromiumVersion"],
         git(fx.core, "rev-parse", "HEAD").decode().strip(),
         git(fx.tooling, "rev-parse", "HEAD").decode().strip(), digest.hexdigest()))
 

@@ -176,6 +176,56 @@ def test_concurrent_input_change_fails(orchestrator, target):
     assert any('changed' in error for error in result['errors'])
 
 
+@pytest.mark.parametrize('system,target,version', [
+    ('linux', 'linux', '153.0.8010.36'), ('darwin', 'macos', VERSION),
+    ('win32', 'windows', '153.0.8010.36')])
+def test_cli_default_version_is_platform_aware(tmp_path, monkeypatch, system, target, version):
+    (tmp_path / 'CHROMIUM_VERSION').write_text(VERSION + '\n')
+    monkeypatch.setattr(audit, 'REPO', tmp_path)
+    monkeypatch.setattr(audit.sys, 'platform', system)
+    resolutions, observed = [], []
+
+    def pins(repo, target):
+        resolutions.append((repo, target))
+        return {'ChromiumVersion': '153.0.8010.36' if target != 'macos' else VERSION}
+
+    def run(args):
+        observed.append(args.expected_version)
+        return {'status': 'passed', 'ci_gate_passed': True, 'errors': []}
+
+    monkeypatch.setattr(audit, 'load_pins', pins)
+    monkeypatch.setattr(audit, 'run', run)
+    assert audit.main(['--browser', str(tmp_path / 'chrome'), '--expected-sha256', HASH,
+                       '--output-dir', str(tmp_path / 'output')]) == 0
+    assert observed == [version]
+    assert resolutions == [(tmp_path, target)]
+
+
+@pytest.mark.parametrize('system', ['linux', 'win32'])
+def test_cli_explicit_version_avoids_default_and_bad_pins_fail_closed(tmp_path, monkeypatch, system):
+    monkeypatch.setattr(audit.sys, 'platform', system)
+    monkeypatch.setattr(audit, 'REPO', tmp_path)
+    observed = []
+
+    def pins(*args):
+        raise ValueError('incomplete Linux overrides')
+
+    def run(args):
+        observed.append(args.expected_version)
+        return {'status': 'passed', 'ci_gate_passed': True, 'errors': []}
+
+    monkeypatch.setattr(audit, 'load_pins', pins)
+    monkeypatch.setattr(audit, 'run', run)
+    args = ['--browser', str(tmp_path / 'chrome'), '--expected-sha256', HASH,
+            '--output-dir', str(tmp_path / 'output')]
+    assert audit.main([*args, '--expected-version', '153.0.8010.36']) == 0
+    assert observed == ['153.0.8010.36']
+    with pytest.raises(SystemExit) as error:
+        audit.main(args)
+    assert error.value.code == 2
+    assert observed == ['153.0.8010.36']
+
+
 def test_raw_runtime_and_render_rechecked():
     runtime = {**runtime_report(), 'browser_sha256': HASH, 'browser_version': VERSION, 'status': 'passed'}
     assert audit.assess_suite('display_backend', runtime, HASH, VERSION) == ([], [])

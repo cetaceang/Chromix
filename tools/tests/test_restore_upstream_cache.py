@@ -21,6 +21,7 @@ from unittest import mock
 
 from tools import fetch_upstream_cache as fetcher
 from tools import restore_upstream_cache as restore
+from tools.tests.test_fetch_upstream_cache import synthetic_windows_source
 
 
 def archive_bytes(entries, zipped=False):
@@ -71,10 +72,14 @@ class RestoreUpstreamCacheTest(unittest.TestCase):
         self.repo = root / "repo"
         self.work = root / "work"
         self.cache = root / "cache"
-        for relative in ("CHROMIUM_VERSION", "build/ungoogled-revisions.psd1", "build/upstream-cache.json"):
+        for relative in ("CHROMIUM_VERSION", "CHROMIUM_LINUX_VERSION", "CHROMIUM_WINDOWS_VERSION",
+                         "build/ungoogled-revisions.psd1", "build/upstream-cache.json"):
+            source = restore.REPO / relative
+            if relative in ("CHROMIUM_LINUX_VERSION", "CHROMIUM_WINDOWS_VERSION") and not source.exists():
+                continue
             destination = self.repo / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(restore.REPO / relative, destination)
+            shutil.copy2(source, destination)
         self.platform, self.arch = "linux", "x64"
         self.make_cache()
 
@@ -85,6 +90,11 @@ class RestoreUpstreamCacheTest(unittest.TestCase):
 
     def make_cache(self, platform="linux", arch="x64"):
         self.platform, self.arch = platform, arch
+        if platform == "windows":
+            path = self.repo / "build/upstream-cache.json"
+            manifest = json.loads(path.read_text())
+            manifest["sources"]["windows"] = synthetic_windows_source(self.repo)
+            self.write(path, json.dumps(manifest))
         if self.cache.exists():
             shutil.rmtree(self.cache)
         self.cache.mkdir()

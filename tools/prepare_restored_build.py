@@ -21,6 +21,7 @@ try:
     from .import_upstream_cache import CLANG, RUST, Miss, digest_file
     from .macos_runtime import bindgen_environment, runtime_environment
     from .macos_sdk_identity import sdk_content_identity, validated_sdk_content
+    from .platform_pins import load_pins
     from .restore_upstream_cache import linked, verify_restored
     from .upstream_object_cache import ninja_deps, ninja_log, write_json
     from .upstream_script_identity import ENDPOINTS
@@ -28,6 +29,7 @@ except ImportError:
     from import_upstream_cache import CLANG, RUST, Miss, digest_file
     from macos_runtime import bindgen_environment, runtime_environment
     from macos_sdk_identity import sdk_content_identity, validated_sdk_content
+    from platform_pins import load_pins
     from restore_upstream_cache import linked, verify_restored
     from upstream_object_cache import ninja_deps, ninja_log, write_json
     from upstream_script_identity import ENDPOINTS
@@ -645,8 +647,7 @@ def repair_linux_arm64_tool_script(src: Path) -> None:
 
 
 def verify_tooling(work: Path, platform: str, repo: Path = ROOT) -> None:
-    pins = dict(re.findall(r'^\s*(\w+) = "([^"\n]+)"',
-                           (repo / "build/ungoogled-revisions.psd1").read_text(), re.M))
+    pins = load_pins(repo, platform)
     names = {"ungoogled-chromium": pins["UngoogledCommit"]}
     if platform == "macos":
         names["ungoogled-chromium-macos"] = pins["UngoogledMacOSCommit"]

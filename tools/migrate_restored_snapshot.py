@@ -12,7 +12,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import stat
 import subprocess
@@ -23,14 +22,17 @@ import time
 try:
     from . import apply_restored_patches as arp
     from . import restore_upstream_cache as restore
+    from .platform_pins import LINUX_VERSION_FILE, load_pins
 except ImportError:
     import apply_restored_patches as arp
     import restore_upstream_cache as restore
+    from platform_pins import LINUX_VERSION_FILE, load_pins
 
 READY = ".chromix-source-ready"
 # Existing preparation entry points recognize both blockers.
 TRANSACTION = ".chromix-domain-substitution-in-progress"
-PIN_FILES = ("CHROMIUM_VERSION", "build/ungoogled-revisions.psd1", "build/upstream-cache.json")
+PIN_FILES = ("CHROMIUM_VERSION", "build/ungoogled-revisions.psd1", "build/upstream-cache.json",
+             LINUX_VERSION_FILE)
 SCRIPT_FILES = ("build/prepare-ungoogled.sh", "build/apply-patches.sh",
                 "tools/apply_restored_patches.py")
 PLATFORM_TOOLING = {
@@ -39,8 +41,26 @@ PLATFORM_TOOLING = {
 }
 
 
-def _same_inputs(previous: Path, repo: Path) -> None:
+def _pins(repo: Path, platform: str) -> dict:
+    for name in ("build/ungoogled-revisions.psd1", "CHROMIUM_VERSION"):
+        arp._read(repo, name)
+    if platform == "linux":
+        path = arp._path(repo, LINUX_VERSION_FILE)
+        if path.exists():
+            arp._read(repo, LINUX_VERSION_FILE)
+    return load_pins(repo, platform)
+
+
+def _same_inputs(previous: Path, repo: Path, platform: str = "linux") -> None:
     for name in (*PIN_FILES, *SCRIPT_FILES):
+        if name == LINUX_VERSION_FILE:
+            if platform != "linux":
+                continue
+            paths = [arp._path(root, name) for root in (previous, repo)]
+            if all(not path.exists() for path in paths):
+                continue
+            if not all(path.is_file() for path in paths):
+                raise arp.ApplyError(f"migration requires identical pins/preparation tooling: {name}")
         if arp._read(previous, name) != arp._read(repo, name):
             raise arp.ApplyError(f"migration requires identical pins/preparation tooling: {name}")
     for name in SCRIPT_FILES:
@@ -50,8 +70,7 @@ def _same_inputs(previous: Path, repo: Path) -> None:
 
 def source_ready_key(repo: Path, platform: str, arch: str) -> str:
     """Match prepare-ungoogled.sh's path-plus-content hash without running it."""
-    pins = dict(re.findall(r'^\s*(\w+) = "([^"\n]+)"',
-                           arp._read(repo, "build/ungoogled-revisions.psd1").decode(), re.M))
+    pins = _pins(repo, platform)
     names = ["build/prepare-ungoogled.sh", "build/apply-patches.sh", "patches/series"]
     names.extend(name for line in arp._read(repo, "patches/series").decode().splitlines()
                  if (name := line.split("#", 1)[0].strip()))
@@ -82,8 +101,7 @@ def _host_program(name: str, roots: tuple[Path, ...]) -> str:
 def _verify_tooling(work: Path, repo: Path, roots: tuple[Path, ...], platform: str) -> None:
     """Hash tracked files against pinned Git objects without invoking worktree filters."""
     git = _host_program("git", roots)
-    pins = dict(re.findall(r'^\s*(\w+) = "([^"\n]+)"',
-                           arp._read(repo, "build/ungoogled-revisions.psd1").decode(), re.M))
+    pins = _pins(repo, platform)
     environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
                        GIT_OPTIONAL_LOCKS="0", GIT_NO_REPLACE_OBJECTS="1", GIT_NO_LAZY_FETCH="1",
@@ -205,7 +223,7 @@ def migrate(workdir: Path | str, previous_repo: Path | str, repo: Path | str,
     for name in (TRANSACTION, arp.IN_PROGRESS):
         if _marker(src, name).exists():
             raise arp.ApplyError(f"in-progress/partial migration detected: {name}. {arp.CLEAN}")
-    _same_inputs(previous, repo)
+    _same_inputs(previous, repo, platform)
     old_receipt = restore.verify_restored(work, platform, arch, repo=previous)
     receipt = restore.verify_restored(work, platform, arch, repo=repo)
     if old_receipt != receipt:
@@ -255,7 +273,7 @@ def migrate(workdir: Path | str, previous_repo: Path | str, repo: Path | str,
         arp.run_apply(stage, repo, core, tooling, platform, program)
         arp.run_apply(stage, repo, core, tooling, platform, program, check=True)
         after = arp._snapshot(stage, old_names | names)
-        _same_inputs(previous, repo)
+        _same_inputs(previous, repo, platform)
         _verify_tooling(work, repo, roots, platform)
         if (arp._load(previous, core, tooling, platform) != (old_identity, old_patches, old_lite)
                 or arp._load(repo, core, tooling, platform) != (identity, patches, lite)

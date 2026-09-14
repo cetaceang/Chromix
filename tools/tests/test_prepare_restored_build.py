@@ -14,6 +14,7 @@ from unittest import mock
 
 from tools import prepare_restored_build as prepare
 from tools import restore_upstream_cache as restore
+from tools.tests.test_fetch_upstream_cache import synthetic_windows_source
 
 
 class PrepareRestoredBuildTest(unittest.TestCase):
@@ -51,7 +52,20 @@ class PrepareRestoredBuildTest(unittest.TestCase):
         path.chmod(0o755)
 
     def fixture(self, platform="macos", arch="arm64", donor_arch=None, *, host_arch=None):
-        identity, _, manifest = restore.identities(prepare.ROOT, platform, arch)
+        repo = prepare.ROOT
+        if platform == "windows":
+            repo = self.work / "fixture-repo"
+            for relative in ("CHROMIUM_VERSION", "CHROMIUM_LINUX_VERSION", "CHROMIUM_WINDOWS_VERSION",
+                             "build/ungoogled-revisions.psd1", "build/upstream-cache.json"):
+                source = prepare.ROOT / relative
+                if source.is_file():
+                    self.write(repo / relative, source.read_bytes())
+            path = repo / "build/upstream-cache.json"
+            manifest = json.loads(path.read_text())
+            manifest["sources"]["windows"] = synthetic_windows_source(repo)
+            self.write(path, json.dumps(manifest))
+        self.fixture_repo = repo
+        identity, _, manifest = restore.identities(repo, platform, arch)
         version = "\n".join(f"{key}={value}" for key, value in zip(
             ("MAJOR", "MINOR", "BUILD", "PATCH"), identity["chromium_version"].split(".")))
         self.write(self.src / "chrome/VERSION", version)
@@ -104,6 +118,30 @@ class PrepareRestoredBuildTest(unittest.TestCase):
             "sdks": [], "sysroots": {},
         }))
         return stack
+
+    def test_tooling_verification_selects_effective_linux_core(self):
+        values = prepare.load_pins(prepare.ROOT, "macos")
+        values.update(LinuxChromiumVersion="153.0.8010.36",
+                      LinuxUngoogledVersion="153.0.8010.36-1", LinuxUngoogledCommit="e" * 40,
+                      UngoogledLinuxVersion="153.0.8010.36-1", UngoogledLinuxCommit="f" * 40)
+        repo = self.work / "repo"
+        self.write(repo / "CHROMIUM_VERSION", values["ChromiumVersion"])
+        self.write(repo / "CHROMIUM_LINUX_VERSION", "153.0.8010.36")
+        if "WindowsChromiumVersion" in values:
+            self.write(repo / "CHROMIUM_WINDOWS_VERSION", values["WindowsChromiumVersion"])
+        self.write(repo / "build/ungoogled-revisions.psd1",
+                   "@{\n" + "".join(f'  {key} = "{value}"\n' for key, value in values.items()) + "}\n")
+        windows_core = prepare.load_pins(repo, "windows")["UngoogledCommit"]
+        for platform, expected in (("linux", "e" * 40), ("windows", windows_core)):
+            with self.subTest(platform=platform):
+                result = mock.Mock(stdout=expected + "\n")
+                with mock.patch.object(prepare.subprocess, "run", return_value=result) as run:
+                    prepare.verify_tooling(self.work, platform, repo)
+                self.assertEqual(run.call_count, 2)
+        with mock.patch.object(prepare.subprocess, "run", return_value=mock.Mock(
+                stdout=values["UngoogledCommit"] + "\n")):
+            with self.assertRaisesRegex(ValueError, "does not match repository pins"):
+                prepare.verify_tooling(self.work, "linux", repo)
 
     def test_internal_dependencies_keep_object_and_mtime(self):
         output = self.object("a.o")
@@ -555,7 +593,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
         with mock.patch.object(prepare, "host_identity", return_value=("linux", "x64")), \
                 mock.patch.object(prepare.subprocess, "run") as run:
             with self.assertRaisesRegex(ValueError, "native windows x64"):
-                prepare.prepare(self.work, "windows", "x64", phase="inspect")
+                prepare.prepare(self.work, "windows", "x64", phase="inspect", repo=self.fixture_repo)
         run.assert_not_called()
         report = json.loads((self.work / "upstream-cache-preparation.json").read_text())
         self.assertFalse(report["ready_for_gn"])
@@ -581,7 +619,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
     def test_windows_native_probe_uses_only_mocked_version_commands(self):
         self.fixture("windows", "x64")
         with self.native_context("windows", "x64"):
-            result = prepare.prepare(self.work, "windows", "x64")
+            result = prepare.prepare(self.work, "windows", "x64", repo=self.fixture_repo)
         self.assertTrue(result["native_tools"])
 
     def test_host_tool_failure_is_not_claimed_compatible(self):
@@ -1171,8 +1209,8 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                 self.out = self.src / "out/Default"
                 self.fixture(platform, arch)
                 with self.native_context(platform, arch), mock.patch.object(prepare, "linux_sysroot_identity") as identity:
-                    prepare.prepare(self.work, platform, arch, phase="inspect")
-                    result = prepare.prepare(self.work, platform, arch)
+                    prepare.prepare(self.work, platform, arch, phase="inspect", repo=self.fixture_repo)
+                    result = prepare.prepare(self.work, platform, arch, repo=self.fixture_repo)
                 identity.assert_not_called()
                 self.assertNotIn("sysroot_identity", result)
                 self.assertNotIn("sysroot_invalidations", result["counters"])

@@ -32,6 +32,7 @@ class ReconcileReleaseTest(unittest.TestCase):
         self.listings = {name: [item] for name, item in self.runs.items()}
         self.current = {item['id']: item for item in self.runs.values()}
         self.api = self.enterContext(patch.object(release, 'api', side_effect=self.fake_api))
+        self.source_version = release.source_version
         self.version = self.enterContext(patch.object(release, 'source_version', return_value=VERSION))
         self.gh = self.enterContext(patch.object(release, 'gh', side_effect=AssertionError('Unexpected GitHub call')))
         self.native = self.enterContext(patch.object(release, 'native_verification_passed', return_value=True))
@@ -229,15 +230,202 @@ class ReconcileReleaseTest(unittest.TestCase):
         name = next(iter(self.runs))
         latest = run(name, 999)
         self.listings[name].insert(0, latest)
-        self.version.side_effect = lambda repo, sha: '153.0.0.1' if sha == latest['head_sha'] else VERSION
+        self.version.side_effect = lambda repo, sha, platform: '153.0.0.1' if sha == latest['head_sha'] else VERSION
         self.assertEqual(reconcile.discover_runs(REPO, VERSION), self.runs)
 
-    def test_source_version_cache_is_shared_across_platforms(self):
+    def test_source_version_cache_is_shared_only_within_sha_and_platform(self):
         sha = next(iter(self.runs.values()))['head_sha']
         for name in self.runs:
             self.listings[name] = [{**self.runs[name], 'head_sha': sha}]
         self.assertEqual(len(reconcile.discover_runs(REPO, VERSION)), 6)
-        self.version.assert_called_once_with(REPO, sha)
+        self.assertEqual(self.version.call_count, 3)
+        self.assertEqual({call.args for call in self.version.call_args_list},
+                         {(REPO, sha, platform) for platform in ('linux', 'macos', 'windows')})
+
+    def test_same_sha_candidates_are_isolated_by_platform_version(self):
+        sha = 'a' * 40
+        linux_version = '153.0.8010.36'
+        for name in self.runs:
+            self.runs[name]['head_sha'] = sha
+        self.version.side_effect = lambda repo, commit, platform: linux_version if platform == 'linux' else VERSION
+        for version in (VERSION, linux_version):
+            with self.subTest(version=version):
+                self.version.reset_mock()
+                selected = reconcile.discover_runs(REPO, version)
+                expected = {name for name in self.runs if name.startswith('build-linux-') == (version == linux_version)}
+                self.assertEqual(set(selected), expected)
+                self.assertEqual({item['head_sha'] for item in selected.values()}, {sha})
+                self.assertEqual(self.version.call_count, 3)
+
+    def test_same_sha_platform_events_publish_only_their_version_group(self):
+        linux_version = '153.0.8010.36'
+        for candidate in self.runs.values():
+            candidate['head_sha'] = 'a' * 40
+        self.version.side_effect = lambda repo, sha, platform: linux_version if platform == 'linux' else VERSION
+        for event_run in self.runs.values():
+            version = linux_version if event_run['name'].startswith('build-linux-') else VERSION
+            with self.subTest(workflow=event_run['name']), \
+                    patch.object(reconcile, 'published_slots', return_value=set()), \
+                    patch.object(release, 'ready_run', side_effect=lambda repo, item: item), \
+                    patch.object(release, 'collect', return_value={}), patch.object(release, 'publish') as publish:
+                self.run_main({'workflow_run': event_run}, 'workflow_run', version=version)
+                expected = {name for name in self.runs if name.startswith('build-linux-') == (version == linux_version)}
+                self.assertEqual({call.args[1]['name'] for call in publish.call_args_list}, expected)
+                self.assertTrue(all(call.args[2] == 'v' + version for call in publish.call_args_list))
+
+    def test_event_readiness_and_queued_version_use_validated_platform(self):
+        linux_version = '153.0.8010.36'
+        self.version.side_effect = lambda repo, sha, platform: linux_version if platform == 'linux' else VERSION
+        for event_run in self.runs.values():
+            platform = release.WORKFLOW_PLATFORMS[event_run['name']]
+            version = linux_version if platform == 'linux' else VERSION
+            wrong_version = VERSION if platform == 'linux' else linux_version
+            with self.subTest(workflow=event_run['name']):
+                self.assertEqual(self.run_main({'workflow_run': event_run}, 'workflow_run', '--check-ready'),
+                                 f'ready=true\nversion={version}\n')
+                self.version.assert_called_with(REPO, event_run['head_sha'], platform)
+                with self.assertRaisesRegex(ValueError, 'validated event source version'):
+                    reconcile.requested_version(REPO, {'workflow_run': event_run}, 'workflow_run', wrong_version)
+
+    def test_platform_lookup_bound_counts_same_sha_separately_before_writes(self):
+        for candidate in self.runs.values():
+            candidate['head_sha'] = 'a' * 40
+        with patch.object(reconcile, 'MAX_VERSION_LOOKUPS', 1), \
+                patch.object(reconcile, 'published_slots') as slots, patch.object(release, 'publish') as publish:
+            with self.assertRaisesRegex(ValueError, 'lookup limit'):
+                reconcile.reconcile(REPO, VERSION)
+        self.version.assert_called_once_with(REPO, 'a' * 40, 'linux')
+        slots.assert_not_called()
+        publish.assert_not_called()
+
+    def test_linux_version_error_blocks_discovery_and_readiness_before_writes(self):
+        for error in (ValueError('Invalid Chromium version'),
+                      subprocess.CalledProcessError(1, ['gh', 'api'], stderr='gh: Forbidden (HTTP 403)')):
+            with self.subTest(error=type(error).__name__), \
+                    patch.object(reconcile, 'published_slots') as slots, patch.object(release, 'collect') as collect, \
+                    patch.object(release, 'publish') as publish:
+                self.version.side_effect = error
+                with self.assertRaises(type(error)):
+                    reconcile.reconcile(REPO, VERSION)
+                with self.assertRaises(type(error)):
+                    self.run_main({'workflow_run': self.runs['build-linux-x64']}, 'workflow_run', '--check-ready')
+                slots.assert_not_called()
+                collect.assert_not_called()
+                publish.assert_not_called()
+
+    def configure_windows_migration(self, windows_version='153.0.8010.36'):
+        sha = 'a' * 40
+        for candidate in self.runs.values():
+            candidate['head_sha'] = sha
+        pins = {'CHROMIUM_VERSION': VERSION, 'CHROMIUM_LINUX_VERSION': '153.0.8010.36',
+                'CHROMIUM_WINDOWS_VERSION': windows_version}
+
+        def source_contents(*args):
+            self.assertEqual(args[0], 'api')
+            self.assertEqual(args[2:], ('-H', 'Accept: application/vnd.github.raw+json'))
+            filename = args[1].split('/contents/')[1].split('?ref=')[0]
+            self.assertEqual(args[1], f'repos/{REPO}/contents/{filename}?ref={sha}')
+            value = pins[filename]
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+        self.gh.side_effect = source_contents
+        self.version.side_effect = self.source_version
+        return sha
+
+    def test_same_sha_linux_windows153_lookup_cache_keeps_all_three_platforms_separate(self):
+        sha = self.configure_windows_migration()
+        for version in ('153.0.8010.36', VERSION):
+            with self.subTest(version=version):
+                self.gh.reset_mock()
+                self.version.reset_mock()
+                selected = reconcile.discover_runs(REPO, version)
+                expected = {name for name in self.runs if name.startswith('build-macos-') == (version == VERSION)}
+                self.assertEqual(set(selected), expected)
+                self.assertEqual({candidate['head_sha'] for candidate in selected.values()}, {sha})
+                self.assertEqual(self.version.call_count, 3)
+                self.assertEqual({call.args for call in self.version.call_args_list},
+                                 {(REPO, sha, platform) for platform in ('linux', 'macos', 'windows')})
+                self.assertEqual(self.gh.call_count, 3)
+                self.assertEqual({call.args[1] for call in self.gh.call_args_list},
+                                 {f'repos/{REPO}/contents/{filename}?ref={sha}' for filename in
+                                  ('CHROMIUM_LINUX_VERSION', 'CHROMIUM_WINDOWS_VERSION', 'CHROMIUM_VERSION')})
+
+    def test_same_sha_linux_windows153_events_publish_only_matching_version_slots(self):
+        self.configure_windows_migration()
+        for event_run in self.runs.values():
+            version = VERSION if event_run['name'].startswith('build-macos-') else '153.0.8010.36'
+            with self.subTest(workflow=event_run['name']), \
+                    patch.object(reconcile, 'published_slots', return_value=set()), \
+                    patch.object(release, 'ready_run', side_effect=lambda repo, item: item), \
+                    patch.object(release, 'collect', return_value={}) as collect, patch.object(release, 'publish') as publish:
+                self.run_main({'workflow_run': event_run}, 'workflow_run', version=version)
+                expected = {name for name in self.runs if name.startswith('build-macos-') == (version == VERSION)}
+                for operation in (collect, publish):
+                    self.assertEqual(operation.call_count, len(expected))
+                    self.assertEqual({call.args[1]['name'] for call in operation.call_args_list}, expected)
+                self.assertEqual({call.args[2] for call in publish.call_args_list}, {'v' + version})
+
+    def test_windows153_readiness_rejects_queued_shared_version(self):
+        sha = self.configure_windows_migration()
+        for event_run in self.runs.values():
+            platform = release.WORKFLOW_PLATFORMS[event_run['name']]
+            version = VERSION if platform == 'macos' else '153.0.8010.36'
+            wrong = '153.0.8010.36' if platform == 'macos' else VERSION
+            with self.subTest(workflow=event_run['name']):
+                self.assertEqual(self.run_main({'workflow_run': event_run}, 'workflow_run', '--check-ready'),
+                                 f'ready=true\nversion={version}\n')
+                self.version.assert_called_with(REPO, sha, platform)
+                with self.assertRaisesRegex(ValueError, 'validated event source version'):
+                    self.run_main({'workflow_run': event_run}, 'workflow_run', '--check-ready', version=wrong)
+
+    def test_windows_lookup_counts_separately_even_when_linux_has_same_version(self):
+        sha = self.configure_windows_migration()
+        with patch.object(reconcile, 'MAX_VERSION_LOOKUPS', 2), \
+                patch.object(reconcile, 'published_slots') as slots, patch.object(release, 'collect') as collect, \
+                patch.object(release, 'publish') as publish:
+            with self.assertRaisesRegex(ValueError, 'lookup limit'):
+                reconcile.reconcile(REPO, '153.0.8010.36')
+        self.assertEqual([call.args for call in self.version.call_args_list],
+                         [(REPO, sha, 'linux'), (REPO, sha, 'macos')])
+        slots.assert_not_called()
+        collect.assert_not_called()
+        publish.assert_not_called()
+
+    def test_missing_windows_pin_preserves_legacy_discovery_only_on_exact_404(self):
+        sha = self.configure_windows_migration(subprocess.CalledProcessError(
+            1, ['gh', 'api'], stderr='gh: Not Found (HTTP 404)\n'))
+        selected = reconcile.discover_runs(REPO, VERSION)
+        self.assertEqual(set(selected), {name for name in self.runs if not name.startswith('build-linux-')})
+        self.assertEqual(self.version.call_count, 3)
+        self.assertEqual([call.args[1] for call in self.gh.call_args_list],
+                         [f'repos/{REPO}/contents/{filename}?ref={sha}' for filename in
+                          ('CHROMIUM_LINUX_VERSION', 'CHROMIUM_VERSION', 'CHROMIUM_WINDOWS_VERSION', 'CHROMIUM_VERSION')])
+
+    def test_windows_pin_errors_abort_discovery_and_readiness_without_fallback_or_writes(self):
+        cases = [('', ValueError), ('153.0.8010.36-1.1', ValueError)]
+        cases += [(subprocess.CalledProcessError(1, ['gh', 'api'], stderr=message), subprocess.CalledProcessError)
+                  for message in ('gh: Forbidden (HTTP 403)', 'gh: API rate limit exceeded (HTTP 429)',
+                                  'gh: Server Error (HTTP 500)', 'gh: Not Found (HTTP 404) extra')]
+        for value, error_type in cases:
+            with self.subTest(value=value), patch.object(reconcile, 'published_slots') as slots, \
+                    patch.object(release, 'collect') as collect, patch.object(release, 'publish') as publish:
+                sha = self.configure_windows_migration(value)
+                self.gh.reset_mock()
+                with self.assertRaises(error_type):
+                    reconcile.reconcile(REPO, '153.0.8010.36')
+                self.assertEqual(self.gh.call_count, 3)
+                self.assertEqual(self.gh.call_args.args[1], f'repos/{REPO}/contents/CHROMIUM_WINDOWS_VERSION?ref={sha}')
+                for workflow in ('build-win-x64-github', 'build-win-arm64-github'):
+                    self.gh.reset_mock()
+                    with self.assertRaises(error_type):
+                        self.run_main({'workflow_run': self.runs[workflow]}, 'workflow_run', '--check-ready')
+                    self.assertEqual(self.gh.call_count, 1)
+                    self.assertIn('/contents/CHROMIUM_WINDOWS_VERSION?ref=', self.gh.call_args.args[1])
+                slots.assert_not_called()
+                collect.assert_not_called()
+                publish.assert_not_called()
 
     def test_invalid_workflow_repository_does_not_publish(self):
         name = next(iter(self.runs))
@@ -416,7 +604,7 @@ class ReconcileReleaseTest(unittest.TestCase):
                 self.assertEqual(reconcile.requested_version(REPO, {'workflow_run': event_run},
                                                              'workflow_run', ''), VERSION)
                 ready.assert_not_called()
-                self.version.assert_called_with(REPO, event_run['head_sha'])
+                self.version.assert_called_with(REPO, event_run['head_sha'], 'linux')
 
     def test_changed_event_identity_is_rejected(self):
         event_run = next(iter(self.runs.values()))

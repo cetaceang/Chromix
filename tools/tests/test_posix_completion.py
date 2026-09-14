@@ -45,6 +45,8 @@ class PosixCompletionTest(unittest.TestCase):
             elif args == ["-", str(repo), str(work / "dist" / os.environ["TEST_ASSET"]),
                           str(work / "smoke")]:
                 kind = "extract"
+            elif args[:1] == [str(repo / "tools/platform_pins.py")]:
+                kind = "pins"
             elif args[:1] == [str(repo / "tools/verify_linux_bundle.py")]:
                 kind = "static"
             else:
@@ -88,6 +90,7 @@ class PosixCompletionTest(unittest.TestCase):
             path.chmod(0o755)
         tools = repo / "tools"
         tools.mkdir(exist_ok=True)
+        shutil.copy2(REPO / "tools/platform_pins.py", tools / "platform_pins.py")
         shutil.copy2(REPO / "tools/fingerprint-requirements.txt",
                      tools / "fingerprint-requirements.txt")
         (tools / "fingerprint_acceptance.py").write_text(textwrap.dedent('''\
@@ -113,7 +116,8 @@ class PosixCompletionTest(unittest.TestCase):
             assert browser.is_file() and os.access(browser, os.X_OK)
             digest = hashlib.sha256(browser.read_bytes()).hexdigest()
             assert args.expected_sha256 == digest
-            version = (repo / "CHROMIUM_VERSION").read_text().strip()
+            from platform_pins import load_pins
+            version = load_pins(repo, os.environ["TEST_PLATFORM"])["ChromiumVersion"]
             assert args.expected_version == version
             identified = subprocess.run([str(browser), "--version"], check=True,
                                         capture_output=True, text=True, timeout=1)
@@ -162,8 +166,20 @@ class PosixCompletionTest(unittest.TestCase):
         extractor = repo / "sdk/python/chromix/_binary.py"
         extractor.parent.mkdir(parents=True)
         shutil.copy2(REPO / "sdk/python/chromix/_binary.py", extractor)
-        version = (REPO / "CHROMIUM_VERSION").read_text().strip()
-        (repo / "CHROMIUM_VERSION").write_text(version + "\n")
+        version = "153.0.8010.36" if platform == "linux" else "152.0.7977.82"
+        (repo / "CHROMIUM_VERSION").write_text("152.0.7977.82\n")
+        (repo / "CHROMIUM_LINUX_VERSION").write_text("153.0.8010.36\n")
+        (repo / "build/ungoogled-revisions.psd1").write_text(
+            '@{\n  ChromiumVersion = "152.0.7977.82"\n'
+            '  UngoogledVersion = "152.0.7977.82-1"\n'
+            f'  UngoogledCommit = "{"a" * 40}"\n'
+            '  LinuxChromiumVersion = "153.0.8010.36"\n'
+            '  LinuxUngoogledVersion = "153.0.8010.36-1"\n'
+            f'  LinuxUngoogledCommit = "{"b" * 40}"\n'
+            '  UngoogledLinuxVersion = "153.0.8010.36-1"\n'
+            f'  UngoogledLinuxCommit = "{"c" * 40}"\n'
+            '  UngoogledMacOSVersion = "152.0.7977.82-1.1"\n'
+            f'  UngoogledMacOSCommit = "{"d" * 40}"\n}}\n')
         source_report = work / "fingerprint-diagnostics/source-final.json"
         source_report.parent.mkdir()
         source_receipt = {"fixture": "verified", "source_root": str(work / "src")}
@@ -221,7 +237,8 @@ class PosixCompletionTest(unittest.TestCase):
         env.update({"TEST_SEED": str(seed), "LAUNCH_TEST_LOG": str(launch_log),
                     "GITHUB_OUTPUT": str(github_output), "TEST_GATE_FAILURE": gate_failure or "",
                     "TEST_REAL_TIMEOUT": shutil.which("timeout"), "TEST_ASSET": asset,
-                    "TEST_BROWSER_RELATIVE": native_relative, "PYTHONDONTWRITEBYTECODE": "1",
+                    "TEST_BROWSER_RELATIVE": native_relative, "TEST_PLATFORM": platform,
+                    "PYTHONDONTWRITEBYTECODE": "1",
                     "PYTHONOPTIMIZE": "0", "PIP_NO_INDEX": "1", "PIP_CONFIG_FILE": os.devnull})
         bindir = root / "bin"
         bindir.mkdir()
@@ -252,6 +269,7 @@ class PosixCompletionTest(unittest.TestCase):
                 if cross:
                     expected_calls.append("static")
                 else:
+                    expected_calls.append("pins")
                     expected_calls.extend(["smoke"] if platform == "macos" else ["timeout", "timeout"])
                     if not smoke_failure:
                         expected_calls.extend(["timeout", "pip"])

@@ -23,6 +23,16 @@ WORKFLOWS = {
     "build-win-arm64-github": ("chromix-win-arm64",),
 }
 ASSETS = {name + ".zip" for names in WORKFLOWS.values() for name in names}
+WORKFLOW_PLATFORMS = {
+    "build-linux-x64": "linux",
+    "build-linux-arm64": "linux",
+    "build-macos-x64": "macos",
+    "build-macos-arm64": "macos",
+    "build-win-x64-github": "windows",
+    "build-win-arm64-github": "windows",
+}
+ASSET_PLATFORMS = {name + ".zip": WORKFLOW_PLATFORMS[workflow]
+                   for workflow, names in WORKFLOWS.items() for name in names}
 ARTIFACT_NAMES = {"chromix-win-arm64": "win-arm64"}
 ARM64_WORKFLOW = "build-win-arm64-github"
 ARM64_NATIVE_JOB = "native Windows ARM64 bundle and fingerprint verification"
@@ -42,7 +52,7 @@ def native_verification_passed(repo: str, run: dict) -> bool:
 
 
 def gh(*args: str) -> str:
-    return subprocess.check_output(["gh", *args], text=True).strip()
+    return subprocess.check_output(["gh", *args], text=True, stderr=subprocess.PIPE).strip()
 
 
 def api(repo: str, path: str):
@@ -255,7 +265,8 @@ def collect(repo: str, run: dict, root: Path) -> dict[str, Path]:
     names = validate_run(run, repo)
     if not native_verification_passed(repo, run):
         raise ValueError("Windows ARM64 native verification has not passed for this run attempt")
-    version = source_version(repo, run["head_sha"]) if run["name"] == ARM64_WORKFLOW else None
+    version = (source_version(repo, run["head_sha"], WORKFLOW_PLATFORMS[run["name"]])
+               if run["name"] == ARM64_WORKFLOW else None)
     result = {}
     for name in names:
         dest = root / name
@@ -277,20 +288,33 @@ def collect(repo: str, run: dict, root: Path) -> dict[str, Path]:
     return result
 
 
-def source_version(repo: str, sha: str) -> str:
+def source_version(repo: str, sha: str, platform: str | None = None) -> str:
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError("Invalid source commit")
-    version = gh("api", f"repos/{repo}/contents/CHROMIUM_VERSION?ref={sha}",
-                 "-H", "Accept: application/vnd.github.raw+json")
+    if platform not in (None, "linux", "macos", "windows"):
+        raise ValueError("Unknown release platform")
+    filename = {"linux": "CHROMIUM_LINUX_VERSION", "windows": "CHROMIUM_WINDOWS_VERSION"}.get(
+        platform, "CHROMIUM_VERSION")
+    try:
+        version = gh("api", f"repos/{repo}/contents/{filename}?ref={sha}",
+                     "-H", "Accept: application/vnd.github.raw+json")
+    except subprocess.CalledProcessError as error:
+        # Only GitHub's exact missing-file response permits legacy shared pins.
+        if (platform not in ("linux", "windows") or error.returncode != 1 or not isinstance(error.stderr, str)
+                or error.stderr.rstrip("\r\n") != "gh: Not Found (HTTP 404)"):
+            raise
+        version = gh("api", f"repos/{repo}/contents/CHROMIUM_VERSION?ref={sha}",
+                     "-H", "Accept: application/vnd.github.raw+json")
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+", version):
         raise ValueError("Invalid Chromium version in the built commit")
     return version
 
 
-def validate_release_revision(repo: str, tag: str, head_sha: str | None, release: dict | None) -> str:
+def validate_release_revision(repo: str, tag: str, head_sha: str | None, release: dict | None,
+                              platform: str | None = None) -> str:
     if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+", tag):
         raise ValueError("Invalid release version tag")
-    if head_sha is not None and source_version(repo, head_sha) != tag[1:]:
+    if head_sha is not None and source_version(repo, head_sha, platform) != tag[1:]:
         raise ValueError("Incoming source Chromium version does not match release tag")
     refs = api(repo, f"git/matching-refs/tags/{tag}")
     ref = next((ref for ref in refs if ref["ref"] == f"refs/tags/{tag}"), None)
@@ -313,8 +337,17 @@ def validate_release_revision(repo: str, tag: str, head_sha: str | None, release
         pinned_sha = target
     if pinned_sha is None:
         raise ValueError("No verifiable release commit")
-    if pinned_sha != head_sha and source_version(repo, pinned_sha) != tag[1:]:
-        raise ValueError("Pinned tag commit Chromium version does not match release tag")
+    asset_platforms = {ASSET_PLATFORMS[asset["name"]] for asset in release.get("assets", [])
+                       if asset["name"] in ASSET_PLATFORMS} if release else set()
+    # Recovery has no incoming run; every known asset must belong to this tag's version.
+    platforms = set(asset_platforms)
+    if head_sha is not None or platform is not None or not platforms:
+        platforms.add(platform)
+    for candidate in sorted(platforms, key=lambda value: value or ""):
+        if head_sha is not None and pinned_sha == head_sha and candidate == platform:
+            continue
+        if source_version(repo, pinned_sha, candidate) != tag[1:]:
+            raise ValueError("Pinned tag commit Chromium version does not match release tag")
     if release:
         target = release.get("target_commitish", "")
         if re.fullmatch(r"[0-9a-fA-F]{40}", target) and target.lower() != pinned_sha:
@@ -402,9 +435,10 @@ def publish(repo: str, run: dict, tag: str, bundles: dict[str, Path], root: Path
     if set(bundles) != assets or any(path.name != name for name, path in bundles.items()):
         raise ValueError("Only the triggering platform's verified browser bundles may be published")
     head_sha = run["head_sha"]
+    platform = WORKFLOW_PLATFORMS[run["name"]]
     releases = json.loads(gh("api", "--paginate", "--slurp", f"repos/{repo}/releases?per_page=100"))
     release = next((r for page in releases for r in page if r["tag_name"] == tag), None)
-    pinned_sha = validate_release_revision(repo, tag, head_sha, release)
+    pinned_sha = validate_release_revision(repo, tag, head_sha, release, platform)
     if run["name"] == ARM64_WORKFLOW:
         for path in bundles.values():
             validate_bundle(path, tag[1:])
@@ -442,7 +476,7 @@ def publish(repo: str, run: dict, tag: str, bundles: dict[str, Path], root: Path
     if not ready_run(repo, run):
         print(f"Pending release for {head_sha}: platform run changed during artifact verification")
         return
-    if validate_release_revision(repo, tag, head_sha, release) != pinned_sha:
+    if validate_release_revision(repo, tag, head_sha, release, platform) != pinned_sha:
         raise ValueError("Pinned release commit changed during artifact verification")
     manifest = root / "SHA256SUMS"
     additions = "".join(f"{hashes[name]}  {name}\n" for name in sorted(set(hashes) - set(old_hashes)))
@@ -532,7 +566,7 @@ def main(argv: list[str] | None = None) -> None:
         return
     if not run:
         return
-    version = source_version(repo, run["head_sha"])
+    version = source_version(repo, run["head_sha"], WORKFLOW_PLATFORMS[run["name"]])
     with tempfile.TemporaryDirectory(prefix="chromix-release-") as directory:
         root = Path(directory)
         bundles = collect(repo, run, root)

@@ -297,7 +297,8 @@ if [ "$PLATFORM" = linux ] && [ "$HOST_ARCH" != "$ARCH" ]; then
   exit 0
 fi
 
-CHROMIUM_VERSION_PIN="$(tr -d '\n' < "$REPO/CHROMIUM_VERSION")"
+CHROMIUM_VERSION_PIN="$(python3 "$REPO/tools/platform_pins.py" --repo "$REPO" \
+  --platform "$PLATFORM" --field ChromiumVersion)"
 if [ "$PLATFORM" = macos ]; then
   if python3 "$REPO/tools/macos_browser_smoke.py" --launcher "$LAUNCHER" \
       --output "$WORK/runtime-smoke-stage-$STAGE_INDEX" --profile "$SMOKE_DIR/profile" \

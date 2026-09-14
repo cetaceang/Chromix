@@ -2,7 +2,6 @@
 # Prepare Chromium -> ungoogled core -> platform overlay -> prune -> Chromix.
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REVISION_FILE="$REPO/build/ungoogled-revisions.psd1"
 WORK="${1:?usage: prepare-ungoogled.sh WORKDIR linux|macos [x64|arm64]}"
 PLATFORM="${2:?platform is required}"
 ARCH="${3:-x64}"
@@ -21,7 +20,7 @@ CACHE="$WORK/download_cache"
 SRC="$WORK/src"
 READY="$SRC/.chromix-source-ready"
 revision() {
-  sed -n "s/^[[:space:]]*$1 = \"\([^\"]*\)\"/\1/p" "$REVISION_FILE"
+  python3 "$REPO/tools/platform_pins.py" --repo "$REPO" --platform "$PLATFORM" --field "$1"
 }
 CHROMIUM_VERSION="$(revision ChromiumVersion)"
 CORE_COMMIT="$(revision UngoogledCommit)"
@@ -96,7 +95,10 @@ test "$CORE_VERSION" = "$(revision UngoogledVersion)"
 if [ "$PLATFORM" = macos ]; then
   test "$CORE_VERSION.$(cat "$PLATFORM_REPO/revision.txt")" = "$PLATFORM_VERSION"
 else
-  test "$CORE_VERSION" = "$PLATFORM_VERSION"
+  case "$PLATFORM_VERSION" in
+    "$CORE_VERSION"|"$CORE_VERSION".*) ;;
+    *) echo "portablelinux version does not match the pinned core: $PLATFORM_VERSION" >&2; exit 1 ;;
+  esac
 fi
 if [ "$RESTORED" -eq 1 ]; then
   PATCH_BIN="${PATCH_BIN:-$(command -v gpatch || command -v patch)}"
@@ -114,24 +116,45 @@ if [ "$RESTORED" -eq 1 ]; then
   exit 0
 fi
 if [ "$PLATFORM" = linux ]; then
-  # The pinned patch's short import hunk silently hides four Rust ARM64 hunks.
-  python3 - "$PLATFORM_PATCHES/ungoogled-chromium/portablelinux/fix-compiling-on-arm64.patch" <<'PY'
+  # Recovery payloads are bound to exact pins and independently checked bytes.
+  python3 - "$PLATFORM_PATCHES/ungoogled-chromium/portablelinux/fix-compiling-on-arm64.patch" \
+    "$CHROMIUM_VERSION" "$CORE_COMMIT" "$PLATFORM_COMMIT" "$PLATFORM_VERSION" \
+    "$REPO/build/linux/recovery/153.0.8010.36-1-arm64.patch" <<'PY'
 import hashlib
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
+pin = tuple(sys.argv[2:5])
+legacy_pin = ('152.0.7977.82', 'e71b91c6e336d0f25cfc6b9ef09298a9d2506e24',
+              '02c59ed68d1963a647bb478064823d114e466ffb')
+recovery_pin = ('153.0.8010.36', 'dd8fb9b5c837982faf41ba58cd30a5664e77c329',
+                'a5ffa5e4a9fb722b97a5cf7966e29450a150c3dd')
+if pin != legacy_pin and (pin != recovery_pin or sys.argv[5] != '153.0.8010.36-1'):
+    raise SystemExit(
+        f'portablelinux ARM64 patch repair is unverified for {sys.argv[2]} '
+        f'({sys.argv[4]}, {sys.argv[5]}); refusing cold preparation: {path}')
 try:
     content = path.read_bytes()
 except FileNotFoundError:
     raise SystemExit(f'missing portablelinux ARM64 patch: {path}')
-bad = (b'--- a/tools/rust/build_rust.py\n'
-       b'+++ b/tools/rust/build_rust.py\n'
-       b'@@ -55,7 +55,7 @@')
-good = bad.replace(b'-55,7 +55,7', b'-55,8 +55,8')
-corrected = content.replace(bad, good, 1)
-# Exact corrected payload from portablelinux 02c59ed68d1963a647bb478064823d114e466ffb.
-expected = 'bf1e5d6978c5b3b5121336b673ea5138941e9d1e28d00cf47c232ec08521f0e1'
+if pin == legacy_pin:
+    bad = (b'--- a/tools/rust/build_rust.py\n'
+           b'+++ b/tools/rust/build_rust.py\n'
+           b'@@ -55,7 +55,7 @@')
+    good = bad.replace(b'-55,7 +55,7', b'-55,8 +55,8')
+    corrected = content.replace(bad, good, 1)
+    expected = 'bf1e5d6978c5b3b5121336b673ea5138941e9d1e28d00cf47c232ec08521f0e1'
+else:
+    original = '4a848abdacb9b677b3d309a8a8b6597250aeaf4c1b4a009f16faf490e55103ad'
+    expected = 'b27db03071f007b40af4861b73a40af7c73c5d8cb2be3f6aada471b1fa2cbb1a'
+    if hashlib.sha256(content).hexdigest() not in (original, expected):
+        raise SystemExit(f'unexpected portablelinux ARM64 patch; review pinned workaround: {path}')
+    recovery = Path(sys.argv[6])
+    try:
+        corrected = recovery.read_bytes()
+    except FileNotFoundError:
+        raise SystemExit(f'missing portablelinux ARM64 recovery payload: {recovery}')
 if hashlib.sha256(corrected).hexdigest() != expected:
     raise SystemExit(f'unexpected portablelinux ARM64 patch; review pinned workaround: {path}')
 if corrected != content:

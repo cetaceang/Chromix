@@ -83,7 +83,6 @@ concurrency:
 env:
   DEPOT_TOOLS_METRICS: '0'
   DEPOT_TOOLS_COLLECT_METRICS: '0'
-  CHROMIUM_VERSION: '152.0.7977.82'
   CHROMIX_JOBS: ${{ inputs.compile_jobs }}
 
 jobs:
@@ -194,6 +193,15 @@ NODE_PY = """      - name: Set up Node.js
           python-version: '3.13'
 """
 
+PIN_VERSION = """      - name: Resolve platform Chromium version
+        env:
+          BUILD_PLATFORM: ${{ inputs.platform }}
+        run: |
+          set -euo pipefail
+          CHROMIUM_VERSION="$(python3 tools/platform_pins.py --platform "$BUILD_PLATFORM" --field ChromiumVersion)"
+          echo "CHROMIUM_VERSION=$CHROMIUM_VERSION" >> "$GITHUB_ENV"
+"""
+
 SDK_PREFLIGHT = """      - name: Verify complete Mac SDK contents
         if: runner.os == 'macOS' && inputs.use_upstream_cache
         run: python3 tools/inspect_macos_sdk.py --report "${RUNNER_TEMP}/chromix-logs/sdk-content.json"
@@ -205,7 +213,7 @@ CACHE_RESTORE = """      # The pinned download cache is deliberately outside the
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/chromix-build/download_cache
-          key: ${{ runner.os }}-${{ inputs.platform }}-${{ inputs.arch }}-downloads-v2-${{ env.CHROMIUM_VERSION }}-${{ hashFiles('build/ungoogled-revisions.psd1', 'build/prepare-ungoogled.sh') }}
+          key: ${{ runner.os }}-${{ inputs.platform }}-${{ inputs.arch }}-downloads-v2-${{ env.CHROMIUM_VERSION }}-${{ hashFiles('CHROMIUM_VERSION', 'CHROMIUM_LINUX_VERSION', 'build/ungoogled-revisions.psd1', 'tools/platform_pins.py', 'build/prepare-ungoogled.sh') }}
           restore-keys: |
             ${{ runner.os }}-${{ inputs.platform }}-${{ inputs.arch }}-downloads-v2-
 """
@@ -475,6 +483,7 @@ def job(stage: int) -> str:
     parts.append(LINUX_CLEAN)
     parts.append(MAC_STEPS)
     parts.append(NODE_PY)
+    parts.append(PIN_VERSION)
     parts.append(SDK_PREFLIGHT)
     if stage == 1:
         parts.append(RESUME_STEPS)
@@ -506,7 +515,7 @@ NATIVE_LINUX_ARM64 = """  verify-linux-arm64:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Install runtime libraries
+""" + PIN_VERSION + """      - name: Install runtime libraries
         run: |
           sudo apt-get update
           sudo apt-get install -y apparmor-utils libasound2t64 libatk1.0-0t64 libatk-bridge2.0-0t64 \\
@@ -540,6 +549,7 @@ NATIVE_LINUX_ARM64 = """  verify-linux-arm64:
             "${RUNNER_TEMP}/chromix-native-smoke/chromix/chrome"
           python3 "${GITHUB_WORKSPACE}/tools/verify_linux_bundle.py" \\
             --bundle-dir "${RUNNER_TEMP}/chromix-native-smoke/chromix" --arch arm64 --runtime \\
+            --chromium-version "$CHROMIUM_VERSION" \\
             2>&1 | tee "${RUNNER_TEMP}/chromix-linux-arm64-native-smoke.log"
       - name: Download same-run source verification receipt
         uses: actions/download-artifact@v4
@@ -554,7 +564,7 @@ NATIVE_LINUX_ARM64 = """  verify-linux-arm64:
           BROWSER="${RUNNER_TEMP}/chromix-native-smoke/chromix/chrome"
           HASH="$(sha256sum "$BROWSER" | cut -d ' ' -f 1)"
           timeout -k 30s 2100s python3 tools/fingerprint_acceptance.py \\
-            --browser "$BROWSER" --expected-sha256 "$HASH" \\
+            --browser "$BROWSER" --expected-sha256 "$HASH" --expected-version "$CHROMIUM_VERSION" \\
             --source-report "${RUNNER_TEMP}/chromix-native-source/source-final.json" \\
             --output-dir "${RUNNER_TEMP}/chromix-native-fingerprint"
       - name: Upload native verification diagnostics

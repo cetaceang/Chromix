@@ -389,7 +389,7 @@ class RuntimeTest(unittest.TestCase):
         self.popen.assert_not_called()
 
     def test_cli_reads_repository_version_by_default_and_allows_override(self):
-        pinned = (REPO / "CHROMIUM_VERSION").read_text().strip()
+        pinned = verify.load_pins(REPO, "linux")["ChromiumVersion"]
         for version, extra in ((pinned, []), ("100.1.2.3", ["--chromium-version", "100.1.2.3"])):
             with self.subTest(version=version):
                 self.popen.reset_mock()
@@ -404,6 +404,32 @@ class RuntimeTest(unittest.TestCase):
                 self.assertEqual(report["runtime"]["chromium_version"], version)
                 self.assertEqual(report["runtime"]["status"], "passed")
                 self.assert_clean()
+
+    def test_linux_default_uses_override_and_rejects_partial_pins_before_launch(self):
+        self.patch(verify, "REPO", self.root)
+        (self.root / "CHROMIUM_VERSION").write_text("152.0.7977.82\n")
+        (self.root / "CHROMIUM_LINUX_VERSION").write_text("153.0.8010.36\n")
+        (self.root / "build").mkdir()
+        pins = self.root / "build/ungoogled-revisions.psd1"
+        pins.write_text('@{\n'
+                        '  ChromiumVersion = "152.0.7977.82"\n'
+                        '  UngoogledVersion = "152.0.7977.82-1"\n'
+                        f'  UngoogledCommit = "{"a" * 40}"\n'
+                        '  LinuxChromiumVersion = "153.0.8010.36"\n'
+                        '  LinuxUngoogledVersion = "153.0.8010.36-1"\n'
+                        f'  LinuxUngoogledCommit = "{"b" * 40}"\n'
+                        '  UngoogledLinuxVersion = "153.0.8010.36-1"\n'
+                        f'  UngoogledLinuxCommit = "{"c" * 40}"\n'
+                        '}\n')
+        self.processes[0] = FakeProcess(b"Chromium 153.0.8010.36\n")
+        result = verify.runtime_smoke(self.bundle, "arm64")
+        self.assertEqual(result["runtime"]["chromium_version"], "153.0.8010.36")
+        self.assert_clean()
+        self.popen.reset_mock()
+        (self.root / "CHROMIUM_LINUX_VERSION").unlink()
+        with self.assertRaisesRegex(ValueError, "must all be present"):
+            verify.runtime_smoke(self.bundle, "arm64")
+        self.popen.assert_not_called()
 
     def test_invalid_expected_version_does_not_launch_browser(self):
         for version in ("", "152", "152.0.7977.82\nanything"):
