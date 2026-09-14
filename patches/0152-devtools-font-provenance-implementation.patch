@@ -32,7 +32,7 @@ diff --git a/third_party/blink/renderer/core/inspector/inspector_css_agent.cc b/
 +    return String();
 +  }
 +  std::vector<SkFontTableTag> tags(count);
-+  if (typeface.getTableTags(tags.data()) != count) {
++  if (typeface.readTableTags(tags) != count) {
 +    return String();
 +  }
 +  std::sort(tags.begin(), tags.end());
@@ -74,7 +74,7 @@ diff --git a/third_party/blink/renderer/core/inspector/inspector_css_agent.cc b/
 +  }
 +  DigestValue result;
 +  return digest.Finish(result)
-+             ? String::FromUTF8(base::HexEncodeLower(result))
++             ? String::FromUtf8(base::HexEncodeLower(result))
 +             : String();
 +}
 +
@@ -158,7 +158,7 @@ diff --git a/third_party/blink/renderer/core/inspector/inspector_css_agent.cc b/
 +                     .setIsCustomFont(font.key.first == 1)
 +                     .setGlyphCount(value.glyph_count)
 +                     .build();
-+    if (!value.table_hash.IsEmpty()) {
++    if (!value.table_hash.empty()) {
 +      usage->setFontTableHash(value.table_hash);
 +      usage->setFontTableHashAlgorithm("chromix-font-tables-v1-sha256");
 +    }
