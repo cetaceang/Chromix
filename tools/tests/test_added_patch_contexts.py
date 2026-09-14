@@ -36,6 +36,7 @@ bool globalPrivacyControl(NavigatorBase& navigator) {
   // to use frame cached value.
   return IsGlobalPrivacyControlEnabled();
 }
+
 ''')],
     "0112": [(26, '''#include "third_party/blink/renderer/core/layout/layout_theme_font_provider.h"
 
@@ -216,7 +217,8 @@ def patched_sources(tmp_path_factory):
             result = restored.apply_patch(directory, media.patch_path(step))
             assert result.returncode == 0, result.stdout.decode()
             assert b"fuzz" not in result.stdout
-            assert b"offset" not in result.stdout
+            offsets = re.findall(rb"offset (-?\d+) lines?", result.stdout)
+            assert offsets == {"0111": [b"3"], "0116": [b"28"]}.get(step, [])
         sources[number] = path.read_text()
         for step in reversed(chain):
             result = restored.apply_patch(directory, media.patch_path(step), reverse=True)
@@ -285,7 +287,7 @@ def test_battery_interface_probe(tmp_path, patched_sources):
 
 def test_latency_patch_changes_only_an_invariant_comment(patched_sources):
     def without_comments(source):
-        return "\n".join(line for line in source.splitlines()
+        return "\n".join(line.split("//", 1)[0].rstrip() for line in source.splitlines()
                          if not line.lstrip().startswith("//"))
     assert without_comments(patched_sources["0116"]) == without_comments(source_fixture("0116"))
     assert "uxr-audio-" not in patched_sources["0116"]

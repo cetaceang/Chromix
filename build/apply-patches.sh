@@ -15,7 +15,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   [ -f "$patch" ] || { echo "patch listed in series is missing: $rel" >&2; exit 1; }
   printf '  [apply] %s\n' "$(basename "$rel")"
   patch_bin="${PATCH_BIN:-$(command -v gpatch || command -v patch)}"
-  "$patch_bin" -p1 --batch --forward -i "$patch"
+  "$patch_bin" -p1 --fuzz=0 --batch --forward -i "$patch"
   ok=$((ok + 1))
 done < "$SERIES"
 

@@ -10,10 +10,10 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
  
  #include <algorithm>
  #include <memory>
-@@ -2072,6 +2074,34 @@
-       }
+@@ -2073,5 +2075,34 @@
      }
    }
+-}
 +  // Configure the existing emulation backend once, after native widget sizing.
 +  // Subsequent resize/zoom events flow through its normal visual-properties
 +  // path. Fixed view_size intentionally stays fixed until a CDP update.
@@ -42,10 +42,11 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
 +      EnableDeviceEmulation(params, mojom::blink::DeviceEmulationCacheBehavior::kClearCache);
 +    }
 +  }
- }
++
++}
  
  void WebFrameWidgetImpl::ApplyVisualPropertiesSizing(
-@@ -5439,16 +5469,24 @@
+@@ -5439,16 +5470,24 @@
      View()->CancelPagePopup();
    }
  
@@ -74,7 +75,7 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
  
    // Update Screens interface data before firing any events. The API is designed
    // to offer synchronous access to the most up-to-date cached screen
-@@ -5457,12 +5495,12 @@
+@@ -5457,12 +5496,12 @@
    // window.screen events are fired as well.
    ForEachLocalFrameControlledByWidget(
        LocalRootImpl()->GetFrame(),
@@ -90,7 +91,7 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
          if (window_screen_has_changed)
            screen->DispatchEvent(*Event::Create(event_type_names::kChange));
          if (color_gamut_changed) {
-@@ -5472,12 +5510,12 @@
+@@ -5472,12 +5511,12 @@
          }
        });
  
