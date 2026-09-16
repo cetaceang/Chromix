@@ -28,6 +28,9 @@ Chromix 是基于 Chromium 的浏览器项目，面向浏览器自动化、兼�
 
 Canvas 原生路径修复和验收边界见 [Canvas 链路记录](docs/canvas-chain.md)；
 参考功能、刻意差异及待补齐项见 [CloakBrowser 公开功能对照](docs/cloakbrowser-functionality-comparison.md)。
+刷新后崩溃或出现 `Crashpad_NotConnectedToHandler` 时，参见
+[Windows 崩溃诊断与 issue #3](docs/windows-crash-diagnostics.md)：包含计时递归修复、
+Crashpad 默认禁用的说明和外部调试器取证方法；修复需要重新构建浏览器，既有发布包不会自动更新。
 
 从 [GitHub Releases](https://github.com/xiaozhou26/Chromix/releases) 下载已经发布的包。源码目标平台如下，**实际可下载的平台以对应 Release 的 Assets 为准**，构建目标列表不表示所有包都已发布。
 

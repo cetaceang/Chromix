@@ -111,7 +111,31 @@ index 4809ecca7e..19f28dba5c 100644
  }  // namespace
  
  using network::mojom::blink::NavigationDeliveryType;
-@@ -341,6 +434,11 @@
+@@ -329,6 +422,23 @@
+       info_->service_worker_router_info &&
+       info_->service_worker_router_info->actual_source_type ==
+           network::mojom::ServiceWorkerRouterSourceType::kCache) {
++    if (!info_->allow_timing_details) {
++      return 0.0;
++    }
++    const auto& timing = *info_->timing;
++    const auto& connect = timing.connect_timing;
++    // Empty cache timings make responseStart() fall back to fetchStart().
++    // Use the entry start only when no getter in that chain can terminate it.
++    if (timing.receive_headers_start.is_null() &&
++        timing.receive_headers_end.is_null() && timing.send_start.is_null() &&
++        (!connect ||
++         (connect->domain_lookup_start.is_null() &&
++          connect->domain_lookup_end.is_null() &&
++          (info_->did_reuse_connection ||
++           (connect->connect_start.is_null() &&
++            connect->connect_end.is_null()))))) {
++      return PerformanceEntry::startTime();
++    }
+     return responseStart();
+   }
+ 
+@@ -341,6 +451,11 @@
    }
    if (!info_->timing || !info_->timing->connect_timing ||
        info_->timing->connect_timing->domain_lookup_start.is_null()) {
@@ -123,7 +147,7 @@ index 4809ecca7e..19f28dba5c 100644
      return fetchStart();
    }
  
-@@ -355,6 +453,11 @@
+@@ -355,6 +470,11 @@
    }
    if (!info_->timing || !info_->timing->connect_timing ||
        info_->timing->connect_timing->domain_lookup_end.is_null()) {
@@ -135,7 +159,7 @@ index 4809ecca7e..19f28dba5c 100644
      return domainLookupStart();
    }
  
-@@ -417,6 +520,11 @@
+@@ -417,6 +537,11 @@
      return Performance::MonotonicTimeToDOMHighResTimeStamp(
          TimeOrigin(), info_->timing->connect_timing->ssl_start,
          info_->allow_negative_values, CrossOriginIsolatedCapability());

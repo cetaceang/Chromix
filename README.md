@@ -402,6 +402,11 @@ D:\chromix-build\src\out\Chromix\chrome.exe
 Read [`BUILDING.md`](BUILDING.md) for source revisions, GitHub Actions cache
 reuse, domain substitution, packaging, and patch-maintenance details.
 
+For reload crashes and `Crashpad_NotConnectedToHandler`, see
+[Windows crash diagnostics and issue #3](docs/windows-crash-diagnostics.md).
+It explains the timing fixes, disabled Crashpad behavior, and external dump
+capture; using the fixes requires a matching rebuilt browser.
+
 ## Repository layout
 
 Canvas root causes, native fixes and validation boundaries are recorded in
