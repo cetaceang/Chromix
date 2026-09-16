@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import sys
 import tempfile
 import threading
 from urllib.parse import parse_qs, urlsplit
@@ -552,12 +553,13 @@ def evaluate_scope(scope: dict, spec: dict, name: str, phase: str = "initial") -
     checks.extend(evaluate_environment(scope.get("environment"), name))
     if spec["mode"] == "on":
         expected = PLATFORMS[spec["platform"]]
+        locale = canonical_scenario_locale(spec["locale"])
         add_check(checks, f"{name}.requested_intl_locale",
-                  str(scope.get("intlLocale", "")).lower() == spec["locale"].lower(),
-                  spec["locale"], scope.get("intlLocale"))
+                  str(scope.get("intlLocale", "")).lower() == locale.lower(),
+                  locale, scope.get("intlLocale"))
         for field, observed, wanted in (("platform", scope.get("platform"), expected["platform"]),
                                          ("ch_platform", low.get("platform"), expected["ch"]),
-                                         ("locale", scope.get("language", "").lower(), spec["locale"].lower())):
+                                         ("locale", scope.get("language", "").lower(), locale.lower())):
             add_check(checks, f"{name}.requested_{field}", observed == wanted, wanted, observed)
         add_check(checks, f"{name}.requested_ua_os", expected["ua"] in scope.get("ua", ""), expected["ua"], scope.get("ua"))
     return checks
@@ -1017,6 +1019,80 @@ def evaluate_media(media: dict, denied: bool, capture_required: bool = True) -> 
     return checks
 
 
+def canonical_scenario_locale(locale: str) -> str:
+    """Canonicalize basic language/script/region tags against Chromium 153's contract."""
+    try:
+        from langcodes import Language
+    except ImportError as error:
+        raise SmokeError("locale contract requires langcodes==3.5.1 from tools/fingerprint-requirements.txt") from error
+    if not re.fullmatch(r"[A-Za-z]{2,3}(?:-[A-Za-z]{4})?(?:-(?:[A-Za-z]{2}|[0-9]{3}))?", locale):
+        raise SmokeError("locale contract supports only language[-Script][-REGION] tags")
+    parsed = Language.get(locale, normalize=False)
+    if parsed.language is None:
+        raise SmokeError("locale contract requires a language other than und")
+    # Chromium's ShouldSkipCanonicalization preserves sh and all its subtags.
+    if parsed.language == "sh":
+        return parsed.to_tag()
+    if parsed.language == "sgn" and parsed.territory:
+        raise SmokeError("locale contract does not support sign-language region aliases")
+    # ICU4X selects these retired regions using likely-subtag context, unlike langcodes.
+    if parsed.territory in {"062", "172", "200", "530", "532", "536", "582", "810", "830", "890", "891",
+                            "AN", "CS", "FQ", "NT", "PC", "SU", "YU"}:
+        raise SmokeError("locale contract does not support context-dependent retired regions")
+    # These aliases postdate langcodes' data; do not guess Chromium's canonical form.
+    if parsed.language in {"ajp", "ajt", "cls", "dek", "gom", "kgm", "lak", "nbx", "nom", "nte",
+                           "pmk", "prp", "smd", "snb", "szd", "tmk", "tpw", "xss", "zkb"}:
+        raise SmokeError("locale contract does not support this Chromium 153 language alias")
+    canonical = Language.get(locale)
+    # Chromium 153 retains these two languages rather than their macrolanguages.
+    if parsed.language not in {"knn", "mnk"}:
+        canonical = canonical.prefer_macrolanguage()
+    if canonical.script == "Qaai":
+        canonical = canonical.update_dict({"script": "Zinh"})
+    return canonical.to_tag()
+
+
+def normalized_scenario_switches(expected: dict[str, str]) -> dict[str, list[str]]:
+    """Model patch0036 for browser_args(), not arbitrary public/SDK launches."""
+    # AppendSwitch preserves argv entries; RemoveSwitch erases the off-mode platform.
+    normalized = {key: [value] for key, value in expected.items()
+                  if key.startswith("fingerprint") or key.startswith("uxr-")}
+    if expected.get("fingerprint") == "off":
+        normalized["fingerprint"] = ["off", "off"]
+        normalized.pop("fingerprint-platform", None)
+        normalized.update({"uxr-fingerprint-off": ["true"], "uxr-webgl-real": [""],
+                           "uxr-disable-fingerprint-noise": [""]})
+        return normalized
+
+    if "fingerprint" not in expected:
+        return normalized
+    seed = expected["fingerprint"]
+    normalized.update({"uxr-fingerprint-enabled": ["true"], "uxr-webgl-fingerprint": ["true"],
+                       **{key: [seed] for key in ("uxr-fingerprint-seed", "uxr-canvas-seed", "uxr-audio-seed")},
+                       "uxr-storage-quota": ["102400"]})
+    platform = expected.get("fingerprint-platform")
+    native_windows = sys.platform == "win32"
+    if platform == "Win32":
+        if not native_windows:
+            normalized.update({"uxr-platform": ["Win32"], "uxr-ua-os": ["Windows NT 10.0; Win64; x64"],
+                               "uxr-ua-platform": ["Windows"], "uxr-ua-arch": ["x86"],
+                               "uxr-ua-bitness": ["64"], "uxr-ua-model": [""],
+                               "uxr-ua-wow64": ["false"], "uxr-ua-platform-version": ["10.0.0"]})
+        normalized["uxr-voices"] = ["true"]
+    elif platform == "Linux x86_64":
+        normalized.update({"uxr-platform": [platform], "uxr-ua-os": ["X11; Linux x86_64"],
+                           "uxr-ua-platform": ["Linux"], "uxr-ua-arch": ["x86"], "uxr-ua-bitness": ["64"]})
+        if not sys.platform.startswith("linux"):
+            normalized.update({"uxr-ua-model": [""], "uxr-ua-wow64": ["false"], "uxr-ua-platform-version": [""]})
+    if "fingerprint-locale" in expected:
+        locale = expected["fingerprint-locale"]
+        # The first entry is the public alias; the second is its canonical language tag.
+        canonical = canonical_scenario_locale(locale)
+        normalized["uxr-languages"] = [locale, canonical]
+        normalized["accept-lang"] = [canonical]
+    return normalized
+
+
 def execution_contract_errors(execution, profile, expected_args: list[str], identity_profile=None) -> list[str]:
     command = execution.get("command_line") if isinstance(execution, dict) else None
     if not isinstance(command, list) or not command or not all(isinstance(arg, str) for arg in command):
@@ -1042,16 +1118,19 @@ def execution_contract_errors(execution, profile, expected_args: list[str], iden
     if fake != ([""] if identity_profile is not None else []):
         errors.append("unexpected, missing or duplicated fake capture device switch")
     expected = {arg[2:].partition("=")[0]: arg[2:].partition("=")[2] for arg in expected_args}
-    critical = {key for key in switches.keys() | expected.keys()
-                if key.startswith("fingerprint") or key == "uxr-synthetic-device-tests"}
+    if len(expected) != len(expected_args):
+        errors.append("duplicated requested switch")
+    try:
+        normalized = normalized_scenario_switches(expected)
+    except SmokeError as error:
+        return [*errors, str(error)]
+    critical = {key for key in switches.keys() | normalized.keys()
+                if key.startswith("fingerprint") or key.startswith("uxr-") or key == "accept-lang"}
     for key in sorted(critical):
-        if switches.get(key, []) != ([expected[key]] if key in expected else []):
-            errors.append(f"unexpected, conflicting or duplicated scenario switch: {key}")
-    # Chromium may append the same derived locale twice; conflicting values are not valid.
-    for key, values in switches.items():
-        if key.startswith("uxr-") and len(set(values)) != 1:
-            errors.append(f"conflicting derived scenario switch: {key}")
-    if not all(arg in command for arg in expected_args):
+        if switches.get(key, []) != normalized.get(key, []):
+            errors.append(f"unexpected, conflicting, missing or duplicated scenario switch: {key}")
+    removed = {"fingerprint-platform"} if expected.get("fingerprint") == "off" else set()
+    if not all(arg in command for arg in expected_args if arg[2:].partition("=")[0] not in removed):
         errors.append("executed command line omits requested arguments")
     return errors
 

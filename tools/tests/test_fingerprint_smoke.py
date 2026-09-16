@@ -470,9 +470,8 @@ def test_persistent_context_without_browser_handle_and_runtime_failures(tmp_path
         return {}
     detached = []
     identity = {"path": "/explicit/chrome", "sha256": "a" * 64, "size": 100}
-    cdp = SimpleNamespace(send=lambda method: {"arguments": ["/explicit/chrome",
-                          *smoke.browser_args(scenario(), "http://127.0.0.1:9876", False),
-                          "--user-data-dir=" + str(tmp_path / "profile")]}
+    cdp = SimpleNamespace(send=lambda method: {"arguments": normalized_command(
+                          smoke.browser_args(scenario(), "http://127.0.0.1:9876", False), tmp_path / "profile")}
                           if method == "Browser.getBrowserCommandLine" else {"product": "mock"},
                           detach=lambda: detached.append(True))
     def close():
@@ -553,6 +552,39 @@ def test_output_cannot_overwrite_binary_hardlink(tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)["status"] == "failed"
 
 
+def normalized_command(args, profile, *, fake=False):
+    command = ["/explicit/chrome", *args]
+    if fake:
+        command.append("--use-fake-device-for-media-stream")
+    command.extend(["--user-data-dir=" + str(profile), "--remote-debugging-pipe"])
+    expected = dict(arg[2:].split("=", 1) for arg in args if "=" in arg)
+    if expected["fingerprint"] == "off":
+        command = [arg for arg in command if not arg.startswith("--fingerprint-platform=")]
+        command.extend(["--fingerprint=off", "--uxr-fingerprint-off=true", "--uxr-webgl-real",
+                        "--uxr-disable-fingerprint-noise"])
+    else:
+        locale = expected["fingerprint-locale"]
+        command.append("--uxr-languages=" + locale)
+        platform = expected["fingerprint-platform"]
+        if platform == "Win32" and smoke.sys.platform != "win32":
+            command.extend(["--uxr-platform=Win32", "--uxr-ua-os=Windows NT 10.0; Win64; x64",
+                            "--uxr-ua-platform=Windows", "--uxr-ua-arch=x86", "--uxr-ua-bitness=64",
+                            "--uxr-ua-model", "--uxr-ua-wow64=false", "--uxr-ua-platform-version=10.0.0"])
+        elif platform == "Linux x86_64":
+            command.extend(["--uxr-platform=Linux x86_64", "--uxr-ua-os=X11; Linux x86_64",
+                            "--uxr-ua-platform=Linux", "--uxr-ua-arch=x86", "--uxr-ua-bitness=64"])
+            if not smoke.sys.platform.startswith("linux"):
+                command.extend(["--uxr-ua-model", "--uxr-ua-wow64=false", "--uxr-ua-platform-version"])
+        command.extend(["--uxr-fingerprint-enabled=true", "--uxr-webgl-fingerprint=true",
+                        *["--" + key + "=" + expected["fingerprint"] for key in
+                          ("uxr-fingerprint-seed", "uxr-canvas-seed", "uxr-audio-seed")],
+                        "--uxr-storage-quota=102400"])
+        if platform == "Win32":
+            command.append("--uxr-voices=true")
+        command.extend(["--uxr-languages=" + locale, "--accept-lang=" + locale])
+    return command
+
+
 def media_control_fixture():
     origin = "http://127.0.0.1:9876"
     args = smoke.browser_args(scenario(), origin, False)
@@ -560,8 +592,7 @@ def media_control_fixture():
                "args": [*args, "--use-fake-device-for-media-stream"], "grant_calls": 1,
                "granted_permissions": ["camera", "microphone"], "permissions_cleared": True,
                "closed": True, "failures": [], "blocked_requests": [], "rows": {}}
-    control["execution"] = {"command_line": ["/explicit/chrome", *control["args"],
-                                               "--user-data-dir=" + control["profile"]]}
+    control["execution"] = {"command_line": normalized_command(control["args"], control["profile"])}
     for phase, path in (("before", "/frame"), ("denied", "/denied"), ("after", "/frame")):
         denied = phase == "denied"
         control["rows"][phase] = {"url": origin + path, "status": 200,
@@ -625,11 +656,254 @@ def test_no_grant_identity_denied_observation_cannot_supply_capture_proof():
     assert "media.denied.permission_grants" in failures(smoke.evaluate_media(media, True, capture_required=False))
 
 
+@pytest.fixture
+def arm64_execution():
+    path = ROOT / "tools/tests/fixtures/identity_arm64_command_line.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("media", [False, True])
+def test_execution_accepts_actual_arm64_off_normalization(arm64_execution, media):
+    identity = arm64_execution["identity"]
+    row = arm64_execution["media_control"] if media else identity
+    command = row["execution"]["command_line"]
+    assert identity["args"].count("--fingerprint=off") == 1
+    assert command.count("--fingerprint=off") == 2
+    assert not smoke.execution_contract_errors(row["execution"], row["profile"], identity["args"],
+                                               identity["profile"] if media else None)
+
+
+@pytest.mark.parametrize("media", [False, True])
+def test_actual_arm64_command_mutations_fail_closed(arm64_execution, media):
+    identity = arm64_execution["identity"]
+    row = arm64_execution["media_control"] if media else identity
+    original = row["execution"]["command_line"]
+    def check(command, args=None, profile=None):
+        return smoke.execution_contract_errors({"command_line": command}, profile or row["profile"],
+            identity["args"] if args is None else args, identity["profile"] if media else None)
+    for extra in ("--fingerprint=off", "--fingerprint=999", "--fingerprint=false", "--fingerprint",
+                  "--fingerprint-platform=Win32", "--fingerprint-locale=de-DE", "--fingerprint-timezone=UTC",
+                  "--uxr-fingerprint-off=true", "--uxr-fingerprint-off=false", "--uxr-webgl-real",
+                  "--uxr-webgl-real=false", "--uxr-disable-fingerprint-noise", "--uxr-fingerprint-enabled=true",
+                  "--uxr-synthetic-device-tests=true", "--uxr-fingerprint-seed=999", "--uxr-languages=de-DE",
+                  "--uxr-timezone=UTC", "--uxr-unknown", "--accept-lang=de-DE",
+                  "--use-fake-ui-for-media-stream", "--use-fake-ui-for-media-stream=false",
+                  "--use-fake-device-for-media-stream", "--use-fake-device-for-media-stream=false",
+                  "--user-data-dir=" + row["profile"], "--user-data-dir=/other/profile", "--"):
+        assert check([*original, extra]), extra
+    for missing in ("--fingerprint=off", "--uxr-fingerprint-off=true", "--uxr-webgl-real",
+                    "--uxr-disable-fingerprint-noise", "--user-data-dir=" + row["profile"],
+                    "--proxy-server=http://127.0.0.1:34267", "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
+                    *(("--use-fake-device-for-media-stream",) if media else ())):
+        command = original.copy()
+        command.remove(missing)
+        assert check(command), missing
+    for index, arg in enumerate(original):
+        if arg == "--fingerprint=off":
+            command = original.copy()
+            command[index] = "--fingerprint=999"
+            assert check(command)
+    assert check(original, args=[*identity["args"], "--fingerprint=off"])
+    assert check(original, args=[*identity["args"], "--fingerprint=999"])
+    assert check(original, profile="/other/profile")
+    if media:
+        command = ["--user-data-dir=" + identity["profile"] if arg.startswith("--user-data-dir=") else arg
+                   for arg in original]
+        assert check(command, profile=identity["profile"])
+
+
+@pytest.fixture(scope="module", params=["linux", "win32", "darwin"])
+def argv_normalizer(request, tmp_path_factory):
+    from test_fingerprint_features import CPP_BASE, added, block, compile_cpp
+
+    stub = CPP_BASE.replace("  std::map<std::string, std::string> values;", """
+  std::vector<std::string> argv;
+  std::map<std::string, std::string> values;""", 1)
+    stub = stub.replace(
+        "void AppendSwitchASCII(const std::string& key, const std::string& value) { values[key] = value; }",
+        """void AppendSwitchASCII(const std::string& key, const std::string& value) {
+    values[key] = value;
+    argv.push_back("--" + key + (value.empty() ? "" : "=" + value));
+  }""")
+    stub = stub.replace('void AppendSwitch(const std::string& key) { values[key] = ""; }',
+                        'void AppendSwitch(const std::string& key) { AppendSwitchASCII(key, ""); }')
+    stub = stub.replace("void RemoveSwitch(const std::string& key) { values.erase(key); }", """
+  void RemoveSwitch(const std::string& key) {
+    values.erase(key);
+    std::erase_if(argv, [&](const std::string& arg) {
+      return arg == "--" + key || arg.starts_with("--" + key + "=");
+    });
+  }""")
+    flags = "#define BUILDFLAG(x) x\n" + "".join(
+        f"#define {flag} {int(request.param == host)}\n"
+        for flag, host in (("IS_WIN", "win32"), ("IS_MAC", "darwin"), ("IS_LINUX", "linux")))
+    body = block(added(36), "  if (!command_line->HasSwitch(switches::kProcessType))")
+    source = flags + stub + "\nvoid Normalize(base::CommandLine* command_line) {\n" + body + r'''
+}
+int main(int argc, char** argv) {
+  auto* command_line = base::CommandLine::ForCurrentProcess();
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg = argv[i];
+    const size_t separator = arg.find('=');
+    command_line->AppendSwitchASCII(
+        arg.substr(2, separator == std::string::npos ? separator : separator - 2),
+        separator == std::string::npos ? "" : arg.substr(separator + 1));
+  }
+  Normalize(command_line);
+  for (const auto& arg : command_line->argv) std::cout << arg << '\n';
+}
+'''
+    binary = compile_cpp(tmp_path_factory.mktemp("argv-normalizer-" + request.param), source)
+    return request.param, binary
+
+
+@pytest.mark.parametrize("mode", ["native", "off", "on"])
+@pytest.mark.parametrize("platform", ["linux", "windows"])
+@pytest.mark.parametrize("media", [False, True])
+def test_execution_contract_matches_patch0036_argv(argv_normalizer, monkeypatch, mode, platform, media):
+    host, binary = argv_normalizer
+    monkeypatch.setattr(smoke.sys, "platform", host)
+    args = smoke.browser_args({**scenario(mode), "platform": platform}, "http://127.0.0.1:9876", False)
+    profile = "/fixture/media" if media else "/fixture/identity"
+    launched = [*args, "--user-data-dir=" + profile, "--remote-debugging-pipe"]
+    if media:
+        launched.append("--use-fake-device-for-media-stream")
+    result = subprocess.run([str(binary), *launched], capture_output=True, text=True, check=True, timeout=10)
+    command = ["/explicit/chrome", *result.stdout.splitlines()]
+    assert not smoke.execution_contract_errors({"command_line": command}, profile, args,
+                                               "/fixture/identity" if media else None)
+
+
+@pytest.mark.parametrize("host", ["linux", "win32", "darwin"])
+@pytest.mark.parametrize("mode", ["native", "off", "on"])
+@pytest.mark.parametrize("platform", ["linux", "windows"])
+@pytest.mark.parametrize("media", [False, True])
+def test_execution_normalized_matrix_and_switch_mutations(monkeypatch, host, mode, platform, media):
+    monkeypatch.setattr(smoke.sys, "platform", host)
+    spec = {**scenario(mode), "platform": platform, "seed": 2**64 - 1}
+    args = smoke.browser_args(spec, "http://127.0.0.1:9876", False)
+    profile = "/fixture/media" if media else "/fixture/identity"
+    command = normalized_command(args, profile, fake=media)
+    def check(value):
+        return smoke.execution_contract_errors({"command_line": value}, profile, args,
+                                               "/fixture/identity" if media else None)
+    assert not check(command)
+    if mode == "off":
+        assert any(arg.startswith("--fingerprint-platform=") for arg in args)
+        assert not any(arg.startswith("--fingerprint-platform=") for arg in command)
+    for index, arg in enumerate(command):
+        if arg.startswith(("--fingerprint", "--uxr-", "--accept-lang")):
+            assert check(command[:index] + command[index + 1:]), ("missing", arg)
+            assert check([*command, arg]), ("duplicate", arg)
+            mutated = command.copy()
+            mutated[index] = arg.partition("=")[0] + "=unexpected"
+            assert check(mutated), ("conflict", arg)
+    for extra in ("--uxr-timezone=UTC", "--uxr-ua-brand=Chromium", "--uxr-unknown",
+                  "--fingerprint-platform=unexpected", "--fingerprint-locale=en-US"):
+        assert check([*command, extra]), extra
+    if mode == "on":
+        assert check([*command, "--uxr-fingerprint-off=true"])
+        assert check([*command, "--uxr-disable-fingerprint-noise"])
+    else:
+        assert check([*command, "--uxr-fingerprint-enabled=true"])
+        assert check([*command, "--uxr-canvas-seed=999"])
+
+
+# Chromium 153 language_tag_unittest.cc and ICU4X locale_aliases_v1.rs.data goldens.
+@pytest.mark.parametrize("requested,canonical", [
+    ("de-de", "de-DE"), ("de-DE", "de-DE"), ("DE-de", "de-DE"), ("EN-us", "en-US"),
+    ("zh-hANT-tw", "zh-Hant-TW"), ("sr-lATN-rs", "sr-Latn-RS"), ("ES-419", "es-419"),
+    ("iw-IL", "he-IL"), ("IW-latn-il", "he-Latn-IL"), ("in-ID", "id-ID"), ("ji", "yi"),
+    ("jw-ID", "jv-ID"), ("mo-MD", "ro-MD"), ("tl-PH", "fil-PH"), ("cmn-Hans-CN", "zh-Hans-CN"),
+    ("deu-DE", "de-DE"), ("ger", "de"), ("fre-FR", "fr-FR"), ("chi-TW", "zh-TW"),
+    ("bh-IN", "bho-IN"), ("arb-EG", "ar-EG"), ("yue-Hant-HK", "yue-Hant-HK"),
+    ("SH", "sh"), ("SH-latn-bu", "sh-Latn-BU"), ("sh-CS", "sh-CS"),
+    ("knn-IN", "knn-IN"), ("mnk", "mnk"), ("en-Qaai-US", "en-Zinh-US"),
+    ("en-Latn-US", "en-Latn-US"), ("en-BU", "en-MM"), ("en-uk", "en-GB"), ("xx-YY", "xx-YY"),
+])
+@pytest.mark.parametrize("media", [False, True])
+def test_execution_locale_canonicalization_is_independent_and_exact(requested, canonical, media):
+    assert smoke.canonical_scenario_locale(requested) == canonical
+    args = smoke.browser_args({**scenario("on"), "locale": requested}, "http://127.0.0.1:9876", False)
+    profile = "/fixture/media" if media else "/fixture/identity"
+    command = normalized_command(args, profile, fake=media)
+    second = len(command) - 2
+    first = command.index("--uxr-languages=" + requested)
+    command[second:] = ["--uxr-languages=" + canonical, "--accept-lang=" + canonical]
+    def check(value):
+        return smoke.execution_contract_errors({"command_line": value}, profile, args,
+                                               "/fixture/identity" if media else None)
+    assert not check(command)
+    for wrong in {requested, canonical.lower(), canonical.upper(), canonical.swapcase(), "fr-FR"} - {canonical}:
+        # Matching forged derived switches must not define their own expectation.
+        mutated = command.copy()
+        mutated[second:] = ["--uxr-languages=" + wrong, "--accept-lang=" + wrong]
+        assert check(mutated), wrong
+        mutated = command.copy()
+        mutated[second] = "--uxr-languages=" + wrong
+        assert check(mutated), wrong
+        mutated = command.copy()
+        mutated[second + 1] = "--accept-lang=" + wrong
+        assert check(mutated), wrong
+    for index in (first, second, second + 1):
+        assert check(command[:index] + command[index + 1:])
+        assert check([*command, command[index]])
+    if requested != canonical:
+        mutated = command.copy()
+        mutated[first] = "--uxr-languages=" + canonical
+        assert check(mutated)
+        mutated = command.copy()
+        mutated[first], mutated[second] = mutated[second], mutated[first]
+        assert check(mutated)
+
+
+@pytest.mark.parametrize("requested,canonical", [("iw-IL", "he-IL"), ("in-ID", "id-ID"), ("cmn-CN", "zh-CN")])
+def test_scope_requested_locale_uses_the_same_canonical_alias(requested, canonical):
+    spec = {**scenario("on"), "locale": requested}
+    sample = scope(spec)
+    sample.update(language=canonical, languages=[canonical], intlLocale=canonical)
+    names = {"window.requested_locale", "window.requested_intl_locale"}
+    assert not names & failures(smoke.evaluate_scope(sample, spec, "window"))
+    sample.update(language=requested, intlLocale=requested)
+    assert names <= failures(smoke.evaluate_scope(sample, spec, "window"))
+
+
+@pytest.mark.parametrize("locale", ["und", "und-DE", "de-DE,de", "en_US", "en--US", "en-u-ca-gregory",
+                                    "en-Latn-US-variant", "zh-cmn-CN", "en-GB-oed", "hy-SU", "en-CS", "en-810",
+                                    "sgn-US", "sgn-Latn-US", "sgn-UK",
+                                    "ajp", "ajt", "cls", "dek", "gom", "kgm", "lak", "nbx", "nom", "nte",
+                                    "pmk", "prp", "smd", "snb", "szd", "tmk", "tpw", "xss", "zkb"])
+def test_execution_locale_unsupported_forms_fail_closed(locale):
+    args = smoke.browser_args({**scenario("on"), "locale": locale}, "http://127.0.0.1:9876", False)
+    command = normalized_command(args, "/fixture/identity")
+    errors = smoke.execution_contract_errors({"command_line": command}, "/fixture/identity", args)
+    assert any(error.startswith("locale contract") for error in errors)
+
+
+def test_execution_locale_dependency_is_explicit_and_missing_dependency_fails_closed(monkeypatch):
+    import importlib.metadata
+
+    assert "langcodes==3.5.1" in (ROOT / "tools/fingerprint-requirements.txt").read_text().splitlines()
+    assert importlib.metadata.version("langcodes") == "3.5.1"
+    monkeypatch.setitem(smoke.sys.modules, "langcodes", None)
+    args = smoke.browser_args(scenario("on"), "http://127.0.0.1:9876", False)
+    command = normalized_command(args, "/fixture/identity")
+    assert smoke.execution_contract_errors({"command_line": command}, "/fixture/identity", args) == [
+        "locale contract requires langcodes==3.5.1 from tools/fingerprint-requirements.txt"]
+
+
+def test_execution_contract_requires_command_and_profile():
+    args = smoke.browser_args(scenario(), "http://127.0.0.1:9876", False)
+    for execution in (None, {}, {"command_line": []}, {"command_line": [None]}):
+        assert smoke.execution_contract_errors(execution, "/fixture/identity", args)
+    assert smoke.execution_contract_errors({"command_line": normalized_command(args, "/fixture/identity")}, None, args)
+
+
 @pytest.mark.parametrize("fake_switch", ["--use-fake-device-for-media-stream", "--use-fake-device-for-media-stream=0",
                                         "--use-fake-ui-for-media-stream", "--use-fake-ui-for-media-stream=false"])
 def test_identity_execution_rejects_fake_media(fake_switch):
     control, args, _ = media_control_fixture()
-    command = ["/explicit/chrome", *args, "--user-data-dir=/fixture/identity"]
+    command = normalized_command(args, "/fixture/identity")
     assert not smoke.execution_contract_errors({"command_line": command}, "/fixture/identity", args)
     assert smoke.execution_contract_errors({"command_line": [*command, fake_switch]}, "/fixture/identity", args)
 
@@ -640,13 +914,14 @@ def test_execution_profile_canonicalization_rejects_alias_to_identity(tmp_path):
     alias = tmp_path / "alias"
     alias.symlink_to(identity, target_is_directory=True)
     control, args, _ = media_control_fixture()
-    command = ["/explicit/chrome", *control["args"], "--user-data-dir=" + str(identity)]
+    command = normalized_command(control["args"], identity)
     assert smoke.execution_contract_errors({"command_line": command}, alias, args, identity)
     distinct = tmp_path / "media"
     distinct.mkdir()
-    command[-1] = "--user-data-dir=" + str(distinct)
+    index = command.index("--user-data-dir=" + str(identity))
+    command[index] = "--user-data-dir=" + str(distinct)
     assert not smoke.execution_contract_errors({"command_line": command}, distinct, args, identity)
-    command[-1] = "--user-data-dir=" + str(tmp_path / "unused" / ".." / "media")
+    command[index] = "--user-data-dir=" + str(tmp_path / "unused" / ".." / "media")
     assert smoke.execution_contract_errors({"command_line": command}, distinct, args, identity)
 
 
@@ -669,7 +944,8 @@ def test_media_control_cleanup_and_fake_only_launch(tmp_path, monkeypatch, fault
         return context
     def executed(*_):
         launch = calls[0][1]
-        command = [identity["path"], *launch["args"], "--user-data-dir=" + launch["user_data_dir"]]
+        command = normalized_command(launch["args"], launch["user_data_dir"])
+        profile_index = command.index("--user-data-dir=" + launch["user_data_dir"])
         extra = {"fake-ui": "--use-fake-ui-for-media-stream", "fake-ui-value": "--use-fake-ui-for-media-stream=false",
                  "fake-duplicate": "--use-fake-device-for-media-stream", "fake-value": "--use-fake-device-for-media-stream=0",
                  "fingerprint-conflict": "--fingerprint=999", "fingerprint-duplicate": "--fingerprint=off",
@@ -677,9 +953,9 @@ def test_media_control_cleanup_and_fake_only_launch(tmp_path, monkeypatch, fault
         if fault in extra:
             command.append(extra[fault])
         elif fault == "profile-missing":
-            command.pop()
+            command.pop(profile_index)
         elif fault == "profile-reused":
-            command[-1] = "--user-data-dir=" + str(tmp_path / "identity")
+            command[profile_index] = "--user-data-dir=" + str(tmp_path / "identity")
         elif fault == "derived-conflict":
             command.extend(["--uxr-languages=de-DE", "--uxr-languages=en-US"])
         calls.append("execution")

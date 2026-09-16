@@ -31,6 +31,15 @@ def receipt(tmp_path):
     return path, source, value
 
 
+def test_provenance_records_locale_canonicalizer_version(monkeypatch):
+    packages = {name: 'fixture-version' for name in ('playwright', 'Pillow', 'cryptography', 'h2', 'psutil')}
+    packages['langcodes'] = '3.5.1'
+    monkeypatch.setattr(audit.importlib.metadata, 'version', packages.__getitem__)
+    result = audit.provenance()
+    assert result['packages'] == packages
+    assert 'tools/fingerprint-requirements.txt' in result['runner_files']
+
+
 def test_current_source_and_producer_receipt(tmp_path):
     path, source, _ = receipt(tmp_path)
     for root, kind in ((source, 'live-source-hashes'), (None, 'producer-receipt-only')):

@@ -46,17 +46,26 @@ class PlatformWorkflowTest(unittest.TestCase):
                 self.assertEqual(events(workflow)['push']['branches'], ['main'])
                 dispatch = events(workflow)['workflow_dispatch']['inputs']
                 self.assertTrue(dispatch['use_upstream_cache']['default'])
+                modes = ['staged', 'single', 'verify'] if name == 'build-linux-arm64' else ['staged', 'single']
                 for key, choices, default in (
                     ('build_profile', ['fast', 'release'], 'fast'),
-                    ('build_mode', ['staged', 'single'], 'staged'),
+                    ('build_mode', modes, 'staged'),
                 ):
                     self.assertEqual(dispatch[key]['type'], 'choice')
                     self.assertEqual(dispatch[key]['options'], choices)
                     self.assertEqual(dispatch[key]['default'], default)
                 self.assertFalse(workflow['concurrency']['cancel-in-progress'])
                 groups.add(workflow['concurrency']['group'])
-                self.assertEqual(set(workflow['jobs']), {'build'})
+                expected_jobs = {'build', 'reverify'} if name == 'build-linux-arm64' else {'build'}
+                self.assertEqual(set(workflow['jobs']), expected_jobs)
                 job = workflow['jobs']['build']
+                if name == 'build-linux-arm64':
+                    self.assertEqual(job['if'], "${{ inputs.build_mode != 'verify' }}")
+                    reverify = workflow['jobs']['reverify']
+                    self.assertEqual(reverify['if'],
+                                     "${{ github.event_name == 'workflow_dispatch' && inputs.build_mode == 'verify' }}")
+                    self.assertEqual(reverify['runs-on'], 'ubuntu-24.04-arm')
+                    self.assertNotIn('needs', reverify)
                 self.assertNotIn('needs', job)
                 self.assertNotIn('strategy', job)
                 self.assertEqual(job['uses'], './.github/workflows/build-posix-github.yml')

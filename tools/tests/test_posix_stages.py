@@ -987,11 +987,22 @@ class GenPosixWorkflowTest(unittest.TestCase):
             self.assertEqual(logs["if"], "always()")
 
     def test_platform_workflows_reference_posix_reusable_jobs(self):
+        import yaml
         for path in ENTRY_WORKFLOWS:
             source = path.read_text(encoding="utf-8")
-            self.assertIn("./.github/workflows/build-posix-github.yml", source)
-            self.assertNotIn("runs-on:", source)
-            self.assertIn("secrets: inherit", source)
+            jobs = yaml.safe_load(source)["jobs"]
+            build = jobs["build"]
+            self.assertEqual(build["uses"], "./.github/workflows/build-posix-github.yml")
+            self.assertNotIn("runs-on", build)
+            self.assertEqual(build["secrets"], "inherit")
+            if path.name == "build-linux-arm64.yml":
+                self.assertEqual(set(jobs), {"build", "reverify"})
+                self.assertEqual(build["if"], "${{ inputs.build_mode != 'verify' }}")
+                self.assertEqual(jobs["reverify"]["runs-on"], "ubuntu-24.04-arm")
+                self.assertEqual(jobs["reverify"]["if"],
+                                 "${{ github.event_name == 'workflow_dispatch' && inputs.build_mode == 'verify' }}")
+            else:
+                self.assertEqual(set(jobs), {"build"})
             self.assertEqual(source.count("artifact:"), 1)
 
 

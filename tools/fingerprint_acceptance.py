@@ -70,7 +70,7 @@ def provenance(repo=REPO):
     except (OSError, subprocess.SubprocessError):
         result.update(commit=None, dirty=None)
     result['packages'] = {name: importlib.metadata.version(name)
-                          for name in ('playwright', 'Pillow', 'cryptography', 'h2', 'psutil')}
+                          for name in ('playwright', 'Pillow', 'cryptography', 'h2', 'psutil', 'langcodes')}
     return result
 
 
