@@ -838,7 +838,7 @@ if ($RequireUpstreamCache -and -not $RestoredUpstream -and
   throw "required upstream cache: restore receipt missing; refusing cold preparation or compilation"
 }
 
-$MigrateRestoredSource = $false
+$VerifyRestoredSource = $false
 if ($FromArtifact -and -not $RestoredUpstream) {
   $unpackedMarker = Join-Path $Src ".chromix-source-unpacked"
   $readyMarker = Join-Path $Src ".chromix-source-ready"
@@ -849,12 +849,11 @@ if ($FromArtifact -and -not $RestoredUpstream) {
     $restoredVersion = ((Get-Content $readyMarker -Raw).Trim() -split '\|', 2)[0]
   }
   if ($restoredVersion -and $restoredVersion -ne $Revisions.ChromiumVersion) {
-    Write-Host "==> restored tree targets Chromium $restoredVersion; preserving tooling/download_cache and removing incompatible src/out"
-    Remove-Item $Src -Recurse -Force
+    throw "restored tree targets Chromium $restoredVersion, expected $($Revisions.ChromiumVersion); use a new work directory for a cold build instead of a cross-version snapshot"
   } elseif (Test-Path $readyMarker) {
-    $MigrateRestoredSource = -not $RestoredUpstream
+    $VerifyRestoredSource = -not $RestoredUpstream
   } else {
-    Write-Host "==> restored source is not ready; deferring migrations until patch preparation completes"
+    Write-Host "==> restored source is not ready; completing patch preparation before verification"
   }
 }
 
@@ -935,12 +934,20 @@ try {
   }
   throw
 }
-if ($MigrateRestoredSource) {
-  & "$PSScriptRoot\update-restored-source.ps1" -Src $Src -OutDir $OutDir
-}
-
 $UngoogledTooling = Join-Path $WorkDir "tooling\ungoogled-chromium"
 $WindowsTooling = Join-Path $WorkDir "tooling\ungoogled-chromium-windows"
+if ($VerifyRestoredSource) {
+  # Ready snapshots must match the current stack without legacy source rewrites.
+  $resumeDiagnostics = Join-Path $WorkDir "fingerprint-diagnostics"
+  New-Item -ItemType Directory -Force -Path $resumeDiagnostics | Out-Null
+  $resumeSourceReport = Join-Path $resumeDiagnostics ("resume-source-" + [Guid]::NewGuid().ToString('N') + ".json")
+  & python -X utf8 (Join-Path $Repo "tools\verify_patch_stack.py") --src $Src --repo $Repo `
+    --core $UngoogledTooling --platform-tooling $WindowsTooling --platform windows --output $resumeSourceReport
+  if ($LASTEXITCODE -ne 0) {
+    throw "restored source does not contain the current fingerprint patch stack; refusing legacy rewrites; restore a clean matching source"
+  }
+  Write-Host "==> restored source verified; preserving current source without legacy migration"
+}
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $gnArgs = Join-Path $OutDir "args.gn"
 $mergeArgs = @((Join-Path $Repo "tools\merge_gn_args.py"), $gnArgs)
@@ -1032,7 +1039,7 @@ for relative, keys in RESTORED.items():
     Move-Item -LiteralPath $domainProgress -Destination $domainMarker
   }
   # A matching readiness stamp is not proof that a resumed tree contains all
-  # revised patches. Verify actual hunks after legacy migrations/substitution.
+  # revised patches. Verify actual hunks after preparation/substitution.
   $fingerprintDiagnostics = Join-Path $WorkDir "fingerprint-diagnostics"
   New-Item -ItemType Directory -Force -Path $fingerprintDiagnostics | Out-Null
   $FingerprintSourceReport = Join-Path $fingerprintDiagnostics ("source-" + [Guid]::NewGuid().ToString('N') + ".json")

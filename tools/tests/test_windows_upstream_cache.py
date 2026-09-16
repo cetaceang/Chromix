@@ -135,14 +135,16 @@ class WindowsUpstreamCacheRegressionTest(unittest.TestCase):
         self.assertIn('--ninja $Ninja --target chrome --exit-code $rc', self.stage)
         self.assertEqual(self.stage.count('restored_reuse_evidence.py'), 2)
 
-    def test_resume_verifies_receipt_and_ready_key_before_migrations(self):
+    def test_resume_verifies_receipt_and_ready_key_before_read_only_source_check(self):
         restore = self.stage.index('& $sevenZip x "C:\\restore\\tree.7z.001"')
         verify = self.stage.index("--phase verify", restore)
         prepare = self.stage.index('& "$PSScriptRoot\\prepare-ungoogled.ps1"', verify)
-        migration = self.stage.index('& "$PSScriptRoot\\update-restored-source.ps1"', prepare)
+        source_check = self.stage.index('tools\\verify_patch_stack.py', prepare)
         self.assertLess(verify, prepare)
-        self.assertLess(prepare, migration)
-        self.assertIn('$MigrateRestoredSource = -not $RestoredUpstream', self.stage)
+        self.assertLess(prepare, source_check)
+        self.assertLess(source_check, self.stage.index('tools\\merge_gn_args.py', prepare))
+        self.assertIn('$VerifyRestoredSource = -not $RestoredUpstream', self.stage)
+        self.assertNotIn('& "$PSScriptRoot\\update-restored-source.ps1"', self.stage)
         self.assertIn('if (Test-Path $readyMarker) { $applyArgs += "--check" }', self.restored_prep)
         self.assertIn('Assert-PreparedLayers', self.prepare)
         self.assertIn('prepared source key is $preparedKey, expected $versionKey', self.prepare)
@@ -231,7 +233,7 @@ class WindowsUpstreamCacheRegressionTest(unittest.TestCase):
         self.assertIn('$UseUpstreamCache -or $UpstreamRunId -or ($env:CHROMIX_USE_UPSTREAM_CACHE -eq "1")',
                       self.stage)
         self.assertLess(self.stage.index('($FromArtifact -or $StageIndex -ne 1 -or (Test-Path $Src))'),
-                        self.stage.index('$MigrateRestoredSource = $false'))
+                        self.stage.index('$VerifyRestoredSource = $false'))
 
     def test_missing_bindgen_uses_normal_builder_with_known_endpoint_normalization(self):
         start = self.stage.index('if (-not (Test-Path "third_party\\rust-toolchain\\bin\\bindgen.exe"))')
@@ -609,7 +611,7 @@ Add-Content $env:CALL_LOG ("ninja:" + $OutDir.Replace('\', '/'))
         self.assertEqual(self.fixture.called(), ["verify"] + expected)
         self.assertEqual((self.fixture.work / "src/out/Default/obj/retained.o").read_bytes(), b"tiny cached object")
 
-    def test_cold_and_forged_resume_receipts_fail_before_migration(self):
+    def test_cold_and_forged_resume_receipts_fail_before_preparation(self):
         src = self.fixture.work / "src"
         self.fixture.put(src / ".chromix-source-ready", "old-version|ready")
         for receipt in (None, "{}"):
@@ -870,6 +872,7 @@ class WindowsRestoredPreparationMockTest(WindowsRestoredPreparationFixture, unit
 class WindowsRestoredBuildStageTest(WindowsRestoredPreparationFixture, unittest.TestCase):
     def setUp(self):
         super().setUp()
+        self.put(self.repo / "tools/verify_patch_stack.py", (REPO / "tools/verify_patch_stack.py").read_text())
         self.put(self.repo / "tools/merge_gn_args.py", (REPO / "tools/merge_gn_args.py").read_text())
         self.put(self.repo / "tools/upstream_script_identity.py", (REPO / "tools/upstream_script_identity.py").read_text())
         self.ninja = self.src / "third_party/ninja/ninja.exe"
@@ -946,7 +949,8 @@ assert args.workdir == Path(os.environ['MOCK_WORK'])
 selection = json.loads((args.workdir / 'upstream-cache-ninja.json').read_text())
 assert args.ninja == selection['selected']['path']
 calls = Path(os.environ['MOCK_CALLS'])
-assert calls.read_text().splitlines()[-1] == ('ninja-plan' if args.phase == 'before' else 'ninja')
+before = 'torque' if os.environ['MOCK_STAGE'] == '1' else 'ninja-plan'
+assert calls.read_text().splitlines()[-1] == (before if args.phase == 'before' else 'ninja')
 with calls.open('a') as output:
     output.write('evidence-' + args.phase + '\\n')
 directory = args.workdir / 'upstream-reuse'
@@ -1002,9 +1006,9 @@ function Verify-FinalBundle { Add-Content -LiteralPath $env:MOCK_CALLS -Value "v
 function Invoke-Tracked {
   param($File, $ArgList, $Cwd, $TimeoutSec, [switch]$FullFailureOutput)
   if ($File -ne $Ninja -or $Cwd -ne $Src) { throw "build did not use selected Ninja/source" }
-  if ($ValidateOnly) {
-    if ($ArgList -notlike "*gen/v8/torque-generated/bit-field-asserts.cc") { throw "unexpected validation target" }
+  if ($ArgList -like "*gen/v8/torque-generated/bit-field-asserts.cc") {
     Add-Content -LiteralPath $env:MOCK_CALLS -Value "torque"
+    if (-not $ValidateOnly) { return 0 }
   } else {
     if ($ArgList -ne "-C `"$OutDir`" -j 4 chrome") { throw "unexpected build arguments" }
     Add-Content -LiteralPath $env:MOCK_CALLS -Value "ninja"
@@ -1050,7 +1054,7 @@ function Invoke-FixtureNinja {
         first = self.run_prep()
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
         self.assertEqual(self.phases(), ["verify", "verify", "inspect", "ninja-guard", "normalize", "bindgen", "finish",
-                                         "gn-bootstrap", "gn-gen", "ninja-plan", "evidence-before", "ninja",
+                                         "gn-bootstrap", "gn-gen", "ninja-plan", "torque", "evidence-before", "ninja",
                                          "evidence-after", "package", "verify-bundle"])
         evidence = self.work / "upstream-reuse"
         baseline = evidence / "baseline.json"
@@ -1142,7 +1146,7 @@ function Invoke-FixtureNinja {
         first = self.run_prep()
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
         self.assertEqual(self.phases(), ["verify", "verify", "inspect", "ninja-guard", "finish", "gn-gen", "ninja-plan",
-                                         "evidence-before", "ninja", "evidence-after", "package", "verify-bundle"])
+                                         "torque", "evidence-before", "ninja", "evidence-after", "package", "verify-bundle"])
         self.assertEqual((self.out / "obj/retained.obj").stat().st_mtime_ns, before)
         self.assertFalse((self.out / "obj/sdk.obj").exists())
         self.assertEqual(self.report()["dependencies"]["external_dependency_outputs"], 1)
@@ -1196,10 +1200,14 @@ class WindowsRestoreStageMockTest(unittest.TestCase):
         self.env = {**os.environ, "MOCK_ROOT": str(self.root), "MOCK_CALLS": str(self.calls),
                     "MOCK_STAGE": "1", "MOCK_USE": "1", "MOCK_ARTIFACT": "0", "MOCK_VALIDATE": "0",
                     "MOCK_FETCH_RC": "0", "MOCK_RESTORE": "hit", "MOCK_MINUTES": "250",
-                    "MOCK_PREPARE_EXHAUSTED": "0", "CHROMIX_USE_UPSTREAM_CACHE": "0"}
+                    "MOCK_PREPARE_EXHAUSTED": "0", "CHROMIX_USE_UPSTREAM_CACHE": "0",
+                    "MOCK_PYTHON": sys.executable}
+        (self.root / "tools").mkdir()
+        for name in ("verify_patch_stack.py", "apply_restored_patches.py"):
+            shutil.copyfile(REPO / "tools" / name, self.root / "tools" / name)
         stage = STAGE.read_text()
         start = stage.index('$domainProgress = Join-Path $Src')
-        end = stage.index('\n$UngoogledTooling =', start)
+        end = stage.index('\nNew-Item -ItemType Directory -Force -Path $OutDir', start)
         self.script = self.root / "stage.ps1"
         self.script.write_text(r'''
 $ErrorActionPreference = "Stop"
@@ -1240,6 +1248,11 @@ function python {
       return
     }
     if ($args -contains "--cache-dir") { throw "verify must not depend on the cache" }
+  } elseif ($args -contains (Join-Path $Repo "tools\verify_patch_stack.py")) {
+    Add-Content -LiteralPath $env:MOCK_CALLS -Value "source-check"
+    & $env:MOCK_PYTHON @args
+    $global:LASTEXITCODE = $LASTEXITCODE
+    return
   } else { throw "unexpected Python invocation" }
   $global:LASTEXITCODE = 0
 }
@@ -1263,11 +1276,13 @@ $ready = Join-Path $Src ".chromix-source-ready"
 if ((Test-Path $ready) -and (Get-Content $ready -Raw).Trim() -ne "fixture|core|windows|patches") {
   throw "prepared source key mismatch"
 }
-Set-Content -LiteralPath $ready -Value "fixture|core|windows|patches"
+if (-not (Test-Path $ready)) {
+  Set-Content -LiteralPath $ready -Value "fixture|core|windows|patches"
+}
 ''', encoding="utf-8")
         (self.root / "update-restored-source.ps1").write_text(r'''
 param($Src, $OutDir)
-Add-Content -LiteralPath $env:MOCK_CALLS -Value "migrate"
+throw "ready snapshots must not invoke legacy migration"
 ''', encoding="utf-8")
 
     def run_stage(self, **values):
@@ -1276,6 +1291,78 @@ Add-Content -LiteralPath $env:MOCK_CALLS -Value "migrate"
 
     def logged(self):
         return self.calls.read_text().splitlines() if self.calls.exists() else []
+
+    def seed_ready_snapshot(self, substituted=False):
+        put = WindowsRestoredPreparationFixture.put
+        targets = [f"third_party/blink/renderer/modules/webgpu/{name}.cc"
+                   for name in ("gpu_adapter_info", "gpu_adapter")]
+        patch = "".join(f"diff --git a/{name} b/{name}\n--- a/{name}\n+++ b/{name}\n"
+                        "@@ -1,3 +1,3 @@\n // persona policy\n-int version = 1;\n+int version = 2;\n"
+                        " // https://google.test\n" for name in targets)
+        put(self.root / "patches/series", "patches/current.patch\n")
+        put(self.root / "patches/current.patch", patch)
+        for name in targets:
+            put(self.src / name, "// persona policy\nint version = 2;\n// https://" +
+                ("blocked.test\n" if substituted else "google.test\n"))
+        put(self.src / ".chromix-source-ready", "fixture|core|windows|patches")
+        put(self.src / ".chromix-source-unpacked", "fixture")
+        put(self.src / "out/Chromix/obj/retained.obj", "cached object")
+        if substituted:
+            put(self.work / "tooling/ungoogled-chromium/domain_regex.list", r"google\.test#blocked.test" + "\n")
+            put(self.work / "tooling/ungoogled-chromium-windows/domain_substitution.list", "\n".join(targets) + "\n")
+            put(self.src / ".chromix-domain-substituted", "core")
+
+    def source_snapshot(self):
+        return {path.relative_to(self.src): (path.read_bytes(), path.stat().st_mtime_ns)
+                for path in self.src.rglob("*") if path.is_file()}
+
+    def test_ready_snapshot_verifies_without_source_marker_or_object_writes(self):
+        for substituted in (False, True):
+            with self.subTest(substituted=substituted):
+                self.seed_ready_snapshot(substituted)
+                before = self.source_snapshot()
+                reports = self.work / "fingerprint-diagnostics"
+                count = len(list(reports.glob("resume-source-*.json")))
+                for attempt in (1, 2):
+                    self.calls.unlink(missing_ok=True)
+                    result = self.run_stage(MOCK_STAGE="2", MOCK_ARTIFACT="1", MOCK_USE="0")
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(self.logged(), ["prepare", "source-check"])
+                    self.assertEqual(self.source_snapshot(), before)
+                    receipts = list(reports.glob("resume-source-*.json"))
+                    self.assertEqual(len(receipts), count + attempt)
+                    self.assertTrue(all(json.loads(path.read_text())["status"] == "verified" for path in receipts))
+
+    def test_stale_ready_snapshot_fails_without_rewrites_or_continuing(self):
+        self.seed_ready_snapshot()
+        path = self.src / "third_party/blink/renderer/modules/webgpu/gpu_adapter_info.cc"
+        path.write_bytes(path.read_bytes().replace(b"version = 2", b"version = 1"))
+        before = self.source_snapshot()
+        result = self.run_stage(MOCK_STAGE="2", MOCK_ARTIFACT="1", MOCK_USE="0")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refusing legacy rewrites", result.stderr)
+        self.assertEqual(self.logged(), ["prepare", "source-check"])
+        self.assertEqual(self.source_snapshot(), before)
+        self.assertFalse((self.root / "out-dir").exists())
+        report, = (self.work / "fingerprint-diagnostics").glob("resume-source-*.json")
+        self.assertEqual(json.loads(report.read_text())["status"], "failed")
+
+    def test_cross_version_snapshot_keeps_source_and_objects_before_rejection(self):
+        for marker in ("unpacked", "ready"):
+            with self.subTest(marker=marker):
+                self.seed_ready_snapshot()
+                if marker == "unpacked":
+                    (self.src / ".chromix-source-unpacked").write_text("old-version")
+                else:
+                    (self.src / ".chromix-source-unpacked").unlink()
+                    (self.src / ".chromix-source-ready").write_text("old-version|core|windows|patches")
+                before = self.source_snapshot()
+                result = self.run_stage(MOCK_STAGE="2", MOCK_ARTIFACT="1", MOCK_USE="0")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("cross-version snapshot", result.stderr)
+                self.assertEqual(self.logged(), [])
+                self.assertEqual(self.source_snapshot(), before)
+                self.assertFalse((self.root / "out-dir").exists())
 
     def test_fresh_hit_then_stage_two_uses_default_and_revalidates_without_fetch(self):
         first = self.run_stage()
