@@ -976,7 +976,9 @@ class GenPosixWorkflowTest(unittest.TestCase):
             self.assertEqual(len(snapshot_steps), 5)
             for step in snapshot_steps:
                 expected = ("!cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || "
-                            "steps.runtime_checkpoint.outputs.upload_snapshot == 'true')")
+                            "steps.runtime_checkpoint.outputs.upload_snapshot == 'true' || "
+                            "(inputs.platform == 'linux' && "
+                            "steps.linux_runtime_checkpoint.outputs.upload_snapshot == 'true'))")
                 if step.get("name", "").startswith("Upload tree part"):
                     expected += " && steps.checkpoint.outcome == 'success'"
                 self.assertEqual(step["if"], "${{ " + expected + " }}")

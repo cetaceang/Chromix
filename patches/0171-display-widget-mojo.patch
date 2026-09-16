@@ -1,0 +1,13 @@
+diff --git a/third_party/blink/public/mojom/widget/visual_properties.mojom b/third_party/blink/public/mojom/widget/visual_properties.mojom
+--- a/third_party/blink/public/mojom/widget/visual_properties.mojom
++++ b/third_party/blink/public/mojom/widget/visual_properties.mojom
+@@ -16,6 +16,9 @@
+ struct VisualProperties {
+   // Info about all screens, including the one currently showing the widget.
+   display.mojom.ScreenInfos screen_infos;
++
++  // Optional web-exposed screen state; not a coordinate conversion scale.
++  display.mojom.ScreenInfos? emulated_screen_infos;
+ 
+   // Whether or not blink should be in auto-resize mode.
+   bool auto_resize_enabled = false;

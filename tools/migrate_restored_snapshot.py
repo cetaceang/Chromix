@@ -124,6 +124,7 @@ def _verify_tooling(work: Path, repo: Path, roots: tuple[Path, ...], platform: s
 
         if run("rev-parse", "HEAD").decode().strip() != commit:
             raise arp.ApplyError(f"tooling checkout does not match pins: {name}")
+        required = {"domain_regex.list", "domain_substitution.list"} if name == "ungoogled-chromium" else set()
         for entry in run("ls-tree", "-rz", "--full-tree", commit).split(b"\0"):
             if not entry:
                 continue
@@ -140,6 +141,9 @@ def _verify_tooling(work: Path, repo: Path, roots: tuple[Path, ...], platform: s
             executable = bool(arp._path(root, filename).stat().st_mode & 0o111)
             if actual != digest or executable != (mode == "100755"):
                 raise arp.ApplyError(f"pinned tooling content/mode changed: {name}/{filename}")
+            required.discard(filename)
+        if required:
+            raise arp.ApplyError(f"regex/list missing from pinned tooling: {name}: {sorted(required)}")
 
 
 def _names(patches: list, lite: dict) -> set[str]:
@@ -157,6 +161,52 @@ def _ready(src: Path, key: str) -> None:
     path = _marker(src, READY)
     if not path.is_file() or path.read_bytes().rstrip(b"\n") != key.encode():
         raise arp.ApplyError(f"previous source-ready key does not match scripts/pins/arch. {arp.CLEAN}")
+
+
+def _tooling_identity_root(identity: dict) -> Path:
+    roots = []
+    for field, filename in (("regex", "domain_regex.list"), ("list", "domain_substitution.list")):
+        entry = identity.get(field)
+        raw = entry.get("path") if isinstance(entry, dict) else None
+        if not isinstance(raw, str) or not raw.startswith("/"):
+            raise ValueError(f"invalid {field} tooling path")
+        path = Path(raw)
+        if (path.as_posix() != raw or path.parts[-3:] != ("tooling", "ungoogled-chromium", filename)
+                or len(path.parts) < 5):
+            raise ValueError(f"invalid {field} tooling root/suffix")
+        # The old host need not exist here; any existing path components must be safe.
+        arp._path(Path("/"), raw[1:])
+        roots.append(path.parents[2])
+    if roots[0] != roots[1]:
+        raise ValueError("regex/list must share one tooling root")
+    return roots[0]
+
+
+def _previous_completed(src: Path, identity: dict, names: set[str]) -> bytes:
+    """Accept only a relocation of the two POSIX tooling paths, without rewriting receipts."""
+    marker = _marker(src, arp.MARKER)
+    if not marker.exists():
+        raise arp.ApplyError("old restored patch completion manifest is missing")
+    try:
+        saved = json.loads(marker.read_bytes())
+        old = saved.get("identity") if isinstance(saved, dict) else None
+        if (not isinstance(old, dict) or type(saved.get("schema_version")) is not int
+                or saved["schema_version"] != arp.SCHEMA
+                or saved.get("identity_sha256") != arp._sha(arp._json(old))):
+            raise ValueError("invalid saved identity hash/schema")
+        _tooling_identity_root(old)
+        _tooling_identity_root(identity)
+        relocated = dict(old)
+        for field in ("regex", "list"):
+            relocated[field] = dict(old[field], path=identity[field]["path"])
+        if arp._json(relocated) != arp._json(identity):
+            raise ValueError("non-path restored patch identity changed")
+        # Reuse the strict checker for the original identity and every output, including deletions.
+        if not arp._completed(src, old, names):
+            raise ValueError("completion manifest disappeared")
+        return arp._json(saved)
+    except (ValueError, TypeError, OSError) as exc:
+        raise arp.ApplyError(f"invalid previous restored patches: {exc}. {arp.CLEAN}") from exc
 
 
 def _claim(path: Path, payload: bytes) -> None:
@@ -236,14 +286,16 @@ def migrate(workdir: Path | str, previous_repo: Path | str, repo: Path | str,
     old_names, names = _names(old_patches, old_lite), _names(patches, lite)
     old_key, key = (source_ready_key(root, platform, arch) for root in (previous, repo))
     _ready(src, old_key)
-    if not arp._completed(src, old_identity, old_names):
-        raise arp.ApplyError("old restored patch completion manifest is missing")
+    previous_identity = _previous_completed(src, old_identity, old_names)
     before = arp._snapshot(src, old_names | names)
     markers = {name: (_marker(src, name).read_bytes(), _marker(src, name).stat())
                for name in (READY, arp.MARKER, restore.MARKER)}
     # Revalidate after taking the snapshot, before acquiring persistent blockers.
     _ready(src, old_key)
-    arp._completed(src, old_identity, old_names)
+    if _previous_completed(src, old_identity, old_names) != previous_identity:
+        raise arp.ApplyError("previous completion identity changed during validation")
+    if restore.verify_restored(work, platform, arch, repo=repo) != receipt:
+        raise arp.ApplyError("restore receipt changed during validation")
     _unchanged(src, before | markers)
     temp_root = Path(tempfile.gettempdir()).resolve()
     if any(temp_root.is_relative_to(root) for root in roots):
@@ -280,8 +332,12 @@ def migrate(workdir: Path | str, previous_repo: Path | str, repo: Path | str,
                 or source_ready_key(previous, platform, arch) != old_key
                 or source_ready_key(repo, platform, arch) != key):
             raise arp.ApplyError("repository/tooling inputs changed during migration")
-        if restore.verify_restored(work, platform, arch, repo=repo) != receipt:
+        if (restore.verify_restored(work, platform, arch, repo=previous) != receipt
+                or restore.verify_restored(work, platform, arch, repo=repo) != receipt):
             raise arp.ApplyError("restore receipt changed during migration")
+        _tooling_identity_root(json.loads(previous_identity)["identity"])
+        _tooling_identity_root(old_identity)
+        _ready(src, old_key)
         _unchanged(src, before | markers)
         changed = [name for name in sorted(before) if before[name][0] != after[name][0]
                    or before[name][1] and after[name][1]

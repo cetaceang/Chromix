@@ -1,0 +1,24 @@
+diff --git a/third_party/blink/renderer/core/frame/remote_frame.cc b/third_party/blink/renderer/core/frame/remote_frame.cc
+--- a/third_party/blink/renderer/core/frame/remote_frame.cc
++++ b/third_party/blink/renderer/core/frame/remote_frame.cc
+@@ -964,6 +964,8 @@
+           pending_visual_properties_.rect_in_local_root.size() ||
+       sent_visual_properties_->screen_infos !=
+           pending_visual_properties_.screen_infos ||
++      sent_visual_properties_->emulated_screen_infos !=
++          pending_visual_properties_.emulated_screen_infos ||
+       sent_visual_properties_->zoom_level !=
+           pending_visual_properties_.zoom_level ||
+       sent_visual_properties_->css_zoom_factor !=
+@@ -1059,8 +1061,10 @@
+ }
+ 
+ void RemoteFrame::DidChangeScreenInfos(
+-    const display::ScreenInfos& screen_infos) {
++    const display::ScreenInfos& screen_infos,
++    const std::optional<display::ScreenInfos>& emulated_screen_infos) {
+   pending_visual_properties_.screen_infos = screen_infos;
++  pending_visual_properties_.emulated_screen_infos = emulated_screen_infos;
+   SynchronizeVisualProperties();
+ }
+ 

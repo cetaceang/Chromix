@@ -1,0 +1,11 @@
+diff --git a/third_party/blink/common/widget/visual_properties_mojom_traits.cc b/third_party/blink/common/widget/visual_properties_mojom_traits.cc
+--- a/third_party/blink/common/widget/visual_properties_mojom_traits.cc
++++ b/third_party/blink/common/widget/visual_properties_mojom_traits.cc
+@@ -16,6 +16,7 @@
+     blink::VisualProperties>::Read(blink::mojom::VisualPropertiesDataView data,
+                                    blink::VisualProperties* out) {
+   if (!data.ReadScreenInfos(&out->screen_infos) ||
++      !data.ReadEmulatedScreenInfos(&out->emulated_screen_infos) ||
+       !data.ReadMinSizeForAutoResize(&out->min_size_for_auto_resize) ||
+       !data.ReadMaxSizeForAutoResize(&out->max_size_for_auto_resize) ||
+       !data.ReadNewSizeDevicePx(&out->new_size_device_px) ||

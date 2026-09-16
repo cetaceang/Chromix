@@ -85,15 +85,19 @@
     },
     "0161": {
       "target": "third_party/blink/renderer/platform/graphics/image_data_buffer.cc",
-      "patch_sha256": "b581c054fcbef76f5973ec32cadee3d6660382a05a37aeda4eb79d748ba058df",
+      "patch_sha256": "1f64ea6811755af65df6f88a9d3a553940e05d21d49d7820d60aa7f3171d4bde",
       "preimage_sha256": "c5fc2d3bb10c70621e6cb5c5157893496b5480f7423c7fe37709bb6859079c29",
       "sections": [
         {
           "line": 58,
           "text": "  uint64_t seed64 = 0u;\n  const SkColorType ct = pm.colorType();\n  const bool apply_noise =\n      config.Get(\"uxr-synthetic-device-tests\") == \"true\" &&\n      !config.Has(\"uxr-disable-fingerprint-noise\") && !seed_text.empty() &&\n      seed_text.find_first_not_of(\"0123456789\") == std::string::npos &&\n      base::StringToUint64(seed_text, &seed64) && seed64 != 0u &&\n      (ct == kRGBA_8888_SkColorType || ct == kBGRA_8888_SkColorType);\n"
+        },
+        {
+          "line": 152,
+          "text": "      colorType = kN32_SkColorType;  // Work around for bug with JPEG encoder\n    const SkImageInfo info =\n        SkImageInfo::Make(paint_image_info.width(), paint_image_info.height(),\n                          paint_image_info.colorType(), kUnpremul_SkAlphaType,\n                          paint_image_info.refColorSpace());\n    const size_t rowBytes = info.minRowBytes();\n    size_t size = info.computeByteSize(rowBytes);\n"
         }
       ],
-      "output_sha256": "551c4c4a485c6c559549f2e76bf73fe63e30cc4354d96552c7e3b3255d4085b3",
+      "output_sha256": "7a878ce5790ddcf1ec78a375ef065f62731eb8bda658caff217e7ab2d1dda755",
       "created_by_series": false
     },
     "0162": {

@@ -1,0 +1,39 @@
+diff --git a/third_party/blink/renderer/platform/widget/widget_base.cc b/third_party/blink/renderer/platform/widget/widget_base.cc
+--- a/third_party/blink/renderer/platform/widget/widget_base.cc
++++ b/third_party/blink/renderer/platform/widget/widget_base.cc
+@@ -1864,7 +1864,8 @@
+   display::ScreenInfo& new_screen_info = new_screen_infos.mutable_current();
+ 
+   // If there is a screen orientation override apply it.
+-  if (auto orientation_override = client_->ScreenOrientationOverride()) {
++  if (auto orientation_override = client_->ScreenOrientationOverride();
++      orientation_override && !client_->FrameWidget()) {
+     new_screen_info.orientation_type = orientation_override.value();
+     new_screen_info.orientation_angle =
+         OrientationTypeToAngle(new_screen_info.orientation_type);
+@@ -1900,15 +1901,21 @@
+         screen_infos_.current().display_color_spaces);
+   }
+ 
+-  if (orientation_changed) {
+-    auto weak_this = weak_ptr_factory_.GetWeakPtr();
++  auto weak_this = weak_ptr_factory_.GetWeakPtr();
++  if (!client_->FrameWidget() && orientation_changed) {
+     client_->OrientationChanged();
+-    if (!weak_this) {
++    if (!weak_this || will_be_destroyed_) {
+       return;
+     }
+   }
+-
+   client_->DidUpdateSurfaceAndScreen(previous_original_screen_infos);
++  if (!weak_this || will_be_destroyed_) {
++    return;
++  }
++  // Frame widgets filter effective orientation and may run script here.
++  if (client_->FrameWidget()) {
++    client_->OrientationChanged();
++  }
+ }
+ 
+ void WidgetBase::UpdateScreenInfo(

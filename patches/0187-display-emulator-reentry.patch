@@ -1,0 +1,17 @@
+diff --git a/third_party/blink/renderer/core/frame/screen_metrics_emulator.cc b/third_party/blink/renderer/core/frame/screen_metrics_emulator.cc
+--- a/third_party/blink/renderer/core/frame/screen_metrics_emulator.cc
++++ b/third_party/blink/renderer/core/frame/screen_metrics_emulator.cc
+@@ -200,7 +200,13 @@
+       visual_properties.visible_viewport_size_device_px;
+   original_root_viewport_segments_ =
+       visual_properties.root_widget_viewport_segments;
++  const uint64_t update_sequence = frame_widget_->ScreenUpdateSequence();
+   Apply();
++  if (frame_widget_->DeviceEmulator() != this ||
++      !frame_widget_->IsScreenUpdateCurrent(update_sequence + 1)) {
++    ++frame_widget_->visual_properties_update_sequence_;
++    return;
++  }
+ 
+   // Appy the compositor viewport rect and surface id allocation. The screen
+   // info is kept the same as the current ScreenInfo state. The screen info

@@ -1,0 +1,35 @@
+diff --git a/third_party/blink/renderer/core/exported/web_view_impl.cc b/third_party/blink/renderer/core/exported/web_view_impl.cc
+--- a/third_party/blink/renderer/core/exported/web_view_impl.cc
++++ b/third_party/blink/renderer/core/exported/web_view_impl.cc
+@@ -177,6 +177,7 @@
+ #include "third_party/blink/renderer/platform/graphics/image.h"
+ #include "third_party/blink/renderer/platform/graphics/paint/cull_rect.h"
+ #include "third_party/blink/renderer/platform/graphics/paint/paint_record_builder.h"
++#include "third_party/blink/renderer/platform/heap/persistent.h"
+ #include "third_party/blink/renderer/platform/image-decoders/image_decoder.h"
+ #include "third_party/blink/renderer/platform/instrumentation/histogram.h"
+ #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
+@@ -1508,13 +1509,21 @@
+     std::optional<display::mojom::blink::ScreenOrientation> orientation) {
+   screen_orientation_override_ = orientation;
+ 
+-  // Since we updated the override value, notify all widgets.
++  // Snapshot local roots before notifications can detach frames or widgets.
++  Vector<Persistent<WebFrameWidgetImpl>> widgets;
+   for (WebFrame* frame = MainFrame(); frame; frame = frame->TraverseNext()) {
+     if (frame->IsWebLocalFrame()) {
+       if (WebFrameWidgetImpl* widget = static_cast<WebFrameWidgetImpl*>(
+               frame->ToWebLocalFrame()->FrameWidget())) {
+-        widget->UpdateScreenInfo(widget->GetScreenInfos());
++        if (widget->LocalRootImpl() == frame && !widgets.Contains(widget)) {
++          widgets.push_back(widget);
++        }
+       }
++    }
++  }
++  for (const auto& widget : widgets) {
++    if (widget->LocalRootImpl()) {
++      widget->RefreshScreenInfo();
+     }
+   }
+ }

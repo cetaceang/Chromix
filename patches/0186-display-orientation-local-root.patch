@@ -1,0 +1,87 @@
+diff --git a/third_party/blink/renderer/modules/screen_orientation/screen_orientation_controller.cc b/third_party/blink/renderer/modules/screen_orientation/screen_orientation_controller.cc
+--- a/third_party/blink/renderer/modules/screen_orientation/screen_orientation_controller.cc
++++ b/third_party/blink/renderer/modules/screen_orientation/screen_orientation_controller.cc
+@@ -8,6 +8,7 @@
+ #include <utility>
+ #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+ #include "third_party/blink/public/platform/task_type.h"
++#include "third_party/blink/renderer/bindings/modules/v8/v8_orientation_type.h"
+ #include "third_party/blink/renderer/core/dom/events/event.h"
+ #include "third_party/blink/renderer/core/frame/local_dom_window.h"
+ #include "third_party/blink/renderer/core/frame/local_frame.h"
+@@ -130,7 +131,8 @@
+ }
+ 
+ bool ScreenOrientationController::IsActiveAndVisible() const {
+-  return orientation_ && DomWindow() && GetPage() && GetPage()->IsPageVisible();
++  return orientation_ && DomWindow() && DomWindow()->GetFrame() && GetPage() &&
++         GetPage()->IsPageVisible();
+ }
+ 
+ void ScreenOrientationController::BuildMojoConnection() {
+@@ -152,26 +154,16 @@
+ 
+   DCHECK(GetPage());
+ 
+-  // The orientation type and angle are tied in a way that if the angle has
+-  // changed, the type must have changed.
+   LocalFrame& frame = *DomWindow()->GetFrame();
+-  uint16_t current_angle =
+-      GetPage()->GetChromeClient().GetScreenInfo(frame).orientation_angle;
+-
+-  // FIXME: sendOrientationChangeEvent() currently send an event all the
+-  // children of the frame, so it should only be called on the frame on
+-  // top of the tree. We would need the embedder to call
+-  // sendOrientationChangeEvent on every WebFrame part of a WebView to be
+-  // able to remove this.
+-  if (&frame == frame.LocalFrameRoot() &&
+-      orientation_->angle() != current_angle)
++  if (&frame == &frame.LocalFrameRoot()) {
+     NotifyOrientationChanged();
++  }
+ }
+ 
+ void ScreenOrientationController::NotifyOrientationChanged() {
+   // TODO(dcheng): Update this code to better handle instances when v8 memory
+   // is forcibly purged.
+-  if (!DomWindow()) {
++  if (!DomWindow() || !DomWindow()->GetFrame()) {
+     return;
+   }
+ 
+@@ -181,12 +173,18 @@
+   HeapVector<Member<LocalFrame>> frames;
+   for (Frame* frame = DomWindow()->GetFrame(); frame;
+        frame = frame->Tree().TraverseNext(DomWindow()->GetFrame())) {
+-    if (auto* local_frame = DynamicTo<LocalFrame>(frame))
++    if (auto* local_frame = DynamicTo<LocalFrame>(frame);
++        local_frame && &local_frame->LocalFrameRoot() ==
++                           &DomWindow()->GetFrame()->LocalFrameRoot()) {
+       frames.push_back(local_frame);
++    }
+   }
+   for (LocalFrame* frame : frames) {
+-    if (auto* controller = FromIfExists(*frame->DomWindow()))
+-      controller->NotifyOrientationChangedInternal();
++    if (auto* window = frame->DomWindow()) {
++      if (auto* controller = FromIfExists(*window)) {
++        controller->NotifyOrientationChangedInternal();
++      }
++    }
+   }
+ }
+ 
+@@ -194,7 +192,13 @@
+   if (!IsActiveAndVisible())
+     return;
+ 
++  const auto previous_type = orientation_->type().AsEnum();
++  const auto previous_angle = orientation_->angle();
+   UpdateOrientation();
++  if (previous_type == orientation_->type().AsEnum() &&
++      previous_angle == orientation_->angle()) {
++    return;
++  }
+   GetExecutionContext()
+       ->GetTaskRunner(TaskType::kMiscPlatformAPI)
+       ->PostTask(FROM_HERE,

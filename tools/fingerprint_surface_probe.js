@@ -301,7 +301,11 @@
       for (const contentType of configs) {
         const audio = {contentType, channels:'1', bitrate:64000, samplerate:48000};
         decoding.push(await mc.decodingInfo({type:'file', audio}));
-        encoding.push(await mc.encodingInfo({type:'record', audio}));
+      }
+      // Record encoding is experimental; WebRTC takes RTP MIME types, not containers.
+      for (const contentType of ['audio/x-chromix-invalid', 'audio/opus']) {
+        const audio = {contentType, channels:'2', bitrate:64000, samplerate:48000};
+        encoding.push(await mc.encodingInfo({type:'webrtc', audio}));
       }
       return {available:true, decoding, encoding};
     });

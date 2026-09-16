@@ -1,0 +1,14 @@
+diff --git a/third_party/blink/public/common/widget/visual_properties.h b/third_party/blink/public/common/widget/visual_properties.h
+--- a/third_party/blink/public/common/widget/visual_properties.h
++++ b/third_party/blink/public/common/widget/visual_properties.h
+@@ -55,6 +55,10 @@
+ struct BLINK_COMMON_EXPORT VisualProperties {
+   // Info about all screens, including the one currently showing the widget.
+   display::ScreenInfos screen_infos;
++
++  // Web-exposed emulation inherited from the parent local root. Native sizing,
++  // compositing and input coordinates continue to use screen_infos.
++  std::optional<display::ScreenInfos> emulated_screen_infos;
+ 
+   // Whether or not blink should be in auto-resize mode.
+   bool auto_resize_enabled = false;

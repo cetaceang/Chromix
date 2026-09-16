@@ -1,0 +1,20 @@
+diff --git a/third_party/blink/public/common/frame/frame_visual_properties.h b/third_party/blink/public/common/frame/frame_visual_properties.h
+--- a/third_party/blink/public/common/frame/frame_visual_properties.h
++++ b/third_party/blink/public/common/frame/frame_visual_properties.h
+@@ -4,6 +4,8 @@
+ 
+ #ifndef THIRD_PARTY_BLINK_PUBLIC_COMMON_FRAME_FRAME_VISUAL_PROPERTIES_H_
+ #define THIRD_PARTY_BLINK_PUBLIC_COMMON_FRAME_FRAME_VISUAL_PROPERTIES_H_
++
++#include <optional>
+ 
+ #include "components/viz/common/surfaces/local_surface_id.h"
+ #include "third_party/blink/public/common/common_export.h"
+@@ -45,6 +47,7 @@
+   // another renderer process. That RenderWidgetHost would then be responsible
+   // for passing it along to the child RenderWidget.
+   display::ScreenInfos screen_infos;
++  std::optional<display::ScreenInfos> emulated_screen_infos;
+   bool auto_resize_enabled = false;
+   bool is_pinch_gesture_active = false;
+   double zoom_level = 0;

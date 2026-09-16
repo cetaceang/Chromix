@@ -1,0 +1,13 @@
+diff --git a/content/browser/renderer_host/cross_process_frame_connector.cc b/content/browser/renderer_host/cross_process_frame_connector.cc
+--- a/content/browser/renderer_host/cross_process_frame_connector.cc
++++ b/content/browser/renderer_host/cross_process_frame_connector.cc
+@@ -227,7 +227,8 @@
+       visual_properties.is_pinch_gesture_active,
+       visual_properties.visible_viewport_size,
+       visual_properties.compositor_viewport,
+-      visual_properties.root_widget_viewport_segments);
++      visual_properties.root_widget_viewport_segments,
++      visual_properties.emulated_screen_infos);
+ 
+   render_widget_host->UpdateVisualProperties(propagate);
+ }

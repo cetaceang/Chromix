@@ -341,7 +341,7 @@ RUNTIME_FAILURE = """      - name: Upload failed macOS runtime bundle
 
 SNAPSHOT_ENSURE = """      - name: Verify handoff snapshot
         id: checkpoint
-        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true') }}
+        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true' || (inputs.platform == 'linux' && steps.linux_runtime_checkpoint.outputs.upload_snapshot == 'true')) }}
         run: |
           set -euo pipefail
           SNAP="${RUNNER_TEMP}/chromix-build/.snapshot-stage-%(stage)d"
@@ -351,7 +351,7 @@ SNAPSHOT_ENSURE = """      - name: Verify handoff snapshot
 """
 
 UPLOAD_PARTS = """      - name: Upload tree part 1
-        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true') && steps.checkpoint.outcome == 'success' }}
+        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true' || (inputs.platform == 'linux' && steps.linux_runtime_checkpoint.outputs.upload_snapshot == 'true')) && steps.checkpoint.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.artifact }}-tree-s%(stage)d-attempt-${{ github.run_attempt }}-part1
@@ -360,7 +360,7 @@ UPLOAD_PARTS = """      - name: Upload tree part 1
           retention-days: 3
           compression-level: 0
       - name: Upload tree part 2
-        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true') && steps.checkpoint.outcome == 'success' }}
+        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true' || (inputs.platform == 'linux' && steps.linux_runtime_checkpoint.outputs.upload_snapshot == 'true')) && steps.checkpoint.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.artifact }}-tree-s%(stage)d-attempt-${{ github.run_attempt }}-part2
@@ -369,7 +369,7 @@ UPLOAD_PARTS = """      - name: Upload tree part 1
           retention-days: 3
           compression-level: 0
       - name: Upload tree part 3
-        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true') && steps.checkpoint.outcome == 'success' }}
+        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true' || (inputs.platform == 'linux' && steps.linux_runtime_checkpoint.outputs.upload_snapshot == 'true')) && steps.checkpoint.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.artifact }}-tree-s%(stage)d-attempt-${{ github.run_attempt }}-part3
@@ -378,7 +378,7 @@ UPLOAD_PARTS = """      - name: Upload tree part 1
           retention-days: 3
           compression-level: 0
       - name: Upload tree part 4
-        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true') && steps.checkpoint.outcome == 'success' }}
+        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true' || (inputs.platform == 'linux' && steps.linux_runtime_checkpoint.outputs.upload_snapshot == 'true')) && steps.checkpoint.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.artifact }}-tree-s%(stage)d-attempt-${{ github.run_attempt }}-part4
@@ -386,6 +386,51 @@ UPLOAD_PARTS = """      - name: Upload tree part 1
           if-no-files-found: warn
           retention-days: 3
           compression-level: 0
+"""
+
+LINUX_FAILURE = """      - name: Upload failed Linux runtime bundle
+        if: ${{ !cancelled() && inputs.platform == 'linux' && steps.stage.outcome == 'failure' && steps.stage.outputs.package_ready == 'true' && steps.stage.outputs.runtime_failed == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact }}-failed-runtime-s%(stage)d-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/chromix-build/dist/${{ inputs.artifact }}.zip
+            ${{ runner.temp }}/chromix-build/dist/SHA256SUMS
+            ${{ runner.temp }}/chromix-build/fingerprint-diagnostics/
+            ${{ runner.temp }}/chromix-logs/stage-%(stage)d.log
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Preserve failed Linux compiled checkpoint
+        id: linux_runtime_checkpoint
+        if: ${{ !cancelled() && inputs.platform == 'linux' && steps.stage.outcome == 'failure' && steps.stage.outputs.compiled_ready == 'true' }}
+        run: |
+          set -euo pipefail
+          WORK="${RUNNER_TEMP}/chromix-build"
+          python3 - "$WORK" <<'PY'
+          from pathlib import Path
+          import shutil
+          import sys
+
+          work = Path(sys.argv[1])
+          if work.is_symlink() or not work.is_dir() or work.resolve() != work:
+              raise SystemExit("unsafe Linux checkpoint work directory")
+          if (work / "src").is_symlink() or not (work / "src").is_dir():
+              raise SystemExit("Linux checkpoint source directory is missing or unsafe")
+          # Only redundant copies; retain the bundle, source, objects and caches.
+          copies = [work / "smoke", work / "dist/chromix"]
+          snapshots = [work / f".snapshot-stage-{stage}" for stage in range(1, 9)]
+          for path in [*copies, *snapshots]:
+              if path.is_symlink() or path.resolve() != path:
+                  raise SystemExit(f"unsafe Linux checkpoint cleanup path: {path}")
+          for path in [*copies, *snapshots]:
+              if path.is_dir():
+                  shutil.rmtree(path)
+          PY
+          bash build/posix/ci-parts.sh "$WORK" "$WORK/.snapshot-stage-%(stage)d"
+          echo "upload_snapshot=true" >> "$GITHUB_OUTPUT"
+
 """
 
 FINAL_UPLOADS = """      - name: Upload final bundle
@@ -495,6 +540,7 @@ def job(stage: int) -> str:
                  "        run: python3 tools/build_resources.py --github-env\n\n")
     parts.append(run_step(stage))
     parts.append(RUNTIME_FAILURE % {"stage": stage})
+    parts.append(LINUX_FAILURE % {"stage": stage})
     parts.append(SNAPSHOT_ENSURE % {"stage": stage})
     parts.append("\n")
     parts.append(UPLOAD_PARTS % {"stage": stage})

@@ -307,6 +307,65 @@ def test_extended_pixel_contracts(extended_binary, case):
     run_case(extended_binary, case)
 
 
+@pytest.mark.parametrize('case', ['opaque', 'premul', 'unpremul'])
+def test_final_export_alpha_metadata_matches(tmp_path, patched_sources, case):
+    target = tmp_path / target_path('0031')
+    target.parent.mkdir(parents=True)
+    target.write_text(patched_sources['0031'], encoding='utf-8')
+    apply_patch(tmp_path, '0161')
+    source = buffer_code({'0031':target.read_text(encoding='utf-8')})
+    dependencies = support().replace('  bool synthetic = true;', '''  bool synthetic = true;
+  struct Policy { bool canvas_pixel_noise; };
+  Policy GpuBackendPolicy() const { return {synthetic && !disabled}; }''')
+    binary = compile_cpp(tmp_path, dependencies + source + r'''
+using blink::ImageDataBuffer;
+int main(int argc, char** argv) {
+  assert(argc == 2);
+  const std::string test = argv[1];
+  const auto alpha = test == "opaque" ? kOpaque_SkAlphaType :
+                     test == "premul" ? kPremul_SkAlphaType : kUnpremul_SkAlphaType;
+  for (auto ct : {kRGBA_8888_SkColorType, kBGRA_8888_SkColorType, kRGBA_F16_SkColorType})
+  for (bool enabled : {false, true}) for (int cs : {0, 1}) {
+    auto& config = base::UxrConfig::GetInstance();
+    config.synthetic = enabled; config.disabled = false; config.seed = "12345";
+    SkImageInfo info{7, 3, ct, alpha, cs};
+    const size_t stride = info.minRowBytes() + 16;
+    std::vector<uint8_t> bytes(stride * 3, 0xa7);
+    for (int y = 0; y < 3; ++y) for (int x = 0; x < 7; ++x) {
+      auto* p = bytes.data() + size_t(y) * stride + size_t(x) * info.bytesPerPixel();
+      if (ct == kRGBA_F16_SkColorType) {
+        _Float16 v[4] = {0.125, 0.25, 0.5, _Float16(alpha == kOpaque_SkAlphaType ? 1 : 0.5)};
+        std::memcpy(p, v, 8);
+      } else { p[0] = 20; p[1] = 60; p[2] = 80; p[3] = alpha == kOpaque_SkAlphaType ? 255 : 128; }
+    }
+    const auto before = bytes;
+    const SkPixmap pm(info, bytes.data(), stride);
+    auto image = std::make_shared<StaticBitmapImage>();
+    image->paint.image = std::make_shared<SkImage>(); image->paint.image->pixels = pm;
+    auto sync = ImageDataBuffer::Create(image), async = ImageDataBuffer::Create(pm);
+    assert(sync && async);
+    const bool noise = enabled && ct != kRGBA_F16_SkColorType;
+    const auto sync_alpha = sync->GetPixmap().info().alphaType();
+    const auto async_alpha = async->GetPixmap().info().alphaType();
+    assert(sync_alpha == (noise || alpha == kPremul_SkAlphaType ? kUnpremul_SkAlphaType : alpha));
+    assert(async_alpha == (noise ? kUnpremul_SkAlphaType : alpha));
+    assert((sync_alpha == kOpaque_SkAlphaType) == (async_alpha == kOpaque_SkAlphaType));
+    assert(sync->GetPixmap().info().cs == cs && async->GetPixmap().info().cs == cs);
+    if (alpha != kPremul_SkAlphaType || noise) {
+      for (int y = 0; y < 3; ++y)
+        assert(std::memcmp(static_cast<const uint8_t*>(sync->GetPixmap().addr()) + size_t(y) * sync->GetPixmap().rowBytes(),
+                           static_cast<const uint8_t*>(async->GetPixmap().addr()) + size_t(y) * async->GetPixmap().rowBytes(),
+                           info.minRowBytes()) == 0);
+    }
+    assert(bytes == before);
+    if (noise) assert(std::memcmp(async->GetPixmap().addr(), bytes.data(), info.minRowBytes()) != 0);
+    else assert(async->GetPixmap().addr() == bytes.data());
+  }
+}
+''')
+    run_case(binary, case)
+
+
 @pytest.fixture(scope="module")
 def async_binary(tmp_path_factory, patched_sources, async_sources):
     source = async_sources[ASYNC_CC]

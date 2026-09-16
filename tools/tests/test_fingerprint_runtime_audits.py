@@ -76,6 +76,24 @@ def test_runtime_cross_path_mismatch_fails(path, value):
     assert runtime.assess(report)
 
 
+@pytest.mark.parametrize('mode,available_height', [('launch-backend', 1040), ('native-cdp', 1080)])
+def test_oopif_consistent_but_dpr_shrunk_geometry_is_rejected(mode, available_height):
+    report = runtime_report()
+    report['configuration_mode'] = mode
+    for name in ('display_initial', 'display_resized', 'display_scaled'):
+        report['observations'][name]['screen']['availHeight'] = available_height
+    child = report['observations']['display_oopif']['geometry']
+    child['screen']['availHeight'] = available_height
+    child['viewport'] = {'width': 300, 'height': 150, 'scale': 1}
+    assert runtime.assess(report) == []
+
+    # Linux 153 observed mutually consistent CSS/JS/layout at 1 / 1.25 size.
+    child['window'].update(innerWidth=240, innerHeight=120)
+    child['layout'].update(width=240, height=120)
+    child['viewport'].update(width=240, height=120)
+    assert runtime.assess(report) == ['OOPIF layout/CSS scaling mismatch']
+
+
 def render_report():
     gpu = {'status':'observed', 'features':['shader-f16'], 'enabledFeatures':['shader-f16'],
            'limits':{'maxBufferSize':1024, 'minUniformBufferOffsetAlignment':256},

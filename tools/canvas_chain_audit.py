@@ -69,6 +69,20 @@ def server(taint_origin=''):
         thread.join(timeout=5)
 
 
+def collect_live(context, origin):
+    # This page serves only Canvas probes, not the device font/GPU bundle.
+    page = context.new_page()
+    try:
+        page.goto(origin, wait_until='load', timeout=launch.DEFAULT_TIMEOUT)
+        observation = {'window':page.evaluate(launch.PROBE_EVAL)}
+        observation['iframe'] = page.frame(url=origin + '/frame').evaluate(launch.PROBE_EVAL)
+        for scope in launch.pool.SCOPES[2:]:
+            observation[scope] = page.evaluate(launch.WORKER_EVAL, scope)
+        return observation
+    finally:
+        page.close()
+
+
 def signature(observation):
     # All operations are fixed inputs; salted identities and elapsed timings are absent.
     return launch.pool.digest(observation)
@@ -101,7 +115,7 @@ def main(argv=None):
                     no_viewport=True, chromium_sandbox=True, args=launch.NATIVE_ARGS)
                 try:
                     report['browser_version'] = context.browser.version
-                    observation = launch.collect_live(context, origin)
+                    observation = collect_live(context, origin)
                     result = evaluate(observation)
                     report['runs'].append({'profile':profile, 'observation':observation, **result})
                     report['errors'].extend(result['errors'])

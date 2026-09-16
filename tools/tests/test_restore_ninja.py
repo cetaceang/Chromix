@@ -392,6 +392,16 @@ class RestoreNinjaShellTest(unittest.TestCase):
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(REPO / relative, destination)
         (self.repo / "tools/restored_reuse_evidence.py").write_text("import sys\nassert '--phase' in sys.argv\n")
+        # Patch contents are covered by test_verify_patch_stack.py; this fixture checks call wiring.
+        (self.repo / "tools/verify_patch_stack.py").write_text(
+            'import os, sys\nfrom pathlib import Path\n'
+            'args = dict(zip(sys.argv[1::2], sys.argv[2::2]))\n'
+            'assert args["--src"] == os.environ["SRC"]\n'
+            'assert args["--repo"] == os.environ["REPO"]\n'
+            'assert args["--platform"] in ("linux", "macos")\n'
+            'output = Path(args["--output"])\n'
+            'assert output.parent == Path(os.environ["WORK"]) / "fingerprint-diagnostics"\n'
+            'output.write_text("{}\\n")\n')
         shell(self.repo / "build/prepare-ungoogled.sh", "exit 0\n")
         shell(self.repo / "build/posix/prepare-restored-tools.sh", 'touch "$1/src/.chromix-toolchain-ready"\n')
         shell(self.repo / "build/macos/select-xcode.sh", "select_macos_xcode() { :; }\n")

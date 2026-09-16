@@ -277,11 +277,77 @@ def linux_sysroot_identity(src: Path, arch: str, *, host_arch: str) -> dict:
     return result
 
 
+def _relocated_sysroot_identity(identity: dict, names: set[str]) -> dict | None:
+    """Normalize only complete hashed identities under one canonical source root."""
+    if not isinstance(identity, dict) or set(identity) != names:
+        return None
+    source_root = None
+
+    def normalize(record, relative, *, directory=False):
+        nonlocal source_root
+        fields = {"path", "mode", "mtime_ns"} if directory else {"path", "size", "mtime_ns", "sha256"}
+        if not isinstance(record, dict) or set(record) != fields:
+            raise ValueError("incomplete sysroot identity")
+        numeric = "mode" if directory else "size"
+        if (type(record[numeric]) is not int or not 0 <= record[numeric] <= (0o7777 if directory else 4096)
+                or type(record["mtime_ns"]) is not int or record["mtime_ns"] < 0
+                or not directory and (not isinstance(record["sha256"], str)
+                                      or re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is None)):
+            raise ValueError("invalid sysroot metadata")
+        value = record["path"]
+        if not isinstance(value, str) or any(char in value for char in ("\0", "\\", ":")):
+            raise ValueError("invalid sysroot path")
+        path, suffix = Path(value), Path(relative)
+        if (not value.startswith("/") or value.startswith("//") or path.as_posix() != value
+                or ".." in path.parts or path.parts[-len(suffix.parts):] != suffix.parts):
+            raise ValueError("noncanonical sysroot path")
+        root = path.parents[len(suffix.parts) - 1]
+        if (root.name != "src" or source_root is not None and root != source_root
+                or any(linked(parent) for parent in (path, *path.parents))):
+            raise ValueError("inconsistent or linked sysroot root")
+        source_root = root
+        return dict(record, path=relative)
+
+    result = {}
+    try:
+        for name, entry in identity.items():
+            if (not isinstance(entry, dict) or set(entry) != {"root", "stamp", "first_class"}
+                    or not isinstance(entry["first_class"], dict)):
+                return None
+            relative = name.rsplit("/", 1)[0]
+            root = normalize(entry["root"], relative, directory=True)
+            stamp = normalize(entry["stamp"], name)
+            first_class = {}
+            for filename, record in entry["first_class"].items():
+                if (not isinstance(filename, str)
+                        or re.fullmatch(r"\.[^/\\\x00]+_is_first_class_gcs", filename) is None):
+                    return None
+                first_class[filename] = normalize(record, relative + "/" + filename)
+            result[name] = {"root": root, "stamp": stamp, "first_class": first_class}
+    except (OSError, ValueError, RuntimeError, IndexError):
+        return None
+    return result
+
+
 def _sysroots_changed(previous: dict | None, current: dict) -> bool | None:
     if previous is None:
         return None
     if "sysroot_identity" in previous:
-        return previous["sysroot_identity"] != current
+        if previous["sysroot_identity"] == current:
+            return False
+        host = previous.get("host")
+        if (type(previous.get("schema_version")) is not int or previous["schema_version"] != SCHEMA
+                or previous.get("platform") != "linux" or not isinstance(host, dict)
+                or host.get("platform") != "linux"
+                or (previous.get("arch"), host.get("arch")) not in
+                (("x64", "x64"), ("arm64", "arm64"), ("arm64", "x64"))):
+            return True
+        cpus = {"x64": "amd64", "arm64": "arm64"}
+        names = {f"build/linux/debian_bullseye_{cpus[arch]}-sysroot/.stamp"
+                 for arch in (previous["arch"], host["arch"])}
+        before = _relocated_sysroot_identity(previous["sysroot_identity"], names)
+        after = _relocated_sysroot_identity(current, names)
+        return before is None or after is None or before != after
     environment = previous.get("environment")
     if not isinstance(environment, dict) or not isinstance(environment.get("sysroots"), dict):
         return None
