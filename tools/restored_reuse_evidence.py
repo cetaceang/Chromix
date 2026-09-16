@@ -25,11 +25,13 @@ import hashlib
 import json
 import os
 import re
+import signal
 import stat
 import struct
 import subprocess
 import sys
 import threading
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -52,7 +54,9 @@ MAX_LINE_BYTES = 16 * 1024
 MAX_JSON_BYTES = 2 * 1024**2
 MAX_PATH_EXAMPLES = 8
 MAX_PATH_EXAMPLE_CHARS = 256
-NINJA_TIMEOUT = 120
+MAX_QUERY_STDERR_BYTES = 4096
+NINJA_TIMEOUT = 10
+NINJA_INPUTS_TIMEOUT = 600
 ELF_ARCHITECTURES = {62: "x64", 183: "arm64"}
 ARCHITECTURE_METHOD = "linux-elf64-le-et-rel"
 SCOPE = "retained since first Chromix build, upstream source verified"
@@ -154,22 +158,93 @@ def write_json(path: Path, value: dict, *, exclusive=False) -> None:
 
 
 def query(ninja: Path, out: Path, args: list[str], limit: int) -> bytes:
-    # A timer also bounds a stalled read; only read-only Ninja tools are invoked.
-    with subprocess.Popen([str(ninja), *args], cwd=out, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT) as process:
-        timer = threading.Timer(NINJA_TIMEOUT, process.kill)
-        timer.daemon = True
-        timer.start()
-        try:
-            data = process.stdout.read(limit + 1)
-            if len(data) > limit:
-                process.kill()
-                raise EvidenceError("Ninja query exceeds output byte cap")
-            if process.wait() != 0:
-                raise EvidenceError("Ninja read-only query failed or timed out")
-            return data
-        finally:
-            timer.cancel()
+    # Inputs traverses and sorts the full manifest closure before emitting output.
+    timeout = NINJA_INPUTS_TIMEOUT if args[:2] == ["-t", "inputs"] else NINJA_TIMEOUT
+    started = time.monotonic()
+    timed_out = threading.Event()
+    stderr = bytearray()
+    stderr_size = 0
+    process = None
+    terminated = False
+    own_group = os.name == "posix" and threading.current_thread() is threading.main_thread()
+
+    def kill():
+        if process is not None:
+            try:
+                if own_group:
+                    os.killpg(process.pid, signal.SIGKILL)
+                else:
+                    process.kill()
+            except ProcessLookupError:
+                pass
+
+    def terminate(signum, frame):
+        nonlocal terminated
+        terminated = True
+        kill()
+
+    # Register before spawning: the query group is outside the stage timeout's group.
+    previous_sigterm = signal.signal(signal.SIGTERM, terminate) if own_group else None
+    try:
+        with subprocess.Popen([str(ninja), *args], cwd=out, stdin=subprocess.DEVNULL,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              start_new_session=own_group) as process:
+            if terminated:
+                kill()
+
+            def expire():
+                timed_out.set()
+                kill()
+
+            def drain_stderr():
+                nonlocal stderr_size
+                # Drain continuously, retaining only a bounded diagnostic prefix.
+                while data := process.stderr.read1(64 * 1024):
+                    stderr_size += len(data)
+                    stderr.extend(data[:max(0, MAX_QUERY_STDERR_BYTES - len(stderr))])
+
+            reader = threading.Thread(target=drain_stderr, daemon=True)
+            timer = threading.Timer(timeout, expire)
+            timer.daemon = True
+            reader.start()
+            timer.start()
+            try:
+                data = process.stdout.read(limit + 1)
+                if len(data) > limit:
+                    kill()
+                process.wait()
+                reader.join()
+            finally:
+                timer.cancel()
+                timer.join()
+                kill()
+                process.wait()
+                reader.join()
+            if terminated:
+                reason = "interrupted by SIGTERM"
+            elif len(data) > limit:
+                reason = "exceeds stdout byte cap"
+            elif timed_out.is_set():
+                reason = "timed out"
+            elif process.returncode != 0:
+                reason = "failed (nonzero exit)"
+            elif stderr_size:
+                reason = "produced unexpected stderr"
+            else:
+                return data
+            command = escaped_path(args)
+            if len(command) > 96:
+                command = command[:93] + "..."
+            raise EvidenceError((f"Ninja query {command} {reason}; timeout={timeout:g}s; "
+                                 f"elapsed={time.monotonic() - started:.2f}s; returncode={process.returncode}; "
+                                 f"stdout_bytes={len(data)}; stdout_cap={limit}; stderr_bytes={stderr_size}; "
+                                 f"stderr={escaped_path(bytes(stderr))}")[:512])
+    finally:
+        if own_group:
+            signal.signal(signal.SIGTERM, previous_sigterm)
+            if terminated:
+                # Preserve caller termination semantics after the query is reaped.
+                os.kill(os.getpid(), signal.SIGTERM)
 
 
 def target_inputs(ninja: Path, out: Path, targets: list[str]) -> tuple[set[str], dict]:
