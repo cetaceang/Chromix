@@ -1136,7 +1136,15 @@ class ResumeWorkflowRegressionTest(unittest.TestCase):
     def test_resume_uses_official_cross_run_artifact_download(self):
         self.assertIn("actions: read", self.source)
         self.assertEqual(self.source.count("github-token: ${{ github.token }}"), 11)
-        self.assertEqual(self.source.count("run-id: ${{ inputs.resume_run_id }}"), 11)
+        import yaml
+        jobs = yaml.safe_load(self.source)["jobs"]
+        downloads = [step for job in jobs.values() for step in job["steps"]
+                     if step.get("name") == "Download tree from previous run"]
+        self.assertEqual(len(downloads), 11)
+        for step in downloads:
+            self.assertEqual(step["uses"], "actions/download-artifact@v4")
+            self.assertEqual(step["with"]["run-id"], "${{ inputs.resume_run_id }}")
+            self.assertIn("inputs.resume_source_sha == ''", step["if"])
         self.assertEqual(self.source.count("merge-multiple: true"), 22)
         self.assertIn("resume_tree_stage:", self.source)
         self.assertIn(

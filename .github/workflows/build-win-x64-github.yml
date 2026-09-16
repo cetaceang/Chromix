@@ -68,6 +68,14 @@ on:
         required: false
         type: string
         default: ''
+      resume_source_sha:
+        required: false
+        type: string
+        default: ''
+      resume_artifact_ids:
+        required: false
+        type: string
+        default: ''
       use_upstream_cache:
         required: false
         type: boolean
@@ -121,6 +129,16 @@ on:
         required: false
         default: ''
         type: string
+      resume_source_sha:
+        description: 'Exact donor commit for an explicit verified Windows source migration'
+        required: false
+        default: ''
+        type: string
+      resume_artifact_ids:
+        description: 'Complete artifact ID set required with resume_source_sha'
+        required: false
+        default: ''
+        type: string
       use_upstream_cache:
         description: 'Require pinned full upstream source + out/Default reuse; false permits cold builds'
         required: false
@@ -166,6 +184,39 @@ jobs:
         shell: powershell
         run: Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "attempt=$env:GITHUB_RUN_ATTEMPT"
       - uses: actions/checkout@v4
+      - name: Check explicit snapshot migration inputs
+        shell: powershell
+        env:
+          RESUME_SOURCE_SHA: ${{ inputs.resume_source_sha }}
+          RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
+          UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
+        run: |
+          if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
+            throw 'resume_source_sha and resume_artifact_ids must be supplied together'
+          }
+          if ($env:RESUME_SOURCE_SHA) {
+            if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
+              throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
+              throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
+            }
+          }
+      - name: Restore exact source-migration snapshot
+        if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
+        uses: ./.github/actions/restore-windows-snapshot
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.resume_run_id }}
+          stage: ${{ inputs.resume_tree_stage }}
+          attempt: ${{ inputs.resume_attempt }}
+          source-sha: ${{ inputs.resume_source_sha }}
+          artifact-ids: ${{ inputs.resume_artifact_ids }}
+          recovery-branch: fix/issue3-resource-timing-20260916
+          token: ${{ github.token }}
       - name: Verify native process-tree cleanup
         shell: powershell
         timeout-minutes: 5
@@ -288,6 +339,39 @@ jobs:
         shell: powershell
         run: Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "attempt=$env:GITHUB_RUN_ATTEMPT"
       - uses: actions/checkout@v4
+      - name: Check explicit snapshot migration inputs
+        shell: powershell
+        env:
+          RESUME_SOURCE_SHA: ${{ inputs.resume_source_sha }}
+          RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
+          UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
+        run: |
+          if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
+            throw 'resume_source_sha and resume_artifact_ids must be supplied together'
+          }
+          if ($env:RESUME_SOURCE_SHA) {
+            if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
+              throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
+              throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
+            }
+          }
+      - name: Restore exact source-migration snapshot
+        if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
+        uses: ./.github/actions/restore-windows-snapshot
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.resume_run_id }}
+          stage: ${{ inputs.resume_tree_stage }}
+          attempt: ${{ inputs.resume_attempt }}
+          source-sha: ${{ inputs.resume_source_sha }}
+          artifact-ids: ${{ inputs.resume_artifact_ids }}
+          recovery-branch: fix/issue3-resource-timing-20260916
+          token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '2' }}
         uses: actions/download-artifact@v4
@@ -296,7 +380,7 @@ jobs:
           merge-multiple: true
           path: C:\restore
       - name: Download tree from previous run
-        if: ${{ inputs.resume_run_id != '' && inputs.resume_stage == '2' }}
+        if: ${{ inputs.resume_source_sha == '' && inputs.resume_run_id != '' && inputs.resume_stage == '2' }}
         uses: actions/download-artifact@v4
         with:
           pattern: tree-s${{ inputs.resume_tree_stage != '' && inputs.resume_tree_stage || '1' }}-attempt-${{ inputs.resume_attempt }}-part*
@@ -397,6 +481,39 @@ jobs:
         shell: powershell
         run: Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "attempt=$env:GITHUB_RUN_ATTEMPT"
       - uses: actions/checkout@v4
+      - name: Check explicit snapshot migration inputs
+        shell: powershell
+        env:
+          RESUME_SOURCE_SHA: ${{ inputs.resume_source_sha }}
+          RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
+          UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
+        run: |
+          if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
+            throw 'resume_source_sha and resume_artifact_ids must be supplied together'
+          }
+          if ($env:RESUME_SOURCE_SHA) {
+            if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
+              throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
+              throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
+            }
+          }
+      - name: Restore exact source-migration snapshot
+        if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
+        uses: ./.github/actions/restore-windows-snapshot
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.resume_run_id }}
+          stage: ${{ inputs.resume_tree_stage }}
+          attempt: ${{ inputs.resume_attempt }}
+          source-sha: ${{ inputs.resume_source_sha }}
+          artifact-ids: ${{ inputs.resume_artifact_ids }}
+          recovery-branch: fix/issue3-resource-timing-20260916
+          token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '3' }}
         uses: actions/download-artifact@v4
@@ -405,7 +522,7 @@ jobs:
           merge-multiple: true
           path: C:\restore
       - name: Download tree from previous run
-        if: ${{ inputs.resume_run_id != '' && inputs.resume_stage == '3' }}
+        if: ${{ inputs.resume_source_sha == '' && inputs.resume_run_id != '' && inputs.resume_stage == '3' }}
         uses: actions/download-artifact@v4
         with:
           pattern: tree-s${{ inputs.resume_tree_stage != '' && inputs.resume_tree_stage || '2' }}-attempt-${{ inputs.resume_attempt }}-part*
@@ -506,6 +623,39 @@ jobs:
         shell: powershell
         run: Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "attempt=$env:GITHUB_RUN_ATTEMPT"
       - uses: actions/checkout@v4
+      - name: Check explicit snapshot migration inputs
+        shell: powershell
+        env:
+          RESUME_SOURCE_SHA: ${{ inputs.resume_source_sha }}
+          RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
+          UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
+        run: |
+          if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
+            throw 'resume_source_sha and resume_artifact_ids must be supplied together'
+          }
+          if ($env:RESUME_SOURCE_SHA) {
+            if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
+              throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
+              throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
+            }
+          }
+      - name: Restore exact source-migration snapshot
+        if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
+        uses: ./.github/actions/restore-windows-snapshot
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.resume_run_id }}
+          stage: ${{ inputs.resume_tree_stage }}
+          attempt: ${{ inputs.resume_attempt }}
+          source-sha: ${{ inputs.resume_source_sha }}
+          artifact-ids: ${{ inputs.resume_artifact_ids }}
+          recovery-branch: fix/issue3-resource-timing-20260916
+          token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '4' }}
         uses: actions/download-artifact@v4
@@ -514,7 +664,7 @@ jobs:
           merge-multiple: true
           path: C:\restore
       - name: Download tree from previous run
-        if: ${{ inputs.resume_run_id != '' && inputs.resume_stage == '4' }}
+        if: ${{ inputs.resume_source_sha == '' && inputs.resume_run_id != '' && inputs.resume_stage == '4' }}
         uses: actions/download-artifact@v4
         with:
           pattern: tree-s${{ inputs.resume_tree_stage != '' && inputs.resume_tree_stage || '3' }}-attempt-${{ inputs.resume_attempt }}-part*
@@ -615,6 +765,39 @@ jobs:
         shell: powershell
         run: Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "attempt=$env:GITHUB_RUN_ATTEMPT"
       - uses: actions/checkout@v4
+      - name: Check explicit snapshot migration inputs
+        shell: powershell
+        env:
+          RESUME_SOURCE_SHA: ${{ inputs.resume_source_sha }}
+          RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
+          UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
+        run: |
+          if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
+            throw 'resume_source_sha and resume_artifact_ids must be supplied together'
+          }
+          if ($env:RESUME_SOURCE_SHA) {
+            if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
+              throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
+              throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
+            }
+          }
+      - name: Restore exact source-migration snapshot
+        if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
+        uses: ./.github/actions/restore-windows-snapshot
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.resume_run_id }}
+          stage: ${{ inputs.resume_tree_stage }}
+          attempt: ${{ inputs.resume_attempt }}
+          source-sha: ${{ inputs.resume_source_sha }}
+          artifact-ids: ${{ inputs.resume_artifact_ids }}
+          recovery-branch: fix/issue3-resource-timing-20260916
+          token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '5' }}
         uses: actions/download-artifact@v4
@@ -623,7 +806,7 @@ jobs:
           merge-multiple: true
           path: C:\restore
       - name: Download tree from previous run
-        if: ${{ inputs.resume_run_id != '' && inputs.resume_stage == '5' }}
+        if: ${{ inputs.resume_source_sha == '' && inputs.resume_run_id != '' && inputs.resume_stage == '5' }}
         uses: actions/download-artifact@v4
         with:
           pattern: tree-s${{ inputs.resume_tree_stage != '' && inputs.resume_tree_stage || '4' }}-attempt-${{ inputs.resume_attempt }}-part*
@@ -724,6 +907,39 @@ jobs:
         shell: powershell
         run: Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "attempt=$env:GITHUB_RUN_ATTEMPT"
       - uses: actions/checkout@v4
+      - name: Check explicit snapshot migration inputs
+        shell: powershell
+        env:
+          RESUME_SOURCE_SHA: ${{ inputs.resume_source_sha }}
+          RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
+          UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
+        run: |
+          if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
+            throw 'resume_source_sha and resume_artifact_ids must be supplied together'
+          }
+          if ($env:RESUME_SOURCE_SHA) {
+            if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
+              throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
+              throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
+            }
+          }
+      - name: Restore exact source-migration snapshot
+        if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
+        uses: ./.github/actions/restore-windows-snapshot
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.resume_run_id }}
+          stage: ${{ inputs.resume_tree_stage }}
+          attempt: ${{ inputs.resume_attempt }}
+          source-sha: ${{ inputs.resume_source_sha }}
+          artifact-ids: ${{ inputs.resume_artifact_ids }}
+          recovery-branch: fix/issue3-resource-timing-20260916
+          token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '6' }}
         uses: actions/download-artifact@v4
@@ -732,7 +948,7 @@ jobs:
           merge-multiple: true
           path: C:\restore
       - name: Download tree from previous run
-        if: ${{ inputs.resume_run_id != '' && inputs.resume_stage == '6' }}
+        if: ${{ inputs.resume_source_sha == '' && inputs.resume_run_id != '' && inputs.resume_stage == '6' }}
         uses: actions/download-artifact@v4
         with:
           pattern: tree-s${{ inputs.resume_tree_stage != '' && inputs.resume_tree_stage || '5' }}-attempt-${{ inputs.resume_attempt }}-part*
@@ -833,6 +1049,39 @@ jobs:
         shell: powershell
         run: Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "attempt=$env:GITHUB_RUN_ATTEMPT"
       - uses: actions/checkout@v4
+      - name: Check explicit snapshot migration inputs
+        shell: powershell
+        env:
+          RESUME_SOURCE_SHA: ${{ inputs.resume_source_sha }}
+          RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
+          UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
+        run: |
+          if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
+            throw 'resume_source_sha and resume_artifact_ids must be supplied together'
+          }
+          if ($env:RESUME_SOURCE_SHA) {
+            if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
+              throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
+              throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
+            }
+          }
+      - name: Restore exact source-migration snapshot
+        if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
+        uses: ./.github/actions/restore-windows-snapshot
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.resume_run_id }}
+          stage: ${{ inputs.resume_tree_stage }}
+          attempt: ${{ inputs.resume_attempt }}
+          source-sha: ${{ inputs.resume_source_sha }}
+          artifact-ids: ${{ inputs.resume_artifact_ids }}
+          recovery-branch: fix/issue3-resource-timing-20260916
+          token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '7' }}
         uses: actions/download-artifact@v4
@@ -841,7 +1090,7 @@ jobs:
           merge-multiple: true
           path: C:\restore
       - name: Download tree from previous run
-        if: ${{ inputs.resume_run_id != '' && inputs.resume_stage == '7' }}
+        if: ${{ inputs.resume_source_sha == '' && inputs.resume_run_id != '' && inputs.resume_stage == '7' }}
         uses: actions/download-artifact@v4
         with:
           pattern: tree-s${{ inputs.resume_tree_stage != '' && inputs.resume_tree_stage || '6' }}-attempt-${{ inputs.resume_attempt }}-part*
@@ -942,6 +1191,39 @@ jobs:
         shell: powershell
         run: Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "attempt=$env:GITHUB_RUN_ATTEMPT"
       - uses: actions/checkout@v4
+      - name: Check explicit snapshot migration inputs
+        shell: powershell
+        env:
+          RESUME_SOURCE_SHA: ${{ inputs.resume_source_sha }}
+          RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
+          UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
+        run: |
+          if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
+            throw 'resume_source_sha and resume_artifact_ids must be supplied together'
+          }
+          if ($env:RESUME_SOURCE_SHA) {
+            if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
+              throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
+              throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
+            }
+          }
+      - name: Restore exact source-migration snapshot
+        if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
+        uses: ./.github/actions/restore-windows-snapshot
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.resume_run_id }}
+          stage: ${{ inputs.resume_tree_stage }}
+          attempt: ${{ inputs.resume_attempt }}
+          source-sha: ${{ inputs.resume_source_sha }}
+          artifact-ids: ${{ inputs.resume_artifact_ids }}
+          recovery-branch: fix/issue3-resource-timing-20260916
+          token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '8' }}
         uses: actions/download-artifact@v4
@@ -950,7 +1232,7 @@ jobs:
           merge-multiple: true
           path: C:\restore
       - name: Download tree from previous run
-        if: ${{ inputs.resume_run_id != '' && inputs.resume_stage == '8' }}
+        if: ${{ inputs.resume_source_sha == '' && inputs.resume_run_id != '' && inputs.resume_stage == '8' }}
         uses: actions/download-artifact@v4
         with:
           pattern: tree-s${{ inputs.resume_tree_stage != '' && inputs.resume_tree_stage || '7' }}-attempt-${{ inputs.resume_attempt }}-part*
@@ -1051,6 +1333,39 @@ jobs:
         shell: powershell
         run: Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "attempt=$env:GITHUB_RUN_ATTEMPT"
       - uses: actions/checkout@v4
+      - name: Check explicit snapshot migration inputs
+        shell: powershell
+        env:
+          RESUME_SOURCE_SHA: ${{ inputs.resume_source_sha }}
+          RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
+          UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
+        run: |
+          if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
+            throw 'resume_source_sha and resume_artifact_ids must be supplied together'
+          }
+          if ($env:RESUME_SOURCE_SHA) {
+            if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
+              throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
+              throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
+            }
+          }
+      - name: Restore exact source-migration snapshot
+        if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
+        uses: ./.github/actions/restore-windows-snapshot
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.resume_run_id }}
+          stage: ${{ inputs.resume_tree_stage }}
+          attempt: ${{ inputs.resume_attempt }}
+          source-sha: ${{ inputs.resume_source_sha }}
+          artifact-ids: ${{ inputs.resume_artifact_ids }}
+          recovery-branch: fix/issue3-resource-timing-20260916
+          token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '9' }}
         uses: actions/download-artifact@v4
@@ -1059,7 +1374,7 @@ jobs:
           merge-multiple: true
           path: C:\restore
       - name: Download tree from previous run
-        if: ${{ inputs.resume_run_id != '' && inputs.resume_stage == '9' }}
+        if: ${{ inputs.resume_source_sha == '' && inputs.resume_run_id != '' && inputs.resume_stage == '9' }}
         uses: actions/download-artifact@v4
         with:
           pattern: tree-s${{ inputs.resume_tree_stage != '' && inputs.resume_tree_stage || '8' }}-attempt-${{ inputs.resume_attempt }}-part*
@@ -1160,6 +1475,39 @@ jobs:
         shell: powershell
         run: Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "attempt=$env:GITHUB_RUN_ATTEMPT"
       - uses: actions/checkout@v4
+      - name: Check explicit snapshot migration inputs
+        shell: powershell
+        env:
+          RESUME_SOURCE_SHA: ${{ inputs.resume_source_sha }}
+          RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
+          UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
+        run: |
+          if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
+            throw 'resume_source_sha and resume_artifact_ids must be supplied together'
+          }
+          if ($env:RESUME_SOURCE_SHA) {
+            if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
+              throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
+              throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
+            }
+          }
+      - name: Restore exact source-migration snapshot
+        if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
+        uses: ./.github/actions/restore-windows-snapshot
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.resume_run_id }}
+          stage: ${{ inputs.resume_tree_stage }}
+          attempt: ${{ inputs.resume_attempt }}
+          source-sha: ${{ inputs.resume_source_sha }}
+          artifact-ids: ${{ inputs.resume_artifact_ids }}
+          recovery-branch: fix/issue3-resource-timing-20260916
+          token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '10' }}
         uses: actions/download-artifact@v4
@@ -1168,7 +1516,7 @@ jobs:
           merge-multiple: true
           path: C:\restore
       - name: Download tree from previous run
-        if: ${{ inputs.resume_run_id != '' && inputs.resume_stage == '10' }}
+        if: ${{ inputs.resume_source_sha == '' && inputs.resume_run_id != '' && inputs.resume_stage == '10' }}
         uses: actions/download-artifact@v4
         with:
           pattern: tree-s${{ inputs.resume_tree_stage != '' && inputs.resume_tree_stage || '9' }}-attempt-${{ inputs.resume_attempt }}-part*
@@ -1269,6 +1617,39 @@ jobs:
         shell: powershell
         run: Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "attempt=$env:GITHUB_RUN_ATTEMPT"
       - uses: actions/checkout@v4
+      - name: Check explicit snapshot migration inputs
+        shell: powershell
+        env:
+          RESUME_SOURCE_SHA: ${{ inputs.resume_source_sha }}
+          RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
+          UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
+        run: |
+          if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
+            throw 'resume_source_sha and resume_artifact_ids must be supplied together'
+          }
+          if ($env:RESUME_SOURCE_SHA) {
+            if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
+              throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
+              throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
+            }
+          }
+      - name: Restore exact source-migration snapshot
+        if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
+        uses: ./.github/actions/restore-windows-snapshot
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.resume_run_id }}
+          stage: ${{ inputs.resume_tree_stage }}
+          attempt: ${{ inputs.resume_attempt }}
+          source-sha: ${{ inputs.resume_source_sha }}
+          artifact-ids: ${{ inputs.resume_artifact_ids }}
+          recovery-branch: fix/issue3-resource-timing-20260916
+          token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '11' }}
         uses: actions/download-artifact@v4
@@ -1277,7 +1658,7 @@ jobs:
           merge-multiple: true
           path: C:\restore
       - name: Download tree from previous run
-        if: ${{ inputs.resume_run_id != '' && inputs.resume_stage == '11' }}
+        if: ${{ inputs.resume_source_sha == '' && inputs.resume_run_id != '' && inputs.resume_stage == '11' }}
         uses: actions/download-artifact@v4
         with:
           pattern: tree-s${{ inputs.resume_tree_stage != '' && inputs.resume_tree_stage || '10' }}-attempt-${{ inputs.resume_attempt }}-part*
@@ -1378,6 +1759,39 @@ jobs:
         shell: powershell
         run: Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "attempt=$env:GITHUB_RUN_ATTEMPT"
       - uses: actions/checkout@v4
+      - name: Check explicit snapshot migration inputs
+        shell: powershell
+        env:
+          RESUME_SOURCE_SHA: ${{ inputs.resume_source_sha }}
+          RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
+          UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
+        run: |
+          if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
+            throw 'resume_source_sha and resume_artifact_ids must be supplied together'
+          }
+          if ($env:RESUME_SOURCE_SHA) {
+            if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
+              throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
+              throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
+            }
+          }
+      - name: Restore exact source-migration snapshot
+        if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
+        uses: ./.github/actions/restore-windows-snapshot
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.resume_run_id }}
+          stage: ${{ inputs.resume_tree_stage }}
+          attempt: ${{ inputs.resume_attempt }}
+          source-sha: ${{ inputs.resume_source_sha }}
+          artifact-ids: ${{ inputs.resume_artifact_ids }}
+          recovery-branch: fix/issue3-resource-timing-20260916
+          token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '12' }}
         uses: actions/download-artifact@v4
@@ -1386,7 +1800,7 @@ jobs:
           merge-multiple: true
           path: C:\restore
       - name: Download tree from previous run
-        if: ${{ inputs.resume_run_id != '' && inputs.resume_stage == '12' }}
+        if: ${{ inputs.resume_source_sha == '' && inputs.resume_run_id != '' && inputs.resume_stage == '12' }}
         uses: actions/download-artifact@v4
         with:
           pattern: tree-s${{ inputs.resume_tree_stage != '' && inputs.resume_tree_stage || '11' }}-attempt-${{ inputs.resume_attempt }}-part*

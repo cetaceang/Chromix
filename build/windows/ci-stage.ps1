@@ -813,6 +813,41 @@ if ($FromArtifact) {
   Remove-Item C:\restore -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+if ($env:CHROMIX_WINDOWS_MIGRATION_REPO -or $env:CHROMIX_WINDOWS_MIGRATION_SHA) {
+  if (-not $FromArtifact -or $Arch -ne "x64" -or $RequireUpstreamCache -or
+      -not $env:CHROMIX_WINDOWS_MIGRATION_REPO -or -not $env:CHROMIX_WINDOWS_MIGRATION_SHA) {
+    throw "explicit Windows migration requires a verified x64 cold snapshot and both source identity inputs"
+  }
+  Write-OutVar snapshot_safe false
+  $hostGit = (Get-Command git.exe -ErrorAction Stop).Source
+  $gitDirectory = Split-Path $hostGit
+  $patchCandidates = @($gitDirectory, (Split-Path $gitDirectory), (Split-Path (Split-Path $gitDirectory))) |
+    ForEach-Object { Join-Path $_ "usr\bin\patch.exe" } |
+    Select-Object -Unique | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+  if (-not $patchCandidates) { throw "explicit Windows migration requires host Git for Windows GNU patch" }
+  $patchCandidates = @($patchCandidates)
+  $probeArgs = @(
+    (Join-Path $Repo "tools\apply_restored_patches.py"), "--select-patch-bin", "--src", $Src, "--repo", $Repo,
+    "--core", (Join-Path $WorkDir "tooling\ungoogled-chromium"),
+    "--platform-tooling", (Join-Path $WorkDir "tooling\ungoogled-chromium-windows"),
+    "--platform", "windows", "--patch-bin", $patchCandidates[0]
+  )
+  foreach ($candidate in $patchCandidates | Select-Object -Skip 1) { $probeArgs += @("--patch-candidate", $candidate) }
+  $selectedPatch = @(& python @probeArgs)
+  if ($LASTEXITCODE -ne 0 -or $selectedPatch.Count -ne 1 -or [string]::IsNullOrWhiteSpace($selectedPatch[0])) {
+    throw "explicit Windows migration host patch capability probe failed"
+  }
+  $hostPatch = $selectedPatch[0]
+  $migrationDiagnostics = Join-Path $WorkDir "fingerprint-diagnostics"
+  New-Item -ItemType Directory -Force -Path $migrationDiagnostics | Out-Null
+  $migrationReport = Join-Path $migrationDiagnostics ("windows-source-migration-" + [Guid]::NewGuid().ToString('N') + ".json")
+  & python -X utf8 (Join-Path $Repo "tools\migrate_windows_snapshot.py") --workdir $WorkDir `
+    --previous-repo $env:CHROMIX_WINDOWS_MIGRATION_REPO --repo $Repo `
+    --expected-previous-sha $env:CHROMIX_WINDOWS_MIGRATION_SHA --patch-bin $hostPatch --report $migrationReport
+  if ($LASTEXITCODE -ne 0) { throw "verified Windows source migration failed; restore a clean donor snapshot" }
+  Write-OutVar snapshot_safe true
+}
+
 & "$PSScriptRoot\assert-target-arch.ps1" -WorkDir $WorkDir -Arch $Arch -Initialize:($Arch -eq "arm64") `
   -RequireMarker:($FromArtifact -and $Arch -eq "arm64")
 

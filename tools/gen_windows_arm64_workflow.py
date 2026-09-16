@@ -53,7 +53,8 @@ def workflow():
         steps = []
         for step in job['steps']:
             if step.get('name') in ('Download tree from previous run', 'Upload upstream cache diagnostics',
-                                     'Upload restored reuse evidence'):
+                                     'Upload restored reuse evidence', 'Check explicit snapshot migration inputs',
+                                     'Restore exact source-migration snapshot'):
                 continue
             if (step.get('name') == 'Ensure build tree snapshot'
                     or step.get('name', '').startswith('Upload tree part')):

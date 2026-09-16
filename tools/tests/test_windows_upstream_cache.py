@@ -71,7 +71,10 @@ class WindowsUpstreamCacheRegressionTest(unittest.TestCase):
         for number in range(2, 13):
             job = workflow_job(self.workflow, f"build-{number}")
             self.assertIn(f"-StageIndex {number} -MaxStages 12 -FromArtifact", job)
-            self.assertNotIn("UPSTREAM_RUN_ID", job)
+            import yaml
+            steps = yaml.safe_load(job)[f"build-{number}"]["steps"]
+            stage = next(step for step in steps if step.get("id") == "stage")
+            self.assertNotIn("UPSTREAM_RUN_ID", str(stage))
             self.assertNotIn("fetch_upstream_cache.py", job)
             self.assertNotIn("-UseUpstreamCache", job)
 
@@ -262,7 +265,7 @@ class WindowsUpstreamCacheRegressionTest(unittest.TestCase):
         runs = []
         for number in range(1, 13):
             runs.extend(workflow_runs(workflow_job(self.workflow, f"build-{number}")))
-        self.assertEqual(len(runs), 49)
+        self.assertEqual(len(runs), 61)
         for run in runs:
             self.assertNotIn("${{", run)
         self.assertIn("UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}", self.build_one)
