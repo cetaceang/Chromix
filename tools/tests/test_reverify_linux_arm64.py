@@ -3,10 +3,15 @@ from contextlib import nullcontext
 from copy import deepcopy
 import hashlib
 import json
+import os
 from pathlib import Path
+import shutil
+import socket
 import stat
 import struct
+import subprocess
 import sys
+import tempfile
 import time
 import zipfile
 
@@ -411,6 +416,48 @@ def test_failed_finalization_still_writes_diagnostics(tmp_path, monkeypatch):
     assert result["status"] == "failed" and result["ci_gate_passed"] is False
 
 
+def test_workflow_initializes_private_short_tmpdir_for_chromium(tmp_path, monkeypatch):
+    workflow = yaml.safe_load((recovery.REPO / recovery.WORKFLOW_PATH).read_text())
+    steps = workflow["jobs"]["reverify"]["steps"]
+    initialize = next(step for step in steps if step.get("name") == "Initialize absolute session paths")
+    runner_temp = tmp_path / "runner temporary directory" / "a-long-diagnostics-root"
+    runner_temp.mkdir(parents=True)
+    created = []
+    try:
+        for index in range(2):
+            github_env = tmp_path / f"github-env-{index}"
+            subprocess.run(["bash", "-c", initialize["run"]], check=True, timeout=10,
+                           env={**os.environ, "RUNNER_TEMP": str(runner_temp),
+                                "GITHUB_ENV": str(github_env), "TMPDIR": str(tmp_path)},
+                           capture_output=True, text=True)
+            exported = dict(line.split("=", 1) for line in github_env.read_text().splitlines())
+            temporary = Path(exported["TMPDIR"])
+            created.append(temporary)
+            assert temporary.is_absolute() and temporary.is_dir()
+            assert temporary.parent == Path("/tmp") and temporary.name.startswith("cx-arm64.")
+            assert len(temporary.name.removeprefix("cx-arm64.")) == 6
+            assert not temporary.is_symlink() and temporary.resolve(strict=True) == temporary
+            assert stat.S_IMODE(temporary.stat().st_mode) == 0o700
+            assert exported["REVERIFY_DIR"] == str(runner_temp / "chromix-arm64-reverify")
+            assert (Path(exported["REVERIFY_DIR"]) / "diagnostics").is_dir()
+            with tempfile.TemporaryDirectory(prefix="chromix-audit-", dir=temporary) as audit:
+                singleton = Path(audit) / "org.chromium.Chromium.ngUcXC" / "SingletonSocket"
+                assert len(os.fsencode(singleton)) < 108
+                singleton.parent.mkdir()
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                    listener.bind(str(singleton))
+            monkeypatch.setenv("REVERIFY_INPUTS", json.dumps(dispatch()))
+            monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+            monkeypatch.setenv("GITHUB_REPOSITORY", recovery.REPOSITORY)
+            monkeypatch.setenv("TMPDIR", str(temporary))
+            assert recovery.main(["guard", "--prebuilt-only"]) == 0
+        assert created[0] != created[1]
+    finally:
+        for temporary in created:
+            shutil.rmtree(temporary)
+    assert all(not temporary.exists() for temporary in created)
+
+
 def test_registered_workflow_isolates_verify_from_all_build_paths():
     workflow = yaml.safe_load((recovery.REPO / recovery.WORKFLOW_PATH).read_text())
     inputs = workflow[True]["workflow_dispatch"]["inputs"]
@@ -425,7 +472,10 @@ def test_registered_workflow_isolates_verify_from_all_build_paths():
     assert job["env"]["REVERIFY_INPUTS"] == "${{ toJSON(inputs) }}"
     steps = job["steps"]
     script = "\n".join(step.get("run", "") for step in steps)
-    assert 'TMPDIR=${RUNNER_TEMP}/chromix-arm64-reverify-tmp' in script
+    assert 'mktemp -d /tmp/cx-arm64.XXXXXX' in script
+    assert 'chromix-arm64-reverify-tmp' not in script
+    assert 'TMPDIR' not in job["env"]
+    assert all('TMPDIR' not in step.get('env', {}) for step in steps)
     assert "--prebuilt-only" in script
     assert "--source-report" in script and "fingerprint_acceptance.py" in script
     assert "--expected-version 153.0.8010.36" in script

@@ -122,8 +122,10 @@ jobs:
       - name: Initialize absolute session paths
         run: |
           set -euo pipefail
-          mkdir -p "${RUNNER_TEMP}/chromix-arm64-reverify-tmp" "${RUNNER_TEMP}/chromix-arm64-reverify/diagnostics"
-          echo "TMPDIR=${RUNNER_TEMP}/chromix-arm64-reverify-tmp" >> "$GITHUB_ENV"
+          mkdir -p "${RUNNER_TEMP}/chromix-arm64-reverify/diagnostics"
+          # Chromium's nested SingletonSocket path must fit Linux's 108-byte limit.
+          TMPDIR="$(mktemp -d /tmp/cx-arm64.XXXXXX)"
+          echo "TMPDIR=$TMPDIR" >> "$GITHUB_ENV"
           echo "REVERIFY_DIR=${RUNNER_TEMP}/chromix-arm64-reverify" >> "$GITHUB_ENV"
       - name: Validate explicit prebuilt-only dispatch
         run: |
@@ -174,11 +176,10 @@ jobs:
         if: always()
         env:
           ACCEPTANCE_OUTCOME: ${{ steps.acceptance.outcome }}
-          TMPDIR: ${{ runner.temp }}/chromix-arm64-reverify-tmp
           REVERIFY_DIR: ${{ runner.temp }}/chromix-arm64-reverify
         run: |
           set -euo pipefail
-          mkdir -p "$TMPDIR" "$REVERIFY_DIR/diagnostics"
+          mkdir -p "$REVERIFY_DIR/diagnostics"
           python3 tools/reverify_linux_arm64.py finalize --prebuilt-only --directory "$REVERIFY_DIR" \
             2>&1 | tee "$REVERIFY_DIR/diagnostics/finalize.log"
       - name: Upload re-verification logs and acceptance diagnostics
