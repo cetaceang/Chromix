@@ -36,7 +36,7 @@ class FullCacheFixture:
             path.chmod(0o755)
 
     def seed(self, platform="linux", arch="x64", reason=None):
-        identity, pin, manifest = restore.identities(REPO, platform, arch)
+        identity, pin, manifest = restore.identities(getattr(self, "pin_repo", REPO), platform, arch)
         donor = self.cache / "tree" / pin["source_roots"][0]
         result = {
             "owner": restore.fetcher.OWNER, "status": "miss" if reason else "hit",

@@ -1,0 +1,390 @@
+{
+  "description": "Pinned upstream declaration sections and complete SkSpan include closure. Full-source SHA256 values cover the original files, not just sections. Dependency-free signature tests are not a Chromium build.",
+  "versions": {
+    "152": {
+      "chromium_revision": "d04cdb24d67b081f6cf80200ffc5233f44b61109",
+      "files": {
+        "DEPS": {
+          "revision": "d04cdb24d67b081f6cf80200ffc5233f44b61109",
+          "url": "https://raw.githubusercontent.com/chromium/chromium/d04cdb24d67b081f6cf80200ffc5233f44b61109/DEPS",
+          "sha256": "146eb39a6e0681253701042551b4d5770799c1f37540aa0f861807197dd75fa9"
+        },
+        "third_party/blink/renderer/platform/wtf/text/wtf_string.h": {
+          "revision": "d04cdb24d67b081f6cf80200ffc5233f44b61109",
+          "url": "https://raw.githubusercontent.com/chromium/chromium/d04cdb24d67b081f6cf80200ffc5233f44b61109/third_party/blink/renderer/platform/wtf/text/wtf_string.h",
+          "sha256": "1b4a503d160ffc0480c49710f65d3b6656c498e8ac23dbaaedee491e92ae71ef"
+        },
+        "base/containers/span.h": {
+          "revision": "d04cdb24d67b081f6cf80200ffc5233f44b61109",
+          "url": "https://raw.githubusercontent.com/chromium/chromium/d04cdb24d67b081f6cf80200ffc5233f44b61109/base/containers/span.h",
+          "sha256": "307329af0e9fb55fe05527668a8c679e5c32c17233808e403541313fe89ed63c"
+        },
+        "base/numerics/byte_conversions.h": {
+          "revision": "d04cdb24d67b081f6cf80200ffc5233f44b61109",
+          "url": "https://raw.githubusercontent.com/chromium/chromium/d04cdb24d67b081f6cf80200ffc5233f44b61109/base/numerics/byte_conversions.h",
+          "sha256": "2b12098e9aff1b59c319d4451d93c39b728c194158a2011b61c6b76e381b8575"
+        },
+        "base/strings/string_number_conversions.h": {
+          "revision": "d04cdb24d67b081f6cf80200ffc5233f44b61109",
+          "url": "https://raw.githubusercontent.com/chromium/chromium/d04cdb24d67b081f6cf80200ffc5233f44b61109/base/strings/string_number_conversions.h",
+          "sha256": "dcecf9161bb1e2bd2ee0482e68c199263289bf0a60874cd50d2cc426de6b3b2c"
+        },
+        "third_party/blink/renderer/platform/crypto.h": {
+          "revision": "d04cdb24d67b081f6cf80200ffc5233f44b61109",
+          "url": "https://raw.githubusercontent.com/chromium/chromium/d04cdb24d67b081f6cf80200ffc5233f44b61109/third_party/blink/renderer/platform/crypto.h",
+          "sha256": "fd2384a0d6558843e43225fdf079d4b9778068409addbfee193112bdf201b039"
+        },
+        "third_party/skia/include/core/SkTypeface.h": {
+          "revision": "0873ec164a06966b90ae0d43ef783cfb180084ae",
+          "url": "https://raw.githubusercontent.com/google/skia/0873ec164a06966b90ae0d43ef783cfb180084ae/include/core/SkTypeface.h",
+          "sha256": "6c95b9701536e5fa5cc65f9f93b85b75c4d8b6ff76acede091f2d50ca2705575"
+        },
+        "third_party/skia/include/core/SkSpan.h": {
+          "revision": "0873ec164a06966b90ae0d43ef783cfb180084ae",
+          "url": "https://raw.githubusercontent.com/google/skia/0873ec164a06966b90ae0d43ef783cfb180084ae/include/core/SkSpan.h",
+          "sha256": "46ee18609d9fbfd91472ed7f973a45ea4f970601a063ad27758b4c08e1a49c59"
+        },
+        "third_party/skia/src/core/SkTypeface.cpp": {
+          "revision": "0873ec164a06966b90ae0d43ef783cfb180084ae",
+          "url": "https://raw.githubusercontent.com/google/skia/0873ec164a06966b90ae0d43ef783cfb180084ae/src/core/SkTypeface.cpp",
+          "sha256": "95b823eaee2d6a50031f4f9f4389b839ee2adae9b4386d1b32483eee3e1aaeb5"
+        },
+        "third_party/skia/include/private/SkAssert.h": {
+          "revision": "0873ec164a06966b90ae0d43ef783cfb180084ae",
+          "url": "https://raw.githubusercontent.com/google/skia/0873ec164a06966b90ae0d43ef783cfb180084ae/include/private/SkAssert.h",
+          "sha256": "1bf3b0f45731d1f38bc447407d845bb031dd4f372614c3ffddee07cf67750da8"
+        },
+        "third_party/skia/include/private/SkTo.h": {
+          "revision": "0873ec164a06966b90ae0d43ef783cfb180084ae",
+          "url": "https://raw.githubusercontent.com/google/skia/0873ec164a06966b90ae0d43ef783cfb180084ae/include/private/SkTo.h",
+          "sha256": "a7c7ba4c6510010ca4fc94b9dff3d2a15a45228c428612b6e6c33d64f7a0c3cb"
+        },
+        "third_party/skia/include/private/SkAttributes.h": {
+          "revision": "0873ec164a06966b90ae0d43ef783cfb180084ae",
+          "url": "https://raw.githubusercontent.com/google/skia/0873ec164a06966b90ae0d43ef783cfb180084ae/include/private/SkAttributes.h",
+          "sha256": "2c5182ef84da0241d2606440129112c7b58ff5ee7febd02010d919c181c191ca"
+        },
+        "third_party/skia/include/private/SkTFitsIn.h": {
+          "revision": "0873ec164a06966b90ae0d43ef783cfb180084ae",
+          "url": "https://raw.githubusercontent.com/google/skia/0873ec164a06966b90ae0d43ef783cfb180084ae/include/private/SkTFitsIn.h",
+          "sha256": "57a03bcd04f7f3cb237623ef94ad785c5d397ce968b232398d2c3e6fa34f276f"
+        },
+        "third_party/skia/include/private/SkLog.h": {
+          "revision": "0873ec164a06966b90ae0d43ef783cfb180084ae",
+          "url": "https://raw.githubusercontent.com/google/skia/0873ec164a06966b90ae0d43ef783cfb180084ae/include/private/SkLog.h",
+          "sha256": "5b6738c4a7808b77fa82fcba9647cc1ac2e22515782b52f6767195275092d79d"
+        },
+        "third_party/skia/include/private/SkDebug.h": {
+          "revision": "0873ec164a06966b90ae0d43ef783cfb180084ae",
+          "url": "https://raw.githubusercontent.com/google/skia/0873ec164a06966b90ae0d43ef783cfb180084ae/include/private/SkDebug.h",
+          "sha256": "e7425b888837a560cd005f2ce752979c0d646c663aef92c977d8aabaf676eb34"
+        },
+        "third_party/skia/include/private/SkAPI.h": {
+          "revision": "0873ec164a06966b90ae0d43ef783cfb180084ae",
+          "url": "https://raw.githubusercontent.com/google/skia/0873ec164a06966b90ae0d43ef783cfb180084ae/include/private/SkAPI.h",
+          "sha256": "7fff0712d60946b882b0aa7a00185b4baf31b2659b65d67d92152b2218ae101f"
+        },
+        "third_party/skia/include/private/SkLoadUserConfig.h": {
+          "revision": "0873ec164a06966b90ae0d43ef783cfb180084ae",
+          "url": "https://raw.githubusercontent.com/google/skia/0873ec164a06966b90ae0d43ef783cfb180084ae/include/private/SkLoadUserConfig.h",
+          "sha256": "eb0fae79a274c5a8d089f7e14b0414fb6f2b55276f7f3ef9ce529a786acf8450"
+        },
+        "third_party/skia/include/private/SkLogPriority.h": {
+          "revision": "0873ec164a06966b90ae0d43ef783cfb180084ae",
+          "url": "https://raw.githubusercontent.com/google/skia/0873ec164a06966b90ae0d43ef783cfb180084ae/include/private/SkLogPriority.h",
+          "sha256": "6fcd70ad1a6228067396542a99000d32bc4ea1cc0b50d26694e07e36ffa60bfc"
+        },
+        "third_party/skia/include/private/SkFeatures.h": {
+          "revision": "0873ec164a06966b90ae0d43ef783cfb180084ae",
+          "url": "https://raw.githubusercontent.com/google/skia/0873ec164a06966b90ae0d43ef783cfb180084ae/include/private/SkFeatures.h",
+          "sha256": "d20d246f13400fe5a0e9f335611d825f936fa469e043e967849db673476196d1"
+        },
+        "third_party/skia/include/config/SkUserConfig.h": {
+          "revision": "0873ec164a06966b90ae0d43ef783cfb180084ae",
+          "url": "https://raw.githubusercontent.com/google/skia/0873ec164a06966b90ae0d43ef783cfb180084ae/include/config/SkUserConfig.h",
+          "sha256": "e24518c884b871f2e0a243739028d489f690449f9a5470a78dbc562eda939727"
+        }
+      },
+      "skia_revision": "0873ec164a06966b90ae0d43ef783cfb180084ae"
+    },
+    "153": {
+      "chromium_revision": "507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c",
+      "files": {
+        "DEPS": {
+          "revision": "507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c",
+          "url": "https://raw.githubusercontent.com/chromium/chromium/507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c/DEPS",
+          "sha256": "bb727662444f2bc2d2614f814d199b1ab68cd771890e39d3228f3ffd10d5a6e4"
+        },
+        "third_party/blink/renderer/platform/wtf/text/wtf_string.h": {
+          "revision": "507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c",
+          "url": "https://raw.githubusercontent.com/chromium/chromium/507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c/third_party/blink/renderer/platform/wtf/text/wtf_string.h",
+          "sha256": "a4a8ff24aa36858beadc7cfc3270759d8528bdf1175883d88e950c7b01db8736"
+        },
+        "base/containers/span.h": {
+          "revision": "507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c",
+          "url": "https://raw.githubusercontent.com/chromium/chromium/507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c/base/containers/span.h",
+          "sha256": "307329af0e9fb55fe05527668a8c679e5c32c17233808e403541313fe89ed63c"
+        },
+        "base/numerics/byte_conversions.h": {
+          "revision": "507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c",
+          "url": "https://raw.githubusercontent.com/chromium/chromium/507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c/base/numerics/byte_conversions.h",
+          "sha256": "4954be9b443535baabdba881efbccbafa89b40e0253ef0a0c283b1340fb7ec3a"
+        },
+        "base/strings/string_number_conversions.h": {
+          "revision": "507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c",
+          "url": "https://raw.githubusercontent.com/chromium/chromium/507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c/base/strings/string_number_conversions.h",
+          "sha256": "dcecf9161bb1e2bd2ee0482e68c199263289bf0a60874cd50d2cc426de6b3b2c"
+        },
+        "third_party/blink/renderer/platform/crypto.h": {
+          "revision": "507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c",
+          "url": "https://raw.githubusercontent.com/chromium/chromium/507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c/third_party/blink/renderer/platform/crypto.h",
+          "sha256": "fd2384a0d6558843e43225fdf079d4b9778068409addbfee193112bdf201b039"
+        },
+        "third_party/skia/include/core/SkTypeface.h": {
+          "revision": "4f574af2444846ceca4d277a8095c5d4229d175f",
+          "url": "https://raw.githubusercontent.com/google/skia/4f574af2444846ceca4d277a8095c5d4229d175f/include/core/SkTypeface.h",
+          "sha256": "6c95b9701536e5fa5cc65f9f93b85b75c4d8b6ff76acede091f2d50ca2705575"
+        },
+        "third_party/skia/include/core/SkSpan.h": {
+          "revision": "4f574af2444846ceca4d277a8095c5d4229d175f",
+          "url": "https://raw.githubusercontent.com/google/skia/4f574af2444846ceca4d277a8095c5d4229d175f/include/core/SkSpan.h",
+          "sha256": "46ee18609d9fbfd91472ed7f973a45ea4f970601a063ad27758b4c08e1a49c59"
+        },
+        "third_party/skia/src/core/SkTypeface.cpp": {
+          "revision": "4f574af2444846ceca4d277a8095c5d4229d175f",
+          "url": "https://raw.githubusercontent.com/google/skia/4f574af2444846ceca4d277a8095c5d4229d175f/src/core/SkTypeface.cpp",
+          "sha256": "95b823eaee2d6a50031f4f9f4389b839ee2adae9b4386d1b32483eee3e1aaeb5"
+        },
+        "third_party/skia/include/private/SkAssert.h": {
+          "revision": "4f574af2444846ceca4d277a8095c5d4229d175f",
+          "url": "https://raw.githubusercontent.com/google/skia/4f574af2444846ceca4d277a8095c5d4229d175f/include/private/SkAssert.h",
+          "sha256": "1bf3b0f45731d1f38bc447407d845bb031dd4f372614c3ffddee07cf67750da8"
+        },
+        "third_party/skia/include/private/SkTo.h": {
+          "revision": "4f574af2444846ceca4d277a8095c5d4229d175f",
+          "url": "https://raw.githubusercontent.com/google/skia/4f574af2444846ceca4d277a8095c5d4229d175f/include/private/SkTo.h",
+          "sha256": "a7c7ba4c6510010ca4fc94b9dff3d2a15a45228c428612b6e6c33d64f7a0c3cb"
+        },
+        "third_party/skia/include/private/SkLog.h": {
+          "revision": "4f574af2444846ceca4d277a8095c5d4229d175f",
+          "url": "https://raw.githubusercontent.com/google/skia/4f574af2444846ceca4d277a8095c5d4229d175f/include/private/SkLog.h",
+          "sha256": "7bdfc059f62ce5072db54f3c85a09cc5a149b240752dfa9053515fe25d32900d"
+        },
+        "third_party/skia/include/private/SkDebug.h": {
+          "revision": "4f574af2444846ceca4d277a8095c5d4229d175f",
+          "url": "https://raw.githubusercontent.com/google/skia/4f574af2444846ceca4d277a8095c5d4229d175f/include/private/SkDebug.h",
+          "sha256": "e7425b888837a560cd005f2ce752979c0d646c663aef92c977d8aabaf676eb34"
+        },
+        "third_party/skia/include/private/SkAttributes.h": {
+          "revision": "4f574af2444846ceca4d277a8095c5d4229d175f",
+          "url": "https://raw.githubusercontent.com/google/skia/4f574af2444846ceca4d277a8095c5d4229d175f/include/private/SkAttributes.h",
+          "sha256": "2c5182ef84da0241d2606440129112c7b58ff5ee7febd02010d919c181c191ca"
+        },
+        "third_party/skia/include/private/SkAPI.h": {
+          "revision": "4f574af2444846ceca4d277a8095c5d4229d175f",
+          "url": "https://raw.githubusercontent.com/google/skia/4f574af2444846ceca4d277a8095c5d4229d175f/include/private/SkAPI.h",
+          "sha256": "7fff0712d60946b882b0aa7a00185b4baf31b2659b65d67d92152b2218ae101f"
+        },
+        "third_party/skia/include/private/SkTFitsIn.h": {
+          "revision": "4f574af2444846ceca4d277a8095c5d4229d175f",
+          "url": "https://raw.githubusercontent.com/google/skia/4f574af2444846ceca4d277a8095c5d4229d175f/include/private/SkTFitsIn.h",
+          "sha256": "57a03bcd04f7f3cb237623ef94ad785c5d397ce968b232398d2c3e6fa34f276f"
+        },
+        "third_party/skia/include/private/SkFeatures.h": {
+          "revision": "4f574af2444846ceca4d277a8095c5d4229d175f",
+          "url": "https://raw.githubusercontent.com/google/skia/4f574af2444846ceca4d277a8095c5d4229d175f/include/private/SkFeatures.h",
+          "sha256": "d20d246f13400fe5a0e9f335611d825f936fa469e043e967849db673476196d1"
+        },
+        "third_party/skia/include/private/SkLoadUserConfig.h": {
+          "revision": "4f574af2444846ceca4d277a8095c5d4229d175f",
+          "url": "https://raw.githubusercontent.com/google/skia/4f574af2444846ceca4d277a8095c5d4229d175f/include/private/SkLoadUserConfig.h",
+          "sha256": "eb0fae79a274c5a8d089f7e14b0414fb6f2b55276f7f3ef9ce529a786acf8450"
+        },
+        "third_party/skia/include/private/SkLogPriority.h": {
+          "revision": "4f574af2444846ceca4d277a8095c5d4229d175f",
+          "url": "https://raw.githubusercontent.com/google/skia/4f574af2444846ceca4d277a8095c5d4229d175f/include/private/SkLogPriority.h",
+          "sha256": "6fcd70ad1a6228067396542a99000d32bc4ea1cc0b50d26694e07e36ffa60bfc"
+        },
+        "third_party/skia/include/config/SkUserConfig.h": {
+          "revision": "4f574af2444846ceca4d277a8095c5d4229d175f",
+          "url": "https://raw.githubusercontent.com/google/skia/4f574af2444846ceca4d277a8095c5d4229d175f/include/config/SkUserConfig.h",
+          "sha256": "e24518c884b871f2e0a243739028d489f690449f9a5470a78dbc562eda939727"
+        }
+      },
+      "skia_revision": "4f574af2444846ceca4d277a8095c5d4229d175f"
+    }
+  },
+  "contents": {
+    "146eb39a6e0681253701042551b4d5770799c1f37540aa0f861807197dd75fa9": {
+      "sections": [
+        {
+          "line": 330,
+          "text": "  'skia_revision': '0873ec164a06966b90ae0d43ef783cfb180084ae',\n"
+        }
+      ]
+    },
+    "1b4a503d160ffc0480c49710f65d3b6656c498e8ac23dbaaedee491e92ae71ef": {
+      "sections": [
+        {
+          "line": 88,
+          "text": "  [[nodiscard]] static String FromUtf8(base::span<const uint8_t>);\n  [[nodiscard]] static String FromUtf8(std::string_view s) {\n    return FromUtf8(base::as_byte_span(s));\n  }\n"
+        },
+        {
+          "line": 148,
+          "text": "  String() = default;\n"
+        },
+        {
+          "line": 211,
+          "text": "  bool empty() const { return !impl_ || !impl_->length(); }\n"
+        }
+      ]
+    },
+    "307329af0e9fb55fe05527668a8c679e5c32c17233808e403541313fe89ed63c": {
+      "sections": [
+        {
+          "line": 1738,
+          "text": "template <int&... ExplicitArgumentBarrier, typename T>\n  requires(internal::ByteSpanConstructibleFrom<const T&>)\nconstexpr auto as_byte_span(const T& t LIFETIME_BOUND) {\n  return as_bytes(span(t));\n}\n"
+        },
+        {
+          "line": 1763,
+          "text": "template <int&... ExplicitArgumentBarrier, typename ElementType, size_t Extent>\n  requires(internal::CanSafelyConvertToByteSpan<ElementType>)\nconstexpr auto as_byte_span(const ElementType (&arr LIFETIME_BOUND)[Extent]) {\n  return as_bytes(span<const ElementType, Extent>(arr));\n}\n"
+        }
+      ]
+    },
+    "2b12098e9aff1b59c319d4451d93c39b728c194158a2011b61c6b76e381b8575": {
+      "sections": [
+        {
+          "line": 621,
+          "text": "inline constexpr std::array<uint8_t, 4u> U32ToBigEndian(uint32_t val) {\n  return numerics_internal::ToLittleEndian(std::byteswap(val));\n}\n"
+        },
+        {
+          "line": 632,
+          "text": "inline constexpr std::array<uint8_t, 8u> U64ToBigEndian(uint64_t val) {\n  return numerics_internal::ToLittleEndian(std::byteswap(val));\n}\n"
+        }
+      ]
+    },
+    "dcecf9161bb1e2bd2ee0482e68c199263289bf0a60874cd50d2cc426de6b3b2c": {
+      "sections": [
+        {
+          "line": 121,
+          "text": "BASE_EXPORT std::string HexEncodeLower(base::span<const uint8_t> bytes);\nBASE_EXPORT std::string HexEncodeLower(std::string_view chars);\n"
+        }
+      ]
+    },
+    "fd2384a0d6558843e43225fdf079d4b9778068409addbfee193112bdf201b039": {
+      "sections": [
+        {
+          "line": 21,
+          "text": "enum HashAlgorithm {\n  kHashAlgorithmSha256,\n  kHashAlgorithmSha384,\n  kHashAlgorithmSha512\n};\n"
+        },
+        {
+          "line": 37,
+          "text": "  explicit Digestor(HashAlgorithm);\n"
+        },
+        {
+          "line": 46,
+          "text": "  bool Update(base::span<const uint8_t>);\n"
+        },
+        {
+          "line": 49,
+          "text": "  bool Finish(DigestValue&);\n"
+        }
+      ]
+    },
+    "6c95b9701536e5fa5cc65f9f93b85b75c4d8b6ff76acede091f2d50ca2705575": {
+      "sections": [
+        {
+          "line": 43,
+          "text": "typedef uint32_t SkFontTableTag;\n"
+        },
+        {
+          "line": 187,
+          "text": "    int countTables() const;\n\n    /** Copy into tags[] (allocated by the caller) the list of table tags in\n     *  the font, and return the number. This will be the same as CountTables()\n     *  or 0 if an error occurred. If tags is empty, this only returns the count\n     *  (the same as calling countTables()).\n     */\n    int readTableTags(SkSpan<SkFontTableTag> tags) const;\n\n    /** Given a table tag, return the size of its contents, or 0 if not present\n     */\n    size_t getTableSize(SkFontTableTag) const;\n\n    /** Copy the contents of a table into data (allocated by the caller). Note\n     *  that the contents of the table will be in their native endian order\n     *  (which for most truetype tables is big endian). If the table tag is\n     *  not found, or there is an error copying the data, then 0 is returned.\n     *  If this happens, it is possible that some or all of the memory pointed\n     *  to by data may have been written to, even though an error has occurred.\n     *\n     *  @param tag  The table tag whose contents are to be copied\n     *  @param offset The offset in bytes into the table's contents where the\n     *  copy should start from.\n     *  @param length The number of bytes, starting at offset, of table data\n     *  to copy.\n     *  @param data storage address where the table contents are copied to\n     *  @return the number of bytes actually copied into data. If offset+length\n     *  exceeds the table's size, then only the bytes up to the table's\n     *  size are actually copied, and this is the value returned. If\n     *  offset > the table's size, or tag is not a valid table,\n     *  then 0 is returned.\n     */\n    size_t getTableData(SkFontTableTag tag, size_t offset, size_t length,\n                        void* data) const;\n\n"
+        }
+      ]
+    },
+    "46ee18609d9fbfd91472ed7f973a45ea4f970601a063ad27758b4c08e1a49c59": {
+      "text": "/*\n * Copyright 2018 Google LLC\n *\n * Use of this source code is governed by a BSD-style license that can be\n * found in the LICENSE file.\n */\n\n#ifndef SkSpan_DEFINED\n#define SkSpan_DEFINED\n\n/*\n *  Define this to keep the bespoke SkSpan implementation, until clients are ready.\n *  When this is not defined, SkSpan becomes just an alias for std::span\n */\n#define SK_USE_LEGACY_SKSPAN\n\n/*\n *  SkSpan handles single POD initialization differently from std::span\n *  This macro allows clients to initialize a span with a single POD that will work with\n *  either implementation of SkSpan.\n *\n *  When we switch to std::span entirely, callsites can remove this macro, and juse type {{a}}\n */\n#ifdef SK_USE_LEGACY_SKSPAN\n    #define SKSPAN_INIT_ONE(elem)   {elem}\n#else\n    #define SKSPAN_INIT_ONE(elem)   {{elem}}\n#endif\n\n#ifdef SK_USE_LEGACY_SKSPAN\n\n#include \"include/private/SkAssert.h\"\n#include \"include/private/SkTo.h\"\n\n#include <cstddef>\n#include <initializer_list>\n#include <iterator>\n#include <limits>\n#include <utility>\n\n// Having this be an export works around IWYU churn related to\n// https://github.com/include-what-you-use/include-what-you-use/issues/1121\n#include <type_traits> // IWYU pragma: export\n\n// Add macro to check the lifetime of initializer_list arguments. initializer_list has a very\n// short life span, and can only be used as a parameter, and not as a variable.\n#if defined(__clang__) && defined(__has_cpp_attribute) && __has_cpp_attribute(clang::lifetimebound)\n#define SK_CHECK_IL_LIFETIME [[clang::lifetimebound]]\n#else\n#define SK_CHECK_IL_LIFETIME\n#endif\n\n/**\n * SkSpan holds a reference to contiguous data of type T along with a count. SkSpan does not own\n * the data itself but is merely a reference, therefore you must take care with the lifetime of\n * the underlying data.\n *\n * SkSpan is a count and a pointer into existing array or data type that stores its data in\n * contiguous memory like std::vector. Any container that works with std::size() and std::data()\n * can be used.\n *\n * SkSpan makes a convenient parameter for a routine to accept array like things. This allows you to\n * write the routine without overloads for all different container types.\n *\n * Example:\n *     void routine(SkSpan<const int> a) { ... }\n *\n *     std::vector v = {1, 2, 3, 4, 5};\n *\n *     routine(a);\n *\n * A word of caution when working with initializer_list, initializer_lists have a lifetime that is\n * limited to the current statement. The following is correct and safe:\n *\n * Example:\n *     routine({1,2,3,4,5});\n *\n * The following is undefined, and will result in erratic execution:\n *\n * Bad Example:\n *     initializer_list l = {1, 2, 3, 4, 5};   // The data behind l dies at the ;.\n *     routine(l);\n */\ntemplate <typename T>\nclass SkSpan {\npublic:\n    constexpr SkSpan() : fPtr{nullptr}, fSize{0} {}\n\n    template <typename Integer, std::enable_if_t<std::is_integral_v<Integer>, bool> = true>\n    constexpr SkSpan(T* ptr, Integer size) : fPtr{ptr}, fSize{SkToSizeT(size)} {\n        SkASSERT(ptr || fSize == 0);  // disallow nullptr + a nonzero size\n        SkASSERT(fSize < (std::numeric_limits<size_t>::max() / sizeof(T)));\n    }\n    template <typename U, typename = std::enable_if_t<std::is_same_v<const U, T>>>\n    constexpr SkSpan(const SkSpan<U>& that) : fPtr(std::data(that)), fSize(std::size(that)) {}\n    constexpr SkSpan(const SkSpan& o) = default;\n    template<size_t N> constexpr SkSpan(T(&a)[N]) : SkSpan(a, N) { }\n    template<typename Container>\n    constexpr SkSpan(Container&& c) : SkSpan(std::data(c), std::size(c)) { }\n    SkSpan(std::initializer_list<T> il SK_CHECK_IL_LIFETIME)\n            : SkSpan(std::data(il), std::size(il)) {}\n\n    constexpr SkSpan& operator=(const SkSpan& that) = default;\n\n    constexpr T& operator [] (size_t i) const {\n        return fPtr[sk_collection_check_bounds(i, this->size())];\n    }\n    constexpr T& front() const { sk_collection_not_empty(this->empty()); return fPtr[0]; }\n    constexpr T& back()  const { sk_collection_not_empty(this->empty()); return fPtr[fSize - 1]; }\n    constexpr T* begin() const { return fPtr; }\n    constexpr T* end() const { return fPtr + fSize; }\n    constexpr auto rbegin() const { return std::make_reverse_iterator(this->end()); }\n    constexpr auto rend() const { return std::make_reverse_iterator(this->begin()); }\n    constexpr T* data() const { return this->begin(); }\n    constexpr size_t size() const { return fSize; }\n    constexpr bool empty() const { return fSize == 0; }\n    constexpr size_t size_bytes() const { return fSize * sizeof(T); }\n    constexpr SkSpan<T> first(size_t prefixLen) const {\n        return SkSpan{fPtr, sk_collection_check_length(prefixLen, fSize)};\n    }\n    constexpr SkSpan<T> last(size_t postfixLen) const {\n        return SkSpan{fPtr + (this->size() - postfixLen),\n                      sk_collection_check_length(postfixLen, fSize)};\n    }\n    constexpr SkSpan<T> subspan(size_t offset) const {\n        return this->subspan(offset, this->size() - offset);\n    }\n    constexpr SkSpan<T> subspan(size_t offset, size_t count) const {\n        const size_t safeOffset = sk_collection_check_length(offset, fSize);\n\n        // Should read offset + count > size(), but that could overflow. We know that safeOffset\n        // is <= size, therefore the subtraction will not overflow.\n        if (count > this->size() - safeOffset) SK_UNLIKELY {\n            // The count is too large.\n            SkUNREACHABLE;\n        }\n        return SkSpan{fPtr + safeOffset, count};\n    }\n\nprivate:\n    T* fPtr;\n    size_t fSize;\n};\n\ntemplate <typename Container>\nSkSpan(Container&&) ->\n        SkSpan<std::remove_pointer_t<decltype(std::data(std::declval<Container>()))>>;\n\n#else\n\n#include <span>\n\ntemplate <typename T> using SkSpan = std::span<T>;\n\n#endif  // legacy\n\n// These helper functions are temporary and only meant to be used during the Spanify process\n// to ease the transition from pointers to spans (e.g. replacing `ptr++`).\n// Once the Spanify process is complete, these callsites should be refactored to use\n// more idiomatic span patterns, and these functions should be removed.\ntemplate <typename T>\nconstexpr SkSpan<T> SkPreIncrementSpan(SkSpan<T>& s) {\n    s = s.subspan(1);\n    return s;\n}\n\ntemplate <typename T>\nconstexpr SkSpan<T> SkPostIncrementSpan(SkSpan<T>& s) {\n    SkSpan<T> old = s;\n    s = s.subspan(1);\n    return old;\n}\n\n#endif  // SkSpan_DEFINED\n"
+    },
+    "95b823eaee2d6a50031f4f9f4389b839ee2adae9b4386d1b32483eee3e1aaeb5": {
+      "sections": [
+        {
+          "line": 302,
+          "text": "int SkTypeface::countTables() const {\n    return this->onGetTableTags({});\n}\n\nint SkTypeface::readTableTags(SkSpan<SkFontTableTag> tags) const {\n    return this->onGetTableTags(tags);\n}\n"
+        }
+      ]
+    },
+    "1bf3b0f45731d1f38bc447407d845bb031dd4f372614c3ffddee07cf67750da8": {
+      "text": "/*\n * Copyright 2022 Google LLC\n *\n * Use of this source code is governed by a BSD-style license that can be\n * found in the LICENSE file.\n */\n\n#ifndef SkAssert_DEFINED\n#define SkAssert_DEFINED\n\n#include \"include/private/SkAPI.h\"\n#include \"include/private/SkAttributes.h\"\n#include \"include/private/SkDebug.h\" // IWYU pragma: keep\n#include \"include/private/SkLog.h\"\n\n#include <cstddef>\n#include <limits>\n\n#if defined(__clang__) && defined(__has_attribute)\n    #if __has_attribute(likely)\n        #define SK_LIKELY [[likely]]\n        #define SK_UNLIKELY [[unlikely]]\n    #else\n        #define SK_LIKELY\n        #define SK_UNLIKELY\n    #endif\n#else\n    #define SK_LIKELY\n    #define SK_UNLIKELY\n#endif\n\n// c++23 will give us [[assume]] -- until then we're stuck with various other options:\n#if defined(__clang__)\n    #define SK_ASSUME(cond) __builtin_assume(cond)\n#elif defined(__GNUC__)\n    #if __GNUC__ >= 13\n        #define SK_ASSUME(cond) __attribute__((assume(cond)))\n    #else\n        // NOTE: This implementation could actually evaluate `cond`, which is not desirable.\n        #define SK_ASSUME(cond) ((cond) ? (void)0 : __builtin_unreachable())\n    #endif\n#elif defined(_MSC_VER)\n    #define SK_ASSUME(cond) __assume(cond)\n#else\n    #define SK_ASSUME(cond) ((void)0)\n#endif\n\n/** Called internally if we hit an unrecoverable error.\n    The platform implementation must not return, but should either throw\n    an exception or otherwise exit.\n*/\n[[noreturn]] SK_API extern void sk_abort_no_print(void);\n\n#if defined(SK_BUILD_FOR_GOOGLE3)\n    void SkDebugfForDumpStackTrace(const char* data, void* unused);\n    namespace base {\n        void DumpStackTrace(int skip_count, void w(const char*, void*), void* arg);\n    }\n#  define SK_DUMP_GOOGLE3_STACK() ::base::DumpStackTrace(0, SkDebugfForDumpStackTrace, nullptr)\n#else\n#  define SK_DUMP_GOOGLE3_STACK()\n#endif\n\n#if !defined(SK_ABORT)\n#  if defined(SK_BUILD_FOR_WIN)\n     // This style lets Visual Studio follow errors back to the source file.\n#    define SK_DUMP_LINE_FORMAT \"%s(%d)\"\n#  else\n#    define SK_DUMP_LINE_FORMAT \"%s:%d\"\n#  endif\n#  define SK_ABORT(message, ...) \\\n    do { \\\n        SKIA_LOG_E(SK_DUMP_LINE_FORMAT \": fatal error: \\\"\" message \"\\\"\", \\\n                 __FILE__, __LINE__, ##__VA_ARGS__); \\\n        SK_DUMP_GOOGLE3_STACK(); \\\n        sk_abort_no_print(); \\\n    } while (false)\n#endif\n\n// SkASSERT, SkASSERTF and SkASSERT_RELEASE can be used as standalone assertion expressions, e.g.\n//    uint32_t foo(int x) {\n//        SkASSERT(x > 4);\n//        return x - 4;\n//    }\n// and are also written to be compatible with constexpr functions:\n//    constexpr uint32_t foo(int x) {\n//        return SkASSERT(x > 4),\n//               x - 4;\n//    }\n#if defined(__clang__)\n#define SkASSERT_RELEASE(cond) \\\n    static_cast<void>( __builtin_expect(static_cast<bool>(cond), 1) \\\n        ? static_cast<void>(0) \\\n        : []{ SK_ABORT(\"check(%s)\", #cond); }() )\n\n#define SkASSERTF_RELEASE(cond, fmt, ...)                                  \\\n    static_cast<void>( __builtin_expect(static_cast<bool>(cond), 1)        \\\n        ? static_cast<void>(0)                                             \\\n        : [&]{ SK_ABORT(\"assertf(%s): \" fmt, #cond, ##__VA_ARGS__); }() )\n#else\n#define SkASSERT_RELEASE(cond) \\\n    static_cast<void>( (cond) ? static_cast<void>(0) : []{ SK_ABORT(\"check(%s)\", #cond); }() )\n\n#define SkASSERTF_RELEASE(cond, fmt, ...)                                   \\\n    static_cast<void>( (cond)                                               \\\n        ? static_cast<void>(0)                                              \\\n        : [&]{ SK_ABORT(\"assertf(%s): \" fmt, #cond, ##__VA_ARGS__); }() )\n#endif\n\n#if defined(SK_DEBUG)\n    #define SkASSERT(cond)            SkASSERT_RELEASE(cond)\n    #define SkASSERTF(cond, fmt, ...) SkASSERTF_RELEASE(cond, fmt, ##__VA_ARGS__)\n    #define SkDEBUGFAIL(message)      SK_ABORT(\"%s\", message)\n    #define SkDEBUGFAILF(fmt, ...)    SK_ABORT(fmt, ##__VA_ARGS__)\n    #define SkAssertResult(cond)      SkASSERT(cond)\n#else\n    #define SkASSERT(cond)            static_cast<void>(0)\n    #define SkASSERTF(cond, fmt, ...) static_cast<void>(0)\n    #define SkDEBUGFAIL(message)\n    #define SkDEBUGFAILF(fmt, ...)\n\n    // unlike SkASSERT, this macro executes its condition in the non-debug build.\n    // The if is present so that this can be used with functions marked [[nodiscard]].\n    #define SkAssertResult(cond)         if (cond) {} do {} while(false)\n#endif\n\n#if !defined(SkUNREACHABLE)\n#  if defined(_MSC_VER) && !defined(__clang__)\n#    include <intrin.h>\n#    define FAST_FAIL_INVALID_ARG                 5\n// See https://developercommunity.visualstudio.com/content/problem/1128631/code-flow-doesnt-see-noreturn-with-extern-c.html\n// for why this is wrapped. Hopefully removable after msvc++ 19.27 is no longer supported.\n[[noreturn]] static inline void sk_fast_fail() { __fastfail(FAST_FAIL_INVALID_ARG); }\n#    define SkUNREACHABLE sk_fast_fail()\n#  else\n#    define SkUNREACHABLE __builtin_trap()\n#  endif\n#endif\n\n[[noreturn]] SK_API inline void sk_print_index_out_of_bounds(size_t i, size_t size) {\n    SK_ABORT(\"Index (%zu) out of bounds for size %zu.\", i, size);\n}\n\ntemplate <typename T> SK_API inline T sk_collection_check_bounds(T i, T size) {\n    if (0 <= i && i < size) SK_LIKELY {\n        return i;\n    }\n\n    SK_UNLIKELY {\n        #if defined(SK_DEBUG)\n            sk_print_index_out_of_bounds(static_cast<size_t>(i), static_cast<size_t>(size));\n        #else\n            SkUNREACHABLE;\n        #endif\n    }\n}\n\n[[noreturn]] SK_API inline void sk_print_length_too_big(size_t i, size_t size) {\n    SK_ABORT(\"Length (%zu) is too big for size %zu.\", i, size);\n}\n\ntemplate <typename T> SK_API inline T sk_collection_check_length(T i, T size) {\n    if (0 <= i && i <= size) SK_LIKELY {\n        return i;\n    }\n\n    SK_UNLIKELY {\n        #if defined(SK_DEBUG)\n            sk_print_length_too_big(static_cast<size_t>(i), static_cast<size_t>(size));\n        #else\n            SkUNREACHABLE;\n        #endif\n    }\n}\n\nSK_API inline void sk_collection_not_empty(bool empty) {\n    if (empty) SK_UNLIKELY {\n        #if defined(SK_DEBUG)\n            SK_ABORT(\"Collection is empty.\");\n        #else\n            SkUNREACHABLE;\n        #endif\n    }\n}\n\n[[noreturn]] SK_API inline void sk_print_size_too_big(size_t size, size_t maxSize) {\n    SK_ABORT(\"Size (%zu) can't be represented in bytes. Max size is %zu.\", size, maxSize);\n}\n\ntemplate <typename T>\nSK_ALWAYS_INLINE size_t check_size_bytes_too_big(size_t size) {\n    const size_t kMaxSize = std::numeric_limits<size_t>::max() / sizeof(T);\n    if (size > kMaxSize) {\n        #if defined(SK_DEBUG)\n            sk_print_size_too_big(size, kMaxSize);\n        #else\n            SkUNREACHABLE;\n        #endif\n    }\n    return size;\n}\n\n#endif  // SkAssert_DEFINED\n"
+    },
+    "a7c7ba4c6510010ca4fc94b9dff3d2a15a45228c428612b6e6c33d64f7a0c3cb": {
+      "text": "/*\n * Copyright 2018 Google LLC\n *\n * Use of this source code is governed by a BSD-style license that can be\n * found in the LICENSE file.\n */\n#ifndef SkTo_DEFINED\n#define SkTo_DEFINED\n\n#include \"include/private/SkAssert.h\"\n#include \"include/private/SkTFitsIn.h\"\n\n#include <cstddef>\n#include <cstdint>\n\ntemplate <typename D, typename S> constexpr D SkTo(S s) {\n    return SkASSERT(SkTFitsIn<D>(s)),\n           static_cast<D>(s);\n}\n\ntemplate <typename S> constexpr int8_t   SkToS8(S x)    { return SkTo<int8_t>(x);   }\ntemplate <typename S> constexpr uint8_t  SkToU8(S x)    { return SkTo<uint8_t>(x);  }\ntemplate <typename S> constexpr int16_t  SkToS16(S x)   { return SkTo<int16_t>(x);  }\ntemplate <typename S> constexpr uint16_t SkToU16(S x)   { return SkTo<uint16_t>(x); }\ntemplate <typename S> constexpr int32_t  SkToS32(S x)   { return SkTo<int32_t>(x);  }\ntemplate <typename S> constexpr uint32_t SkToU32(S x)   { return SkTo<uint32_t>(x); }\ntemplate <typename S> constexpr int64_t  SkToS64(S x)   { return SkTo<int64_t>(x);  }\ntemplate <typename S> constexpr uint64_t SkToU64(S x)   { return SkTo<uint64_t>(x); }\ntemplate <typename S> constexpr int      SkToInt(S x)   { return SkTo<int>(x);      }\ntemplate <typename S> constexpr unsigned SkToUInt(S x)  { return SkTo<unsigned>(x); }\ntemplate <typename S> constexpr size_t   SkToSizeT(S x) { return SkTo<size_t>(x);   }\n\n/** @return false or true based on the condition\n*/\ntemplate <typename T> static constexpr bool SkToBool(const T& x) {\n    return (bool)x;\n}\n\n#endif  // SkTo_DEFINED\n"
+    },
+    "2c5182ef84da0241d2606440129112c7b58ff5ee7febd02010d919c181c191ca": {
+      "text": "/*\n * Copyright 2022 Google LLC\n *\n * Use of this source code is governed by a BSD-style license that can be\n * found in the LICENSE file.\n */\n\n#ifndef SkAttributes_DEFINED\n#define SkAttributes_DEFINED\n\n#include \"include/private/SkFeatures.h\" // IWYU pragma: keep\n#include \"include/private/SkLoadUserConfig.h\" // IWYU pragma: keep\n\n#if defined(__clang__) || defined(__GNUC__)\n#  define SK_ATTRIBUTE(attr) __attribute__((attr))\n#else\n#  define SK_ATTRIBUTE(attr)\n#endif\n\n/**\n * If your judgment is better than the compiler's (i.e. you've profiled it),\n * you can use SK_ALWAYS_INLINE to force inlining. E.g.\n *     inline void someMethod() { ... }             // may not be inlined\n *     SK_ALWAYS_INLINE void someMethod() { ... }   // should always be inlined\n */\n#if !defined(SK_ALWAYS_INLINE)\n#  if defined(SK_BUILD_FOR_WIN)\n#    define SK_ALWAYS_INLINE __forceinline\n#  else\n#    define SK_ALWAYS_INLINE SK_ATTRIBUTE(always_inline) inline\n#  endif\n#endif\n\n/**\n * If your judgment is better than the compiler's (i.e. you've profiled it),\n * you can use SK_NEVER_INLINE to prevent inlining.\n */\n#if !defined(SK_NEVER_INLINE)\n#  if defined(SK_BUILD_FOR_WIN)\n#    define SK_NEVER_INLINE __declspec(noinline)\n#  else\n#    define SK_NEVER_INLINE SK_ATTRIBUTE(noinline)\n#  endif\n#endif\n\n/**\n * Used to annotate a function as taking printf style arguments.\n * `A` is the (1 based) index of the format string argument.\n * `B` is the (1 based) index of the first argument used by the format string.\n */\n#if !defined(SK_PRINTF_LIKE)\n#  define SK_PRINTF_LIKE(A, B) SK_ATTRIBUTE(format(printf, (A), (B)))\n#endif\n\n/**\n * Used to ignore sanitizer warnings.\n */\n#if !defined(SK_NO_SANITIZE)\n  #if defined(__has_attribute)\n    #if __has_attribute(no_sanitize)\n      // This should be for clang and versions of gcc >= 8.0\n      #define SK_NO_SANITIZE(A) SK_ATTRIBUTE(no_sanitize(A))\n    #else\n      // For compilers that don't support sanitization, just do nothing.\n      #define SK_NO_SANITIZE(A)\n    #endif\n  #else // no __has_attribute, e.g. MSVC\n    #define SK_NO_SANITIZE(A)\n  #endif\n#endif\n\n/**\n * Used to ignore CFI sanitizer warnings, supported only by Clang at the moment.\n */\n#if defined(__clang__)\n  #define SK_NO_SANITIZE_CFI SK_NO_SANITIZE(\"cfi\")\n#else\n  #define SK_NO_SANITIZE_CFI\n#endif\n\n/**\n * Annotates a class' non-trivial special functions as trivial for the purposes of calls.\n * Allows a class with a non-trivial destructor to be __is_trivially_relocatable.\n * Use of this attribute on a public API breaks platform ABI.\n * Annotated classes may not hold pointers derived from `this`.\n * Annotated classes must implement move+delete as equivalent to memcpy+free.\n * Use may require more complete types, as callee destroys.\n *\n * https://clang.llvm.org/docs/AttributeReference.html#trivial-abi\n * https://libcxx.llvm.org/DesignDocs/UniquePtrTrivialAbi.html\n */\n#if !defined(SK_TRIVIAL_ABI)\n#  define SK_TRIVIAL_ABI\n#endif\n\n#endif\n"
+    },
+    "57a03bcd04f7f3cb237623ef94ad785c5d397ce968b232398d2c3e6fa34f276f": {
+      "text": "/*\n * Copyright 2013 Google Inc.\n *\n * Use of this source code is governed by a BSD-style license that can be\n * found in the LICENSE file.\n */\n\n#ifndef SkTFitsIn_DEFINED\n#define SkTFitsIn_DEFINED\n\n#include <limits>\n#include <type_traits>\n\n/**\n * std::underlying_type is only defined for enums. For integral types, we just want the type.\n */\ntemplate <typename T, class Enable = void>\nstruct sk_strip_enum {\n    typedef T type;\n};\n\ntemplate <typename T>\nstruct sk_strip_enum<T, typename std::enable_if<std::is_enum<T>::value>::type> {\n    typedef typename std::underlying_type<T>::type type;\n};\n\n\n/**\n * In C++ an unsigned to signed cast where the source value cannot be represented in the destination\n * type results in an implementation defined destination value. Unlike C, C++ does not allow a trap.\n * This makes \"(S)(D)s == s\" a possibly useful test. However, there are two cases where this is\n * incorrect:\n *\n * when testing if a value of a smaller signed type can be represented in a larger unsigned type\n * (int8_t)(uint16_t)-1 == -1 => (int8_t)0xFFFF == -1 => [implementation defined] == -1\n *\n * when testing if a value of a larger unsigned type can be represented in a smaller signed type\n * (uint16_t)(int8_t)0xFFFF == 0xFFFF => (uint16_t)-1 == 0xFFFF => 0xFFFF == 0xFFFF => true.\n *\n * Consider the cases:\n *   u = unsigned, less digits\n *   U = unsigned, more digits\n *   s = signed, less digits\n *   S = signed, more digits\n *   v is the value we're considering.\n *\n * u -> U: (u)(U)v == v, trivially true\n * U -> u: (U)(u)v == v, both casts well defined, test works\n * s -> S: (s)(S)v == v, trivially true\n * S -> s: (S)(s)v == v, first cast implementation value, second cast defined, test works\n * s -> U: (s)(U)v == v, *this is bad*, the second cast results in implementation defined value\n * S -> u: (S)(u)v == v, the second cast is required to prevent promotion of rhs to unsigned\n * u -> S: (u)(S)v == v, trivially true\n * U -> s: (U)(s)v == v, *this is bad*,\n *                             first cast results in implementation defined value,\n *                             second cast is defined. However, this creates false positives\n *                             uint16_t x = 0xFFFF\n *                                (uint16_t)(int8_t)x == x\n *                             => (uint16_t)-1        == x\n *                             => 0xFFFF              == x\n *                             => true\n *\n * So for the eight cases three are trivially true, three more are valid casts, and two are special.\n * The two 'full' checks which otherwise require two comparisons are valid cast checks.\n * The two remaining checks s -> U [v >= 0] and U -> s [v <= max(s)] can be done with one op.\n */\n\ntemplate <typename D, typename S>\nstatic constexpr inline\ntypename std::enable_if<(std::is_integral<S>::value || std::is_enum<S>::value) &&\n                        (std::is_integral<D>::value || std::is_enum<D>::value), bool>::type\n/*bool*/ SkTFitsIn(S src) {\n    // Ensure that is_signed and is_unsigned are passed the arithmetic underlyng types of enums.\n    using Sa = typename sk_strip_enum<S>::type;\n    using Da = typename sk_strip_enum<D>::type;\n\n    // SkTFitsIn() is used in public headers, so needs to be written targeting at most C++11.\n    return\n\n    // E.g. (int8_t)(uint8_t) int8_t(-1) == -1, but the uint8_t == 255, not -1.\n    (std::is_signed<Sa>::value && std::is_unsigned<Da>::value && sizeof(Sa) <= sizeof(Da)) ?\n        (S)0 <= src :\n\n    // E.g. (uint8_t)(int8_t) uint8_t(255) == 255, but the int8_t == -1.\n    (std::is_signed<Da>::value && std::is_unsigned<Sa>::value && sizeof(Da) <= sizeof(Sa)) ?\n        src <= (S)std::numeric_limits<Da>::max() :\n\n    // This trips up MSVC's /RTCc run-time checking, which we don't support.\n    (S)(D)src == src;\n}\n\n#endif\n"
+    },
+    "5b6738c4a7808b77fa82fcba9647cc1ac2e22515782b52f6767195275092d79d": {
+      "text": "/*\n * Copyright 2026 Google LLC\n *\n * Use of this source code is governed by a BSD-style license that can be\n * found in the LICENSE file.\n */\n\n#ifndef SkLog_DEFINED\n#define SkLog_DEFINED\n\n#include <cstdarg>\n\n#include \"include/private/SkAPI.h\"\n#include \"include/private/SkAttributes.h\"\n#include \"include/private/SkLoadUserConfig.h\" // IWYU pragma: keep\n#include \"include/private/SkLogPriority.h\"\n\n#if !defined(SkLog)\n// To be implemented per platform.\nvoid SkLogVAList(SkLogPriority priority, const char format[], va_list args) SK_PRINTF_LIKE(2, 0);\nvoid SK_SPI SkLog(SkLogPriority priority, const char format[], ...) SK_PRINTF_LIKE(2, 3);\n#endif\n\n/**\n * TODO (b/469441457): SKGPU_GRAPHITE_LOWEST_ACTIVE_LOG_PRIORITY Was the config used to set the log\n * priority, so we check for that define as well. Eventually, we should move clients using this\n * define to the new one.\n */\n#if defined(SKGPU_GRAPHITE_LOWEST_ACTIVE_LOG_PRIORITY)\n    static constexpr SkLogPriority MapGraphitePriority(skgpu::graphite::LogPriority priority) {\n        switch (priority) {\n            case skgpu::graphite::LogPriority::kError:   return SkLogPriority::kError;\n            case skgpu::graphite::LogPriority::kWarning: return SkLogPriority::kWarning;\n            case skgpu::graphite::LogPriority::kInfo:    return SkLogPriority::kInfo;\n            case skgpu::graphite::LogPriority::kDebug:   return SkLogPriority::kDebug;\n            default: return SkLogPriority::kDebug;\n        }\n    }\n    #define SKIA_LOWEST_ACTIVE_LOG_PRIORITY MapGraphitePriority(SKGPU_GRAPHITE_LOWEST_ACTIVE_LOG_PRIORITY)\n#endif\n\n#if !defined(SKIA_LOWEST_ACTIVE_LOG_PRIORITY)\n#ifdef SK_DEBUG\n    #define SKIA_LOWEST_ACTIVE_LOG_PRIORITY SkLogPriority::kDebug\n#else\n    #define SKIA_LOWEST_ACTIVE_LOG_PRIORITY SkLogPriority::kInfo\n#endif\n#endif\n\n#define SKIA_LOG(priority, fmt, ...)                                           \\\n    do {                                                                       \\\n        if constexpr (priority <= SKIA_LOWEST_ACTIVE_LOG_PRIORITY) {           \\\n            SkLog(priority, \"[skia] \" fmt \"\\n\", ##__VA_ARGS__);                \\\n        }                                                                      \\\n    } while (0)\n\n#define SKIA_LOG_E(fmt, ...) SKIA_LOG(SkLogPriority::kError, \"** ERROR ** \" fmt, ##__VA_ARGS__)\n#define SKIA_LOG_W(fmt, ...) SKIA_LOG(SkLogPriority::kWarning, \"WARNING - \" fmt, ##__VA_ARGS__)\n#define SKIA_LOG_I(fmt, ...) SKIA_LOG(SkLogPriority::kInfo, fmt, ##__VA_ARGS__)\n#define SKIA_LOG_D(fmt, ...) SKIA_LOG(SkLogPriority::kDebug, fmt, ##__VA_ARGS__)\n\n#endif // SkLog_DEFINED\n"
+    },
+    "e7425b888837a560cd005f2ce752979c0d646c663aef92c977d8aabaf676eb34": {
+      "text": "/*\n * Copyright 2022 Google LLC\n *\n * Use of this source code is governed by a BSD-style license that can be\n * found in the LICENSE file.\n */\n\n#ifndef SkDebug_DEFINED\n#define SkDebug_DEFINED\n\n#include \"include/private/SkAPI.h\"\n#include \"include/private/SkAttributes.h\"\n#include \"include/private/SkLoadUserConfig.h\" // IWYU pragma: keep\n\n#if !defined(SkDebugf)\n    void SK_SPI SkDebugf(const char format[], ...) SK_PRINTF_LIKE(1, 2);\n#endif\n\n#if defined(SK_DEBUG)\n    #define SkDEBUGCODE(...)  __VA_ARGS__\n    #define SkDEBUGF(...)     SkDebugf(__VA_ARGS__)\n#else\n    #define SkDEBUGCODE(...)\n    #define SkDEBUGF(...)\n#endif\n\n#endif\n"
+    },
+    "7fff0712d60946b882b0aa7a00185b4baf31b2659b65d67d92152b2218ae101f": {
+      "text": "/*\n * Copyright 2022 Google LLC\n *\n * Use of this source code is governed by a BSD-style license that can be\n * found in the LICENSE file.\n */\n\n#ifndef SkAPI_DEFINED\n#define SkAPI_DEFINED\n\n#include \"include/private/SkLoadUserConfig.h\" // IWYU pragma: keep\n\n// If SKIA_IMPLEMENTATION is defined as 1, that signals we are building Skia and should\n// export our symbols. If it is not set (or set to 0), then Skia is being used by a client\n// and we should not export our symbols.\n#if !defined(SKIA_IMPLEMENTATION)\n    #define SKIA_IMPLEMENTATION 0\n#endif\n\n// If we are compiling Skia is being as a DLL, we need to be sure to export all of our public\n// APIs to that DLL. If a client is using Skia which was compiled as a DLL, we need to instruct\n// the linker to use the symbols from that DLL. This is the goal of the SK_API define.\n#if !defined(SK_API)\n    #if defined(SKIA_DLL)\n        #if defined(_MSC_VER)\n            #if SKIA_IMPLEMENTATION\n                #define SK_API __declspec(dllexport)\n            #else\n                #define SK_API __declspec(dllimport)\n            #endif\n        #else\n            #define SK_API __attribute__((visibility(\"default\")))\n        #endif\n    #else\n        #define SK_API\n    #endif\n#endif\n\n// SK_SPI is functionally identical to SK_API, but used within src to clarify that it's less stable\n#if !defined(SK_SPI)\n    #define SK_SPI SK_API\n#endif\n\n// See https://clang.llvm.org/docs/AttributeReference.html#availability\n// The API_AVAILABLE macro comes from <os/availability.h> on MacOS\n#if defined(SK_ENABLE_API_AVAILABLE)\n#   define SK_API_AVAILABLE API_AVAILABLE\n#else\n#   define SK_API_AVAILABLE(...)\n#endif\n\n#endif\n"
+    },
+    "eb0fae79a274c5a8d089f7e14b0414fb6f2b55276f7f3ef9ce529a786acf8450": {
+      "text": "/*\n * Copyright 2022 Google LLC\n *\n * Use of this source code is governed by a BSD-style license that can be\n * found in the LICENSE file.\n */\n\n#ifndef SK_USER_CONFIG_WAS_LOADED\n\n// Include this to set reasonable defaults (e.g. for SK_CPU_LENDIAN)\n#include \"include/private/SkFeatures.h\"\n// Include this so that users can define the lowest active log priority in their config\n#include \"include/private/SkLogPriority.h\" // IWYU pragma: keep\n\n// Allows embedders that want to disable macros that take arguments to just\n// define that symbol to be one of these\n#define SK_NOTHING_ARG1(arg1)\n#define SK_NOTHING_ARG2(arg1, arg2)\n#define SK_NOTHING_ARG3(arg1, arg2, arg3)\n\n// IWYU pragma: begin_exports\n// Note: SK_USER_CONFIG_HEADER will not work with Bazel builds and some C++ compilers.\n#if defined(SK_USER_CONFIG_HEADER)\n    #include SK_USER_CONFIG_HEADER\n#elif defined(SK_USE_BAZEL_CONFIG_HEADER)\n    // The Bazel config file is presumed to be in the root directory of its Bazel Workspace.\n    // This is achieved in Skia by having a nested WORKSPACE in include/config and a cc_library\n    // defined in that folder. As a result, we do not try to include SkUserConfig.h from the\n    // top of Skia because Bazel sandboxing will move it to a different location.\n    #include \"SkUserConfig.h\"  // NO_G3_REWRITE\n#else\n    #include \"include/config/SkUserConfig.h\"\n#endif\n// IWYU pragma: end_exports\n\n// Checks to make sure the SkUserConfig options do not conflict.\n#if !defined(SK_DEBUG) && !defined(SK_RELEASE)\n    #ifdef NDEBUG\n        #define SK_RELEASE\n    #else\n        #define SK_DEBUG\n    #endif\n#endif\n\n#if defined(SK_DEBUG) && defined(SK_RELEASE)\n#  error \"cannot define both SK_DEBUG and SK_RELEASE\"\n#elif !defined(SK_DEBUG) && !defined(SK_RELEASE)\n#  error \"must define either SK_DEBUG or SK_RELEASE\"\n#endif\n\n#if defined(SK_CPU_LENDIAN) && defined(SK_CPU_BENDIAN)\n#  error \"cannot define both SK_CPU_LENDIAN and SK_CPU_BENDIAN\"\n#elif !defined(SK_CPU_LENDIAN) && !defined(SK_CPU_BENDIAN)\n#  error \"must define either SK_CPU_LENDIAN or SK_CPU_BENDIAN\"\n#endif\n\n#if defined(SK_CPU_BENDIAN) && !defined(I_ACKNOWLEDGE_SKIA_DOES_NOT_SUPPORT_BIG_ENDIAN)\n    #error \"The Skia team is not endian-savvy enough to support big-endian CPUs.\"\n    #error \"If you still want to use Skia,\"\n    #error \"please define I_ACKNOWLEDGE_SKIA_DOES_NOT_SUPPORT_BIG_ENDIAN.\"\n#endif\n\n#define SK_USER_CONFIG_WAS_LOADED\n#endif // SK_USER_CONFIG_WAS_LOADED\n"
+    },
+    "6fcd70ad1a6228067396542a99000d32bc4ea1cc0b50d26694e07e36ffa60bfc": {
+      "text": "/*\n * Copyright 2026 Google LLC\n *\n * Use of this source code is governed by a BSD-style license that can be\n * found in the LICENSE file.\n */\n\n#ifndef SkLogPriority_DEFINED\n#define SkLogPriority_DEFINED\n\n/**\n * Note: this file may be included in clients' SkUserConfig.h files, so including any other headers\n * in this file should be avoided.\n */\n\n/**\n * SKIA_LOWEST_ACTIVE_LOG_PRIORITY can be defined to one of these values (in\n * SkUserConfig.h) to control Skia's logging behavior.\n *\n * For example:\n * ```\n * #define SKIA_LOWEST_ACTIVE_LOG_PRIORITY SkLogPriority::kWarning\n * ```\n * Would cause Skia to log warnings, non-fatal errors, and fatal errors.\n * However, debug logs would be omitted.\n */\nenum class SkLogPriority : int {\n    kError = 0,\n    kWarning = 1,\n    kInfo = 2,\n    kDebug = 3,\n};\n\n#endif // SkLogPriority_DEFINED\n"
+    },
+    "d20d246f13400fe5a0e9f335611d825f936fa469e043e967849db673476196d1": {
+      "text": "/*\n * Copyright 2022 Google LLC\n *\n * Use of this source code is governed by a BSD-style license that can be\n * found in the LICENSE file.\n */\n\n#ifndef SkFeatures_DEFINED\n#define SkFeatures_DEFINED\n\n#if !defined(SK_BUILD_FOR_ANDROID) && !defined(SK_BUILD_FOR_IOS) && !defined(SK_BUILD_FOR_WIN) && \\\n    !defined(SK_BUILD_FOR_UNIX) && !defined(SK_BUILD_FOR_MAC)\n\n    #ifdef __APPLE__\n        #include <TargetConditionals.h>\n    #endif\n\n    #if defined(_WIN32) || defined(__SYMBIAN32__)\n        #define SK_BUILD_FOR_WIN\n    #elif defined(ANDROID) || defined(__ANDROID__)\n        #define SK_BUILD_FOR_ANDROID\n    #elif defined(__EMSCRIPTEN__)\n        // WASM toolchains expose a Unix-like compilation environment, but it is\n        // not Unix (e.g. posix signals are not supported).\n        #define SK_BUILD_FOR_WASM\n    #elif defined(linux) || defined(__linux) || defined(__FreeBSD__) || \\\n          defined(__OpenBSD__) || defined(__sun) || defined(__NetBSD__) || \\\n          defined(__DragonFly__) || defined(__Fuchsia__) || \\\n          defined(__GLIBC__) || defined(__GNU__) || defined(__unix__)\n        #define SK_BUILD_FOR_UNIX\n    #elif TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR\n        #define SK_BUILD_FOR_IOS\n    #else\n        #define SK_BUILD_FOR_MAC\n    #endif\n#endif // end SK_BUILD_FOR_*\n\n\n#if defined(SK_BUILD_FOR_WIN) && !defined(__clang__)\n    #if !defined(SK_RESTRICT)\n        #define SK_RESTRICT __restrict\n    #endif\n#endif\n\n#if !defined(SK_RESTRICT)\n    #define SK_RESTRICT __restrict__\n#endif\n\n#if !defined(SK_CPU_BENDIAN) && !defined(SK_CPU_LENDIAN)\n    #if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)\n        #define SK_CPU_BENDIAN\n    #elif defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)\n        #define SK_CPU_LENDIAN\n    #elif defined(__sparc) || defined(__sparc__) || \\\n      defined(_POWER) || defined(__powerpc__) || \\\n      defined(__ppc__) || defined(__hppa) || \\\n      defined(__PPC__) || defined(__PPC64__) || \\\n      defined(_MIPSEB) || defined(__ARMEB__) || \\\n      defined(__s390__) || \\\n      (defined(__sh__) && defined(__BIG_ENDIAN__)) || \\\n      (defined(__ia64) && defined(__BIG_ENDIAN__))\n         #define SK_CPU_BENDIAN\n    #else\n        #define SK_CPU_LENDIAN\n    #endif\n#endif\n\n#if defined(__i386) || defined(_M_IX86) ||  defined(__x86_64__) || defined(_M_X64)\n  #define SK_CPU_X86 1\n#endif\n\n#if defined(__loongarch__) || defined (__loongarch64)\n  #define SK_CPU_LOONGARCH 1\n#endif\n\n#if defined(__powerpc__) || defined (__powerpc64__)\n  #define SK_CPU_PPC 1\n#endif\n\n/**\n *  SK_CPU_X64_LEVEL\n *\n *  If defined, SK_CPU_X64_LEVEL should be set to the highest supported level.\n *  On non-Intel, non-AMD CPUs this should be undefined.\n */\n#define SK_CPU_X64_LEVEL_SSE1     10\n#define SK_CPU_X64_LEVEL_SSE2     20\n#define SK_CPU_X64_LEVEL_SSE3     30\n#define SK_CPU_X64_LEVEL_SSSE3    31\n#define SK_CPU_X64_LEVEL_SSE41    41\n#define SK_CPU_X64_LEVEL_SSE42    42\n#define SK_CPU_X64_LEVEL_AVX      51\n#define SK_CPU_X64_LEVEL_AVX2     52\n#define SK_CPU_X64_LEVEL_ML4      60\n\n/**\n *  SK_CPU_LSX_LEVEL\n *\n *  If defined, SK_CPU_LSX_LEVEL should be set to the highest supported level.\n *  On non-loongarch CPU this should be undefined.\n */\n#define SK_CPU_LSX_LEVEL_LSX      10\n#define SK_CPU_LSX_LEVEL_LASX     20\n\n// TODO(kjlubick) clean up these checks\n\n// Are we in GCC/Clang?\n#ifndef SK_CPU_X64_LEVEL\n    // These checks must be done in descending order to ensure we set the highest\n    // available SSE level.\n    #if defined(__AVX512F__) && defined(__AVX512DQ__) && defined(__AVX512CD__) && \\\n        defined(__AVX512BW__) && defined(__AVX512VL__)\n        #define SK_CPU_X64_LEVEL    SK_CPU_X64_LEVEL_ML4\n    #elif defined(__AVX2__)\n        #define SK_CPU_X64_LEVEL    SK_CPU_X64_LEVEL_AVX2\n    #elif defined(__AVX__)\n        #define SK_CPU_X64_LEVEL    SK_CPU_X64_LEVEL_AVX\n    #elif defined(__SSE4_2__)\n        #define SK_CPU_X64_LEVEL    SK_CPU_X64_LEVEL_SSE42\n    #elif defined(__SSE4_1__)\n        #define SK_CPU_X64_LEVEL    SK_CPU_X64_LEVEL_SSE41\n    #elif defined(__SSSE3__)\n        #define SK_CPU_X64_LEVEL    SK_CPU_X64_LEVEL_SSSE3\n    #elif defined(__SSE3__)\n        #define SK_CPU_X64_LEVEL    SK_CPU_X64_LEVEL_SSE3\n    #elif defined(__SSE2__)\n        #define SK_CPU_X64_LEVEL    SK_CPU_X64_LEVEL_SSE2\n    #endif\n#endif\n\n#ifndef SK_CPU_LSX_LEVEL\n    #if defined(__loongarch_asx)\n        #define SK_CPU_LSX_LEVEL    SK_CPU_LSX_LEVEL_LASX\n    #elif defined(__loongarch_sx)\n        #define SK_CPU_LSX_LEVEL    SK_CPU_LSX_LEVEL_LSX\n    #endif\n#endif\n\n// Are we in VisualStudio?\n#ifndef SK_CPU_X64_LEVEL\n    // These checks must be done in descending order to ensure we set the highest\n    // available SSE level. 64-bit intel guarantees at least SSE2 support.\n    #if defined(__AVX512F__) && defined(__AVX512DQ__) && defined(__AVX512CD__) && \\\n        defined(__AVX512BW__) && defined(__AVX512VL__)\n        #define SK_CPU_X64_LEVEL        SK_CPU_X64_LEVEL_ML4\n    #elif defined(__AVX2__)\n        #define SK_CPU_X64_LEVEL        SK_CPU_X64_LEVEL_AVX2\n    #elif defined(__AVX__)\n        #define SK_CPU_X64_LEVEL        SK_CPU_X64_LEVEL_AVX\n    #elif defined(_M_X64) || defined(_M_AMD64)\n        #define SK_CPU_X64_LEVEL        SK_CPU_X64_LEVEL_SSE2\n    #elif defined(_M_IX86_FP)\n        #if _M_IX86_FP >= 2\n            #define SK_CPU_X64_LEVEL    SK_CPU_X64_LEVEL_SSE2\n        #elif _M_IX86_FP == 1\n            #define SK_CPU_X64_LEVEL    SK_CPU_X64_LEVEL_SSE1\n        #endif\n    #endif\n#endif\n\n// ARM defines\n#if defined(__arm__) && (!defined(__APPLE__) || !TARGET_IPHONE_SIMULATOR)\n    #define SK_CPU_ARM32\n#elif defined(__aarch64__)\n    #define SK_CPU_ARM64\n#endif\n\n// All 64-bit ARM chips have NEON.  Many 32-bit ARM chips do too.\n#if !defined(SK_ARM_HAS_NEON) && defined(__ARM_NEON)\n    #define SK_ARM_HAS_NEON\n#endif\n\n#endif // SkFeatures_DEFINED\n"
+    },
+    "e24518c884b871f2e0a243739028d489f690449f9a5470a78dbc562eda939727": {
+      "text": "/*\n * Copyright 2006 The Android Open Source Project\n *\n * Use of this source code is governed by a BSD-style license that can be\n * found in the LICENSE file.\n */\n\n#ifndef SkUserConfig_DEFINED\n#define SkUserConfig_DEFINED\n\n/*  SkTypes.h, the root of the public header files, includes this file\n    SkUserConfig.h after first initializing certain Skia defines, letting\n    this file change or augment those flags.\n\n    Below are optional defines that add, subtract, or change default behavior\n    in Skia. Your port can locally edit this file to enable/disable flags as\n    you choose, or these can be declared on your command line (i.e. -Dfoo).\n\n    By default, this #include file will always default to having all the flags\n    commented out, so including it will have no effect.\n*/\n\n///////////////////////////////////////////////////////////////////////////////\n\n/*  Skia has lots of debug-only code. Often this is just null checks or other\n    parameter checking, but sometimes it can be quite intrusive (e.g. check that\n    each 32bit pixel is in premultiplied form). This code can be very useful\n    during development, but will slow things down in a shipping product.\n\n    By default, these mutually exclusive flags are defined in SkTypes.h,\n    based on the presence or absence of NDEBUG, but that decision can be changed\n    here.\n*/\n//#define SK_DEBUG\n//#define SK_RELEASE\n\n/*  To write debug messages to a console, skia will call SkDebugf(...) following\n    printf conventions (e.g. const char* format, ...). If you want to redirect\n    this to something other than printf, define yours here\n*/\n//#define SkDebugf(...)  MyFunction(__VA_ARGS__)\n\n/* Skia has both debug and release asserts. When an assert fails SK_ABORT will\n   be used to report an abort message. SK_ABORT is expected not to return. Skia\n   provides a default implementation which will print the message with SkDebugf\n   and then call sk_abort_no_print.\n*/\n//#define SK_ABORT(message, ...)\n\n/* To specify a different default font strike cache memory limit, define this. If this is\n   undefined, skia will use a built-in value.\n*/\n//#define SK_DEFAULT_FONT_CACHE_LIMIT   (1024 * 1024)\n\n/* To specify a different default font strike cache count limit, define this. If this is\n   undefined, skia will use a built-in value.\n*/\n// #define SK_DEFAULT_FONT_CACHE_COUNT_LIMIT   2048\n\n/* To specify the default size of the image cache, undefine this and set it to\n   the desired value (in bytes). SkGraphics.h as a runtime API to set this\n   value as well. If this is undefined, a built-in value will be used.\n*/\n//#define SK_DEFAULT_IMAGE_CACHE_LIMIT (1024 * 1024)\n\n/*  Define this to set the upper limit for text to support LCD. Values that\n    are very large increase the cost in the font cache and draw slower, without\n    improving readability. If this is undefined, Skia will use its default\n    value (e.g. 48)\n*/\n//#define SK_MAX_SIZE_FOR_LCDTEXT     48\n\n/*  Change the kN32_SkColorType ordering to BGRA to work in X windows.\n*/\n//#define SK_R32_SHIFT    16\n\n/*  This controls how much space should be pre-allocated in an SkCanvas object\n    to store the SkMatrix and clip via calls to SkCanvas::save() (and balanced with\n    SkCanvas::restore()).\n*/\n//#define SK_CANVAS_SAVE_RESTORE_PREALLOC_COUNT 32\n\n/* Skia makes use of histogram logging macros to trace the frequency of\n   events. By default, Skia provides no-op versions of these macros.\n   Skia consumers can provide their own definitions of these macros to\n   integrate with their histogram collection backend.\n*/\n//#define SK_HISTOGRAM_BOOLEAN(name, sample)\n//#define SK_HISTOGRAM_ENUMERATION(name, sampleEnum, enumSize)\n//#define SK_HISTOGRAM_EXACT_LINEAR(name, sample, valueMax)\n//#define SK_HISTOGRAM_CUSTOM_EXACT_LINEAR(name, sample, value_min, value_max, bucket_count)\n//#define SK_HISTOGRAM_MEMORY_KB(name, sample)\n//#define SK_HISTOGRAM_CUSTOM_COUNTS(name, sample, countMin, countMax, bucketCount)\n//#define SK_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(name, sampleUSec, minUSec, maxUSec, bucketCount)\n\n/*\n * Skia can provide extensive logging of Graphite Pipeline lifetimes.\n */\n//#define SK_PIPELINE_LIFETIME_LOGGING\n\n// To use smaller but slower mipmap builder\n//#define SK_USE_DRAWING_MIPMAP_DOWNSAMPLER\n\n/* Skia tries to make use of some non-standard C++ language extensions.\n   By default, Skia provides msvc and clang/gcc versions of these macros.\n   Skia consumers can provide their own definitions of these macros to\n   integrate with their own compilers and build system.\n*/\n//#define SK_ALWAYS_INLINE inline __attribute__((always_inline))\n//#define SK_NEVER_INLINE __attribute__((noinline))\n//#define SK_PRINTF_LIKE(A, B) __attribute__((format(printf, (A), (B))))\n//#define SK_NO_SANITIZE(A) __attribute__((no_sanitize(A)))\n//#define SK_TRIVIAL_ABI [[clang::trivial_abi]]\n\n/*\n * If compiling Skia as a DLL, public APIs should be exported. Skia will set\n * SK_API to something sensible for Clang and MSVC, but if clients need to\n * customize it for their build system or compiler, they may.\n * If a client needs to use SK_API (e.g. overriding SK_ABORT), then they\n * *must* define their own, the default will not be defined prior to loading\n * this file.\n */\n//#define SK_API __declspec(dllexport)\n\n/*\n * If using DNG support, set the version of the dng_sdk being compiled against here\n * following the versioning scheme of dng_tag_valus.h\n * eg, DNG 1.4 is 0x01040000, DNG 1.7.1 is 0x01070100, etc...\n * If unspecified, DNG SDK 1.4 is assumed\n */\n// #define SK_DNG_VERSION 0x01040000\n\n/*\n * By default, Skia uses SIMD operations for many internal calculations, especially\n * for the CPU backend. These defines can be set to disable SIMD in SkVx and\n * SkRasterPipeline, respectively.\n */\n// #define SKVX_DISABLE_SIMD\n// #define SKRP_CPU_SCALAR\n\n#endif\n"
+    },
+    "bb727662444f2bc2d2614f814d199b1ab68cd771890e39d3228f3ffd10d5a6e4": {
+      "sections": [
+        {
+          "line": 340,
+          "text": "  'skia_revision': '4f574af2444846ceca4d277a8095c5d4229d175f',\n"
+        }
+      ]
+    },
+    "a4a8ff24aa36858beadc7cfc3270759d8528bdf1175883d88e950c7b01db8736": {
+      "sections": [
+        {
+          "line": 88,
+          "text": "  [[nodiscard]] static String FromUtf8(base::span<const uint8_t>);\n  [[nodiscard]] static String FromUtf8(std::string_view s) {\n    return FromUtf8(base::as_byte_span(s));\n  }\n"
+        },
+        {
+          "line": 148,
+          "text": "  String() = default;\n"
+        },
+        {
+          "line": 211,
+          "text": "  bool empty() const { return !impl_ || !impl_->length(); }\n"
+        }
+      ]
+    },
+    "4954be9b443535baabdba881efbccbafa89b40e0253ef0a0c283b1340fb7ec3a": {
+      "sections": [
+        {
+          "line": 603,
+          "text": "constexpr std::array<uint8_t, 4u> U32ToBigEndian(uint32_t val) {\n  return numerics_internal::ToLittleEndian(std::byteswap(val));\n}\n"
+        },
+        {
+          "line": 614,
+          "text": "constexpr std::array<uint8_t, 8u> U64ToBigEndian(uint64_t val) {\n  return numerics_internal::ToLittleEndian(std::byteswap(val));\n}\n"
+        }
+      ]
+    },
+    "7bdfc059f62ce5072db54f3c85a09cc5a149b240752dfa9053515fe25d32900d": {
+      "text": "/*\n * Copyright 2026 Google LLC\n *\n * Use of this source code is governed by a BSD-style license that can be\n * found in the LICENSE file.\n */\n\n#ifndef SkLog_DEFINED\n#define SkLog_DEFINED\n\n#include <cstdarg>\n\n#include \"include/private/SkAPI.h\"\n#include \"include/private/SkAttributes.h\"\n#include \"include/private/SkLoadUserConfig.h\" // IWYU pragma: keep\n#include \"include/private/SkLogPriority.h\"\n\n#if !defined(SkLog)\n// Implemented per platform.\nvoid SkLogVAList(SkLogPriority priority, const char format[], va_list args) SK_PRINTF_LIKE(2, 0);\nvoid SK_SPI SkLog(SkLogPriority priority, const char format[], ...) SK_PRINTF_LIKE(2, 3);\n#endif\n\n#if !defined(SKIA_LOWEST_ACTIVE_LOG_PRIORITY)\n#ifdef SK_DEBUG\n    #define SKIA_LOWEST_ACTIVE_LOG_PRIORITY SkLogPriority::kDebug\n#else\n    #define SKIA_LOWEST_ACTIVE_LOG_PRIORITY SkLogPriority::kInfo\n#endif\n#endif\n\n#define SKIA_LOG(priority, fmt, ...)                                           \\\n    do {                                                                       \\\n        if constexpr (priority <= SKIA_LOWEST_ACTIVE_LOG_PRIORITY) {           \\\n            SkLog(priority, \"[skia] \" fmt \"\\n\", ##__VA_ARGS__);                \\\n        }                                                                      \\\n    } while (0)\n\n#define SKIA_LOG_E(fmt, ...) SKIA_LOG(SkLogPriority::kError, \"** ERROR ** \" fmt, ##__VA_ARGS__)\n#define SKIA_LOG_W(fmt, ...) SKIA_LOG(SkLogPriority::kWarning, \"WARNING - \" fmt, ##__VA_ARGS__)\n#define SKIA_LOG_I(fmt, ...) SKIA_LOG(SkLogPriority::kInfo, fmt, ##__VA_ARGS__)\n#define SKIA_LOG_D(fmt, ...) SKIA_LOG(SkLogPriority::kDebug, fmt, ##__VA_ARGS__)\n\n#endif // SkLog_DEFINED\n"
+    }
+  }
+}

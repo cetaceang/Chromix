@@ -10,16 +10,14 @@ diff --git a/third_party/blink/renderer/modules/global_privacy_control/navigator
  
  #include "third_party/blink/public/common/global_privacy_control/global_privacy_control_util.h"
  #include "third_party/blink/renderer/core/execution_context/navigator_base.h"
-@@ -14,6 +16,12 @@
- namespace NavigatorGlobalPrivacyControl {
- 
- bool globalPrivacyControl(NavigatorBase& navigator) {
+@@ -17,3 +19,9 @@
+-  return IsGlobalPrivacyControlEnabled();
 +  const std::string value =
 +      base::UxrConfig::GetInstance().Get("uxr-global-privacy-control");
 +  if (value == "true" || value == "1")
 +    return true;
 +  if (value == "false" || value == "0")
 +    return false;
-   // TODO(crbug.com/40745270): Currently, the GPC signal is controlled by a
-   // feature flag, when a user facing setting is added, this should be modified
-   // to use frame cached value.
++  return IsGlobalPrivacyControlEnabled();
+ }
+ 

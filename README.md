@@ -72,7 +72,7 @@ The [backend policies](docs/backend-policy.md) make shared native GPU behavior
 the ordinary default and add optional graph audio isolation, restricted font
 pools, codec restrictions, effective CSS/input preferences and clock resolution.
 New acceptance probes cover these policies, TLS resumption and owned-loopback H3.
-The 191-patch stack still requires matching native browser acceptance.
+The 213-patch stack still requires matching native browser acceptance.
 
 The GPU pool contains Windows/Linux/macOS identity templates, not a measured
 full-device dataset. Screen/layout, font provenance, CPU/memory capabilities,
@@ -120,14 +120,21 @@ current availability; this transition does not require another Windows build.
 
 | Browser version | Platform | Release |
 |---|---|---|
+| `153.0.8010.36` | Linux x64 / ARM64 | [`v153.0.8010.36`](https://github.com/xiaozhou26/Chromix/releases/tag/v153.0.8010.36) |
 | `152.0.7977.82` | Windows x64; other platforms pending | [`v152.0.7977.82`](https://github.com/xiaozhou26/Chromix/releases/tag/v152.0.7977.82) |
 | `152.0.7977.75` | Windows x64 | [`v152.0.7977.75`](https://github.com/xiaozhou26/Chromix/releases/tag/v152.0.7977.75) |
 | `151.0.7922.173` | Windows x64 | [`v151.0.7922.173`](https://github.com/xiaozhou26/Chromix/releases/tag/v151.0.7922.173) |
 
-The source tree is pinned to Chromium `152.0.7977.82`; binary releases can lag
-behind that pin. Machine-readable source pins are in
-`build/ungoogled-revisions.psd1`; legacy version files remain available for
-tooling compatibility. SDK package versions and release channels are unchanged.
+The shared source baseline and Linux/Windows targets are pinned to Chromium
+`153.0.8010.36`. macOS remains explicitly pinned to `152.0.7977.82` because
+upstream has no 153 platform tag or branch as of 2026-09-17. The original Linux
+x64/ARM64 packages are published as `Chromix 153.0.8010.36` and marked GitHub
+Latest. This merged 213-patch source stack has not completed a new browser build;
+the published Linux packages do not establish native acceptance for this stack.
+Machine-readable source pins are in `build/ungoogled-revisions.psd1`, with
+`CHROMIUM_MACOS_VERSION` selecting the macOS exception. Legacy version files
+remain available for tooling compatibility. SDK package versions and release
+channels are unchanged.
 
 ### Verify and run on Windows
 
@@ -366,15 +373,16 @@ Chromix packages Windows x64, Linux x64/arm64, and macOS x64/arm64. The pinned l
 
 | Layer | Pin |
 |---|---|
-| Chromium | `152.0.7977.82` |
-| ungoogled-chromium | `152.0.7977.82-1` |
-| ungoogled-chromium-windows | `152.0.7977.82-1.1` |
-| ungoogled-chromium-portablelinux | `152.0.7977.82-1` |
+| Chromium (Linux/Windows) | `153.0.8010.36` |
+| ungoogled-chromium (Linux/Windows) | `153.0.8010.36-1` |
+| ungoogled-chromium-windows | `153.0.8010.36-1.1` |
+| ungoogled-chromium-portablelinux | `153.0.8010.36-1` |
+| Chromium / ungoogled-chromium (macOS override) | `152.0.7977.82` / `152.0.7977.82-1` |
 | ungoogled-chromium-macos | `152.0.7977.82-1.1` |
-| Chromix | 148 patches listed in `patches/series` |
+| Chromix | 213 patches listed in `patches/series` |
 
 Requirements include Visual Studio 2022 with Desktop development with C++, the
-Windows 11 SDK 10.0.26100 Debugging Tools, Python 3, Git, PowerShell 7, 7-Zip,
+Windows 11 SDK 10.0.28000.0 headers, libraries and Debugging Tools, Python 3, Git, PowerShell 7, 7-Zip,
 and roughly 120 GB of free disk space for Windows. Linux additionally needs
 Chromium's Debian/Ubuntu build dependencies, Node.js, Go, and Ninja. macOS
 needs Xcode, the command-line tools, Node.js, Ninja, and `zip` for packaging.

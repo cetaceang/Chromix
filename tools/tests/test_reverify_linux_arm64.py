@@ -1,0 +1,637 @@
+"""Pinned prebuilt-only recovery fixtures; no native runtime claim or compilation."""
+from contextlib import nullcontext
+from copy import deepcopy
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import socket
+import stat
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+import zipfile
+
+import pytest
+import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import download_posix_snapshot as download
+import reverify_linux_arm64 as recovery
+from test_download_posix_snapshot import HTTPSFixture, Response, SIGNED, TOKEN
+
+
+def dispatch():
+    return {"build_mode": "verify", "resume_run_id": str(recovery.DONOR_RUN), "resume_attempt": "1",
+            "resume_tree_stage": "final", "resume_artifact_ids": "10465215017,10464950664",
+            "compile_jobs": "auto", "build_profile": "fast", "use_upstream_cache": True}
+
+
+def test_explicit_final_dispatch_accepts_either_id_order():
+    inputs = dispatch()
+    recovery.dispatch_guard(inputs, "workflow_dispatch", recovery.REPOSITORY)
+    inputs["resume_artifact_ids"] = "10464950664,10465215017"
+    recovery.dispatch_guard(inputs, "workflow_dispatch", recovery.REPOSITORY)
+
+
+@pytest.mark.parametrize("key,value", [
+    ("build_mode", "staged"), ("build_mode", True), ("resume_run_id", recovery.DONOR_RUN),
+    ("resume_run_id", "1"), ("resume_attempt", True), ("resume_attempt", 1), ("resume_attempt", "2"),
+    ("resume_tree_stage", "7"), ("resume_tree_stage", "1"), ("resume_tree_stage", ""),
+    ("compile_jobs", "2"), ("build_profile", "release"), ("use_upstream_cache", "true"),
+    ("use_upstream_cache", 1), ("use_upstream_cache", False), ("resume_artifact_ids", "10465215017"),
+    ("resume_artifact_ids", "10465215017,10465215017"),
+    ("resume_artifact_ids", "10465215017,10464950664,10464790799"),
+    ("resume_artifact_ids", "10465215017,10464492257"), ("resume_artifact_ids", [10465215017,10464950664]),
+])
+def test_dispatch_type_and_checkpoint_guards(key, value):
+    inputs = dispatch()
+    inputs[key] = value
+    with pytest.raises(ValueError):
+        recovery.dispatch_guard(inputs, "workflow_dispatch", recovery.REPOSITORY)
+
+
+@pytest.mark.parametrize("event,repo", [("push", recovery.REPOSITORY), ("workflow_dispatch", "fork/Chromix")])
+def test_dispatch_origin(event, repo):
+    with pytest.raises(ValueError):
+        recovery.dispatch_guard(dispatch(), event, repo)
+
+
+class MetadataFixture:
+    def __init__(self):
+        self.run = {"id": recovery.DONOR_RUN, "run_attempt": 1, "name": recovery.WORKFLOW,
+                    "path": recovery.WORKFLOW_PATH, "workflow_id": recovery.WORKFLOW_ID,
+                    "head_sha": recovery.DONOR_SHA, "head_branch": recovery.DONOR_BRANCH,
+                    "event": "workflow_dispatch", "status": "completed", "conclusion": "failure",
+                    "repository": {"full_name": recovery.REPOSITORY, "id": recovery.REPOSITORY_ID},
+                    "head_repository": {"full_name": recovery.REPOSITORY, "id": recovery.REPOSITORY_ID}}
+        self.attempt = deepcopy(self.run)
+        self.job = {"id": recovery.DONOR_JOB, "name": recovery.DONOR_JOB_NAME, "run_id": recovery.DONOR_RUN,
+                    "run_attempt": 1, "head_sha": recovery.DONOR_SHA, "head_branch": recovery.DONOR_BRANCH,
+                    "workflow_name": recovery.WORKFLOW, "status": "completed", "conclusion": "success",
+                    "started_at": "2026-09-16T14:58:28Z", "completed_at": "2026-09-16T19:16:41Z",
+                    "steps": [
+                        {"name": "Run stage 1", "status": "completed", "conclusion": "success",
+                         "started_at": "2026-09-16T15:07:13Z", "completed_at": "2026-09-16T19:16:02Z"},
+                        {"name": "Upload final bundle", "status": "completed", "conclusion": "success",
+                         "started_at": "2026-09-16T19:16:02Z", "completed_at": "2026-09-16T19:16:06Z"},
+                        {"name": "Upload fingerprint source receipt", "status": "completed", "conclusion": "success",
+                         "started_at": "2026-09-16T19:16:08Z", "completed_at": "2026-09-16T19:16:09Z"}]}
+        self.jobs = [self.job]
+        self.artifacts = []
+        for item, created in zip(recovery.ARTIFACTS, ("2026-09-16T19:16:06Z", "2026-09-16T19:16:09Z")):
+            self.artifacts.append({**item, "created_at": created, "updated_at": created,
+                "workflow_run": {"id": recovery.DONOR_RUN, "head_sha": recovery.DONOR_SHA,
+                                 "head_branch": recovery.DONOR_BRANCH, "repository_id": recovery.REPOSITORY_ID,
+                                 "head_repository_id": recovery.REPOSITORY_ID}})
+
+    def get(self, path):
+        return self.attempt if path.endswith("/attempts/1") else self.run
+
+    def items(self, path, key):
+        return self.jobs if key == "jobs" else self.artifacts
+
+
+def test_successful_stage_from_overall_failed_run_is_allowed():
+    report = recovery.validate_metadata(MetadataFixture())
+    assert report["run_conclusion"] == "failure"
+    assert report["source_sha"] == recovery.DONOR_SHA
+    assert report["job_id"] == recovery.DONOR_JOB
+    assert len(report["artifacts"]) == 2
+
+
+@pytest.mark.parametrize("target,key,value", [
+    ("run", "run_attempt", True), ("run", "run_attempt", 2), ("attempt", "run_attempt", 1.0),
+    ("attempt", "head_sha", "a" * 40), ("run", "name", "build-linux-x64"),
+    ("run", "path", ".github/workflows/other.yml"), ("run", "workflow_id", 1),
+    ("run", "event", "push"), ("run", "head_branch", "main"), ("run", "status", "in_progress"),
+    ("run", "conclusion", "cancelled"), ("run", "repository", {"full_name": "fork/Chromix", "id": 1}),
+    ("attempt", "head_repository", {"full_name": recovery.REPOSITORY, "id": True}),
+    ("job", "run_attempt", True), ("job", "run_id", 1), ("job", "head_sha", "a" * 40),
+    ("job", "head_branch", "main"), ("job", "conclusion", "failure"), ("job", "status", "queued"),
+])
+def test_metadata_origin_attempt_and_success_are_strict(target, key, value):
+    fixture = MetadataFixture()
+    getattr(fixture, target)[key] = value
+    with pytest.raises(ValueError):
+        recovery.validate_metadata(fixture)
+
+
+@pytest.mark.parametrize("index", range(3))
+@pytest.mark.parametrize("conclusion", ["skipped", "failure", None])
+def test_each_build_and_upload_step_must_succeed(index, conclusion):
+    fixture = MetadataFixture()
+    fixture.job["steps"][index]["conclusion"] = conclusion
+    with pytest.raises(ValueError):
+        recovery.validate_metadata(fixture)
+
+
+@pytest.mark.parametrize("key,value", [
+    ("id", 1), ("size_in_bytes", True), ("size_in_bytes", 18226.0), ("expired", 0), ("expired", True),
+    ("digest", "sha256:" + "0" * 64), ("created_at", "2026-09-16T19:16:07Z"),
+    ("updated_at", "2026-09-16T19:16:10Z"), ("workflow_run", {}),
+])
+def test_source_artifact_pin_and_upload_window(key, value):
+    fixture = MetadataFixture()
+    fixture.artifacts[1][key] = value
+    with pytest.raises(ValueError):
+        recovery.validate_metadata(fixture)
+
+
+@pytest.mark.parametrize("target", ["artifacts", "jobs", "steps"])
+def test_ambiguous_metadata_rejected(target):
+    fixture = MetadataFixture()
+    values = fixture.job["steps"] if target == "steps" else getattr(fixture, target)
+    values.append(deepcopy(values[0]))
+    with pytest.raises(ValueError):
+        recovery.validate_metadata(fixture)
+
+
+def opener(client, responses):
+    fixture = HTTPSFixture(responses)
+    client.opener = recovery.urllib.request.build_opener(
+        recovery.urllib.request.ProxyHandler({}), download.NoRedirect(), fixture)
+    return fixture
+
+
+def test_metadata_redirect_is_never_followed_or_exposed():
+    client = recovery.Metadata(TOKEN)
+    fixture = opener(client, [Response(status=302, headers={"Location": SIGNED})])
+    with pytest.raises(ValueError, match="metadata_request_failed") as error:
+        client.get(f"/actions/runs/{recovery.DONOR_RUN}")
+    assert SIGNED not in str(error.value) and TOKEN not in str(error.value)
+    assert len(fixture.requests) == 1
+
+
+def test_reused_download_drops_authorization_and_checks_digest_size(tmp_path):
+    data = b"outer artifact fixture"
+    client = recovery.Metadata(TOKEN)
+    fixture = opener(client, [Response(status=302, headers={"Location": SIGNED}), Response(data)])
+    artifact = {"id": 1, "size_in_bytes": len(data), "digest": "sha256:" + hashlib.sha256(data).hexdigest()}
+    record = {"attempts": []}
+    path = client.download(recovery.REPOSITORY, artifact, tmp_path, time.monotonic() + 60, record)
+    assert path.read_bytes() == data
+    assert fixture.requests[0].get_header("Authorization") == "Bearer " + TOKEN
+    assert fixture.requests[1].get_header("Authorization") is None
+    assert record["attempts"][0]["status"] == "success"
+
+
+@pytest.mark.parametrize("mismatch", ["size_in_bytes", "digest"])
+def test_download_integrity_failure_never_publishes(tmp_path, mismatch):
+    data = b"wrong outer artifact"
+    client = recovery.Metadata(TOKEN)
+    opener(client, [Response(data)])
+    artifact = {"id": 1, "size_in_bytes": len(data), "digest": "sha256:" + hashlib.sha256(data).hexdigest()}
+    artifact[mismatch] = len(data) + 1 if mismatch == "size_in_bytes" else "sha256:" + "0" * 64
+    with pytest.raises(ValueError):
+        client.download(recovery.REPOSITORY, artifact, tmp_path, time.monotonic() + 60, {"attempts": []})
+    assert not list(tmp_path.iterdir())
+
+
+def make_zip(path, entries):
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, mode, data in entries:
+            info = zipfile.ZipInfo(name)
+            info.external_attr = mode << 16
+            archive.writestr(info, data)
+
+
+@pytest.mark.parametrize("name,mode", [("../source-final.json", stat.S_IFREG),
+    ("/source-final.json", stat.S_IFREG), ("source-final.json", stat.S_IFLNK),
+    ("source-final.json", stat.S_IFIFO), ("source-final.json\x00bad", stat.S_IFREG)])
+def test_outer_paths_and_types_are_rejected(tmp_path, name, mode):
+    archive = tmp_path / "outer.zip"
+    make_zip(archive, [(name, mode, b"receipt")])
+    if "\x00" in name:
+        data = archive.read_bytes().replace(b"source-final.json", b"source-final\x00json")
+        archive.write_bytes(data)
+    with pytest.raises(ValueError):
+        recovery.extract_outer(archive, tmp_path / "out", {"source-final.json": 100})
+
+
+def test_outer_crc_failure(tmp_path):
+    archive = tmp_path / "outer.zip"
+    make_zip(archive, [("source-final.json", stat.S_IFREG, b"receipt-original")])
+    archive.write_bytes(archive.read_bytes().replace(b"receipt-original", b"receipt-corrupt!"))
+    with pytest.raises(zipfile.BadZipFile):
+        recovery.extract_outer(archive, tmp_path / "out", {"source-final.json": 100})
+
+
+def elf(machine=183):
+    return b"\x7fELF\x02\x01\x01" + b"\0" * 9 + struct.pack("<HHIQQQIHHHHHH", 3, machine, 1,
+                                                            0, 0, 0, 0, 64, 0, 0, 0, 0, 0)
+
+
+def bundle_entries(machine=183):
+    return [("chromix/chromix", stat.S_IFREG | 0o755, b"#!/bin/sh\n"),
+            *(("chromix/" + name, stat.S_IFREG | 0o755, elf(machine))
+              for name in ("chrome", "chrome-sandbox", "chrome_crashpad_handler"))]
+
+
+def test_inner_extract_preserves_executable_modes_and_checks_native_elf(tmp_path):
+    archive = tmp_path / "inner.zip"
+    make_zip(archive, bundle_entries())
+    report = recovery.extract_bundle(archive, tmp_path / "bundle")
+    assert report["static"]["status"] == "passed"
+    assert report["static"]["elf_count"] == 3
+    assert report["runtime"]["status"] == "not_run"
+    make_zip(archive, bundle_entries(62))
+    with pytest.raises(ValueError, match="architecture"):
+        recovery.extract_bundle(archive, tmp_path / "wrong")
+
+
+@pytest.mark.parametrize("entry", [("chromix/../escape", stat.S_IFREG, b"unsafe"),
+    ("chromix/link", stat.S_IFLNK, b"../../escape"), ("chromix/chrome", stat.S_IFREG, b"duplicate")])
+def test_inner_safe_extraction(tmp_path, entry):
+    archive = tmp_path / "inner.zip"
+    with pytest.warns(UserWarning) if entry[0] == "chromix/chrome" else nullcontext():
+        make_zip(archive, [*bundle_entries(), entry])
+    with pytest.raises(ValueError):
+        recovery.extract_bundle(archive, tmp_path / "bundle")
+
+
+@pytest.mark.parametrize("mutation", ["valid", "duplicate", "wrong_name", "wrong_digest", "corrupt", "size"])
+def test_inner_checksum_manifest_is_exact_and_hashes_actual_zip(tmp_path, monkeypatch, mutation):
+    inner = tmp_path / "chromix-linux-arm64.zip"
+    inner.write_bytes(b"pinned inner ZIP bytes")
+    digest = recovery.sha256(inner)
+    monkeypatch.setattr(recovery, "INNER_SHA", digest)
+    monkeypatch.setattr(recovery, "INNER_SIZE", inner.stat().st_size)
+    line = digest + "  chromix-linux-arm64.zip\n"
+    if mutation == "duplicate":
+        line += line
+    elif mutation == "wrong_name":
+        line = line.replace("chromix-linux-arm64.zip", "../chromix-linux-arm64.zip")
+    elif mutation == "wrong_digest":
+        line = "0" * 64 + line[64:]
+    elif mutation == "corrupt":
+        inner.write_bytes(b"changed inner ZIP data")
+    elif mutation == "size":
+        inner.write_bytes(b"short")
+    (tmp_path / "SHA256SUMS").write_text(line)
+    if mutation == "valid":
+        assert recovery.verify_inner(tmp_path) == inner
+    else:
+        with pytest.raises(ValueError):
+            recovery.verify_inner(tmp_path)
+
+
+def test_inner_crc_failure(tmp_path):
+    archive = tmp_path / "inner.zip"
+    make_zip(archive, bundle_entries())
+    archive.write_bytes(archive.read_bytes().replace(b"#!/bin/sh\n", b"#!/bin/xx\n"))
+    with pytest.raises(ValueError, match="inner_crc_failure"):
+        recovery.extract_bundle(archive, tmp_path / "bundle")
+
+
+OLD187_DONOR = Path(__file__).with_name("fixtures") / "old187donor"
+
+
+def donor_receipt():
+    path = OLD187_DONOR / "source-final.json"
+    assert path.stat().st_size == recovery.SOURCE_SIZE == 57287
+    assert recovery.sha256(path) == recovery.SOURCE_SHA == (
+        "98f04f0b2775528ef79b6daf1f8cffeb0076f8523a5d23452d9e0455971453d5")
+    data = json.loads(path.read_text())
+    series = data["identity"]["series"]
+    assert data["patch_count"] == len(series["patches"]) == 187
+    assert series["sha256"] == recovery.SERIES_SHA == (
+        "e8063741e4dcdc4573d269b1ddf55e3ccf9e7e49b503cad90155eda6215f83b9")
+    return data
+
+
+def source_fixture(tmp_path, monkeypatch):
+    """Original donor receipt with an isolated, metadata-only stack projection."""
+    data = donor_receipt()
+    series = data["identity"]["series"]
+    inputs = {"series_sha256": series["sha256"], "patches": deepcopy(series["patches"])}
+    entries = json.loads((OLD187_DONOR / "patch-entries.json").read_text())
+    assert list(entries) == [patch["path"] for patch in inputs["patches"]]
+    # validate_source consumes names and targets, not transformed patch bytes.
+    patches = [(name, b"", [tuple(entry) for entry in targets]) for name, targets in entries.items()]
+    assert len(patches) == 187
+    assert {entry[0] for _, _, targets in patches for entry in targets} == set(data["outputs"])
+    assert len(data["outputs"]) == 151
+    repo = tmp_path / "old187-repo"
+    lite = data["identity"]["lite"]
+    shutil.copytree(OLD187_DONOR / "lite-tarball-files", repo / lite["path"])
+    for item in lite["files"]:
+        target = repo / lite["path"] / item["path"]
+        assert recovery.sha256(target) == item["sha256"]
+        target.chmod(item["mode"])
+    # Synthetic version files exercise the real pin loader without live checkout inputs.
+    pins = {"ChromiumVersion": "153.0.8010.36", "UngoogledVersion": "153.0.8010.36-1",
+            "UngoogledCommit": "a" * 40, "UngoogledLinuxVersion": "153.0.8010.36-1",
+            "UngoogledLinuxCommit": "b" * 40}
+    (repo / "build/ungoogled-revisions.psd1").write_text(
+        "@{\n" + "".join(f'  {key} = "{value}"\n' for key, value in pins.items()) + "}\n")
+    (repo / "CHROMIUM_VERSION").write_text("153.0.8010.36\n")
+
+    def load_donor_stack(root):
+        assert root == repo
+        return deepcopy((inputs, patches))
+
+    monkeypatch.setattr(recovery, "load_stack", load_donor_stack)
+    path = tmp_path / "source-final.json"
+    shutil.copyfile(OLD187_DONOR / "source-final.json", path)
+    return path, data, repo
+
+
+def test_frozen_187_donor_source_stack_and_exact_target_coverage(tmp_path, monkeypatch):
+    path, _, repo = source_fixture(tmp_path, monkeypatch)
+    result = recovery.validate_source(path, repo)
+    assert result["patch_count"] == 187
+    assert result["series_sha256"] == recovery.SERIES_SHA
+    assert result["sha256"] == recovery.SOURCE_SHA
+    assert result["check"] == "producer-receipt-only"
+    assert result["qualification"] == "local build provenance, not signed binary/source attestation"
+    assert result["donor_sha"] == recovery.DONOR_SHA
+
+
+def test_real_current_213_stack_cannot_reuse_187_donor_receipt():
+    donor_receipt()
+    inputs, patches = recovery.load_stack(recovery.REPO)
+    assert len(patches) == len(inputs["patches"]) == 213
+    assert inputs["series_sha256"] != recovery.SERIES_SHA
+    with pytest.raises(ValueError, match="^current_stack_not_pinned_187$"):
+        recovery.validate_source(OLD187_DONOR / "source-final.json")
+
+
+@pytest.mark.parametrize("change", ["count", "series"])
+def test_donor_stack_count_and_series_pin_are_independent(tmp_path, monkeypatch, change):
+    path, _, repo = source_fixture(tmp_path, monkeypatch)
+    assert recovery.validate_source(path, repo)["patch_count"] == 187
+    inputs, patches = recovery.load_stack(repo)
+    if change == "count":
+        patches.pop()
+    else:
+        inputs["series_sha256"] = "0" * 64
+    monkeypatch.setattr(recovery, "load_stack", lambda _: (inputs, patches))
+    with pytest.raises(ValueError, match="^current_stack_not_pinned_187$"):
+        recovery.validate_source(path, repo)
+
+
+@pytest.mark.parametrize("change,error", [
+    ("size", "file_size_mismatch"), ("digest", "file_digest_mismatch"),
+    ("symlink", "file_size_mismatch"), ("missing", "file_size_mismatch"),
+])
+def test_donor_receipt_bytes_remain_pinned(tmp_path, monkeypatch, change, error):
+    path, _, repo = source_fixture(tmp_path, monkeypatch)
+    assert recovery.validate_source(path, repo)["patch_count"] == 187
+    if change == "size":
+        path.write_bytes(path.read_bytes() + b" ")
+    elif change == "digest":
+        path.write_bytes(path.read_bytes().replace(b'"verified"', b'"modified"', 1))
+    elif change == "symlink":
+        target = path.with_name("linked-source.json")
+        path.rename(target)
+        path.symlink_to(target)
+    else:
+        path.unlink()
+    with pytest.raises(ValueError, match=f"^{error}$"):
+        recovery.validate_source(path, repo)
+
+
+@pytest.mark.parametrize("change,error", [
+    ("patch", "source receipt was produced for a different patch stack"),
+    ("series", "source receipt was produced for a different patch stack"),
+    ("count", "source receipt was produced for a different patch stack"),
+    ("targets", "source receipt does not cover exactly the current patch targets"),
+    ("extra_target", "source receipt does not cover exactly the current patch targets"),
+    ("output_hash", "invalid source output hash"),
+    ("empty_outputs", "source receipt contains no source output hashes"),
+    ("schema", "a successful source patch-stack verification report is required"),
+    ("status", "a successful source patch-stack verification report is required"),
+    ("method", "a successful source patch-stack verification report is required"),
+    ("platform", "source_identity_mismatch: platform"),
+    ("identity_schema", "source_identity_mismatch: schema_version"),
+    ("domain", "source_not_domain_substituted"),
+    ("lite", "source_lite_mismatch"),
+    ("lite_path", "source_lite_path_mismatch: path"),
+    ("lite_hash", "source_lite_mismatch"),
+    ("lite_mode", "source_lite_mismatch"),
+    ("version", "current_linux_version_changed"),
+])
+def test_changed_source_inputs_cannot_reuse_bundle(tmp_path, monkeypatch, change, error):
+    path, data, repo = source_fixture(tmp_path, monkeypatch)
+    assert recovery.validate_source(path, repo)["patch_count"] == 187
+    if change == "patch":
+        data["identity"]["series"]["patches"][0]["sha256"] = "b" * 64
+    elif change == "series":
+        data["identity"]["series"]["sha256"] = "b" * 64
+    elif change == "targets":
+        data["outputs"].pop(next(iter(data["outputs"])))
+    elif change == "extra_target":
+        data["outputs"]["unexpected.cc"] = "a" * 64
+    elif change == "output_hash":
+        data["outputs"][next(iter(data["outputs"]))] = "not-a-sha256"
+    elif change == "empty_outputs":
+        data["outputs"] = {}
+    elif change == "count":
+        data["patch_count"] = True
+    elif change == "schema":
+        data["schema_version"] = True
+    elif change in ("status", "method"):
+        data[change] = "wrong"
+    elif change == "platform":
+        data["identity"]["platform"] = "windows"
+    elif change == "identity_schema":
+        data["identity"]["schema_version"] = True
+    elif change == "domain":
+        data["domain_substituted"] = 1
+    elif change == "lite":
+        data["identity"]["lite"]["files"] = []
+    elif change == "lite_path":
+        data["identity"]["lite"]["path"] = "wrong"
+    elif change == "lite_hash":
+        data["identity"]["lite"]["files"][0]["sha256"] = "b" * 64
+    elif change == "lite_mode":
+        data["identity"]["lite"]["files"][0]["mode"] = 0o755
+    else:
+        for version_file in (repo / "CHROMIUM_VERSION", repo / "build/ungoogled-revisions.psd1"):
+            version_file.write_text(version_file.read_text().replace("153.0.8010.36", "152.0.0.0"))
+    path.write_text(json.dumps(data))
+    # Repin only mutated receipt bytes so each semantic guard is reached.
+    monkeypatch.setattr(recovery, "SOURCE_SHA", recovery.sha256(path))
+    monkeypatch.setattr(recovery, "SOURCE_SIZE", path.stat().st_size)
+    with pytest.raises(ValueError, match=f"^{error}$"):
+        recovery.validate_source(path, repo)
+
+
+@pytest.mark.parametrize("change", ["missing", "content", "mode", "symlink", "extra"])
+def test_donor_lite_overlay_must_match_receipt(tmp_path, monkeypatch, change):
+    path, data, repo = source_fixture(tmp_path, monkeypatch)
+    assert recovery.validate_source(path, repo)["patch_count"] == 187
+    lite = data["identity"]["lite"]
+    root = repo / lite["path"]
+    target = root / lite["files"][0]["path"]
+    if change == "missing":
+        target.unlink()
+    elif change == "content":
+        target.write_bytes(target.read_bytes() + b" ")
+    elif change == "mode":
+        target.chmod(0o755)
+    elif change == "symlink":
+        linked = tmp_path / "linked-lite"
+        target.rename(linked)
+        target.symlink_to(linked)
+    else:
+        (root / "extra").write_text("unexpected")
+    with pytest.raises(ValueError, match="^source_lite_mismatch$"):
+        recovery.validate_source(path, repo)
+
+
+def final_fixture(tmp_path, monkeypatch):
+    diagnostics = tmp_path / "diagnostics"
+    diagnostics.mkdir()
+    acceptance_dir = diagnostics / "acceptance"
+    acceptance_dir.mkdir()
+    verifier = {"sha": "a" * 40}
+    monkeypatch.setattr(recovery, "verifier_identity", lambda: verifier)
+    monkeypatch.setattr(recovery, "validate_source", lambda _: {"sha256": recovery.SOURCE_SHA})
+    monkeypatch.setenv("ACCEPTANCE_OUTCOME", "success")
+    browser = tmp_path / "bundle/chromix/chrome"
+    browser.parent.mkdir(parents=True)
+    browser.write_bytes(b"pinned browser")
+    monkeypatch.setattr(recovery, "BROWSER_SHA", recovery.sha256(browser))
+    prepared = {"status": "prepared", "verifier": verifier, "donor": {"run_id": recovery.DONOR_RUN}}
+    (diagnostics / "preparation.json").write_text(json.dumps(prepared))
+    native = {"runtime": {"status": "passed", "host_arch": "arm64", "chromium_version": recovery.VERSION}}
+    (diagnostics / "native-smoke.json").write_text(json.dumps(native))
+    acceptance = {"ci_gate_passed": True, "control": False, "errors": [], "status": "incomplete",
+                  "browser": {"sha256": recovery.BROWSER_SHA, "version": recovery.VERSION},
+                  "source": {"sha256": recovery.SOURCE_SHA, "check": "producer-receipt-only"},
+                  "provenance": {"commit": verifier["sha"], "dirty": False}, "suites": [],
+                  "gaps": ["optional capability"], "full_acceptance": False}
+    for name, _, _ in recovery.SUITES:
+        report = acceptance_dir / (name + ".json")
+        report.write_text("{}")
+        acceptance["suites"].append({"name": name, "errors": [], "timed_out": False, "cleanup_errors": [],
+                                    "report": report.name, "report_sha256": recovery.sha256(report)})
+    path = acceptance_dir / "acceptance.json"
+    path.write_text(json.dumps(acceptance))
+    return path, acceptance
+
+
+def test_final_result_binds_donor_verifier_and_unchanged_gate_semantics(tmp_path, monkeypatch):
+    final_fixture(tmp_path, monkeypatch)
+    result = {}
+    recovery.finalize(tmp_path, result)
+    assert result["status"] == "reverified" and result["ci_gate_passed"] is True
+    assert result["donor"]["run_id"] == recovery.DONOR_RUN
+    assert result["verifier"]["sha"] == "a" * 40
+    assert result["full_acceptance"] is False
+    assert result["gaps"] == ["optional capability"]
+
+
+@pytest.mark.parametrize("change", ["failed", "version", "browser", "source", "commit", "dirty", "missing_suite",
+                                     "timed_out", "cleanup", "suite_changed", "step_failed", "gate_bool"])
+def test_final_result_cannot_mask_gate_failures(tmp_path, monkeypatch, change):
+    path, report = final_fixture(tmp_path, monkeypatch)
+    if change == "failed":
+        report["errors"] = ["identity failed"]
+    elif change in ("version", "browser"):
+        report["browser"]["version" if change == "version" else "sha256"] = "wrong"
+    elif change == "source":
+        report["source"]["sha256"] = "wrong"
+    elif change in ("commit", "dirty"):
+        report["provenance"][change] = "wrong"
+    elif change == "missing_suite":
+        report["suites"].pop()
+    elif change in ("timed_out", "cleanup"):
+        report["suites"][0]["timed_out" if change == "timed_out" else "cleanup_errors"] = True
+    elif change == "suite_changed":
+        (path.parent / "identity.json").write_text('{"changed":true}')
+    elif change == "step_failed":
+        monkeypatch.setenv("ACCEPTANCE_OUTCOME", "failure")
+    else:
+        report["ci_gate_passed"] = 1
+    path.write_text(json.dumps(report))
+    with pytest.raises(ValueError):
+        recovery.finalize(tmp_path, {})
+
+
+def test_failed_finalization_still_writes_diagnostics(tmp_path, monkeypatch):
+    monkeypatch.setenv("REVERIFY_INPUTS", json.dumps(dispatch()))
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+    monkeypatch.setenv("GITHUB_REPOSITORY", recovery.REPOSITORY)
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    assert recovery.main(["finalize", "--prebuilt-only", "--directory", str(tmp_path)]) == 1
+    result = json.loads((tmp_path / "diagnostics/reverified.json").read_text())
+    assert result["status"] == "failed" and result["ci_gate_passed"] is False
+
+
+def test_workflow_initializes_private_short_tmpdir_for_chromium(tmp_path, monkeypatch):
+    workflow = yaml.safe_load((recovery.REPO / recovery.WORKFLOW_PATH).read_text())
+    steps = workflow["jobs"]["reverify"]["steps"]
+    initialize = next(step for step in steps if step.get("name") == "Initialize absolute session paths")
+    runner_temp = tmp_path / "runner temporary directory" / "a-long-diagnostics-root"
+    runner_temp.mkdir(parents=True)
+    created = []
+    try:
+        for index in range(2):
+            github_env = tmp_path / f"github-env-{index}"
+            subprocess.run(["bash", "-c", initialize["run"]], check=True, timeout=10,
+                           env={**os.environ, "RUNNER_TEMP": str(runner_temp),
+                                "GITHUB_ENV": str(github_env), "TMPDIR": str(tmp_path)},
+                           capture_output=True, text=True)
+            exported = dict(line.split("=", 1) for line in github_env.read_text().splitlines())
+            temporary = Path(exported["TMPDIR"])
+            created.append(temporary)
+            assert temporary.is_absolute() and temporary.is_dir()
+            assert temporary.parent == Path("/tmp") and temporary.name.startswith("cx-arm64.")
+            assert len(temporary.name.removeprefix("cx-arm64.")) == 6
+            assert not temporary.is_symlink() and temporary.resolve(strict=True) == temporary
+            assert stat.S_IMODE(temporary.stat().st_mode) == 0o700
+            assert exported["REVERIFY_DIR"] == str(runner_temp / "chromix-arm64-reverify")
+            assert (Path(exported["REVERIFY_DIR"]) / "diagnostics").is_dir()
+            with tempfile.TemporaryDirectory(prefix="chromix-audit-", dir=temporary) as audit:
+                singleton = Path(audit) / "org.chromium.Chromium.ngUcXC" / "SingletonSocket"
+                assert len(os.fsencode(singleton)) < 108
+                singleton.parent.mkdir()
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                    listener.bind(str(singleton))
+            monkeypatch.setenv("REVERIFY_INPUTS", json.dumps(dispatch()))
+            monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+            monkeypatch.setenv("GITHUB_REPOSITORY", recovery.REPOSITORY)
+            monkeypatch.setenv("TMPDIR", str(temporary))
+            assert recovery.main(["guard", "--prebuilt-only"]) == 0
+        assert created[0] != created[1]
+    finally:
+        for temporary in created:
+            shutil.rmtree(temporary)
+    assert all(not temporary.exists() for temporary in created)
+
+
+def test_registered_workflow_isolates_verify_from_all_build_paths():
+    workflow = yaml.safe_load((recovery.REPO / recovery.WORKFLOW_PATH).read_text())
+    inputs = workflow[True]["workflow_dispatch"]["inputs"]
+    assert inputs["build_mode"]["options"] == ["staged", "single", "verify"]
+    assert "final" in inputs["resume_tree_stage"]["description"]
+    assert "bundle + source receipt" in inputs["resume_artifact_ids"]["description"]
+    build = workflow["jobs"]["build"]
+    assert build["if"] == "${{ inputs.build_mode != 'verify' }}"
+    job = workflow["jobs"]["reverify"]
+    assert job["if"] == "${{ github.event_name == 'workflow_dispatch' && inputs.build_mode == 'verify' }}"
+    assert job["runs-on"] == "ubuntu-24.04-arm" and "needs" not in job
+    assert job["env"]["REVERIFY_INPUTS"] == "${{ toJSON(inputs) }}"
+    steps = job["steps"]
+    script = "\n".join(step.get("run", "") for step in steps)
+    assert 'mktemp -d /tmp/cx-arm64.XXXXXX' in script
+    assert 'chromix-arm64-reverify-tmp' not in script
+    assert 'TMPDIR' not in job["env"]
+    assert all('TMPDIR' not in step.get('env', {}) for step in steps)
+    assert "--prebuilt-only" in script
+    assert "--source-report" in script and "fingerprint_acceptance.py" in script
+    assert "--expected-version 153.0.8010.36" in script
+    assert recovery.BROWSER_SHA in script
+    assert "prepare-ci-sandbox.sh" in script and "--arch arm64 --runtime" in script
+    assert "fingerprint-requirements.txt" in script
+    for forbidden in ("ci-stage.sh", "ninja ", "restore-snapshot", "gen_posix", "--control", "--skip", "--no-sandbox"):
+        assert forbidden not in script
+    assert all("continue-on-error" not in step for step in steps)
+    assert steps[-1]["if"] == "always()" and steps[-2]["if"] == "always()"
+    assert steps[-1]["with"]["path"].endswith("/diagnostics/")

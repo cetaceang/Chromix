@@ -134,4 +134,4 @@ SDK 契约 CI 通过而自动升级。
 
 新增四项的结果校验由 `test_backend_audits.py` 和 `test_transport_lifecycle.py`
 覆盖，包含实际 Python/OpenSSL ticket 恢复与 aioquic H3 交换；测试客户端不是
-Chromium。匹配 191-patch 浏览器的四项新 suite 尚未执行，不能沿用旧 control 结果。
+Chromium。匹配 213-patch 浏览器的四项新 suite 尚未执行，不能沿用旧 control 结果。

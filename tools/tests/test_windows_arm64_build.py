@@ -103,10 +103,8 @@ class Arm64BuildSourceTest(unittest.TestCase):
         for marker in ("Microsoft.VisualStudio.Component.VC.Tools.ARM64", "[17.0,18.0)",
                        "bin\\Hostx64\\x64\\cl.exe", "bin\\Hostx64\\arm64\\cl.exe",
                        "lib\\arm64\\libcmt.lib", "lib\\arm64\\msvcrt.lib",
-                       "Lib\\10.0.26100.0\\um\\arm64\\kernel32.lib",
-                       "Lib\\10.0.26100.0\\ucrt\\arm64\\ucrt.lib",
-                       "Debuggers\\arm64\\dbghelp.dll", "arm64\\Microsoft.VC143.CRT",
-                       "$env:GYP_MSVS_OVERRIDE_PATH", "$env:WINDOWSSDKDIR"):
+                       'ensure-windows-sdk.ps1" -Arch arm64 -ChromiumVersion $ChromiumVersion',
+                       "arm64\\Microsoft.VC143.CRT", "$env:GYP_MSVS_OVERRIDE_PATH"):
             self.assertIn(marker, source)
         self.assertNotIn('Start-Process', source)
         self.assertNotIn('Remove-Item', source)
@@ -326,6 +324,8 @@ class Arm64VisualStudioTest(unittest.TestCase):
             version = installation / 'VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt'
             version.parent.mkdir(parents=True)
             version.write_text('14.44.35207')
+            from tools.tests.test_windows_sdk import SDK_VERSION, sdk_fixture
+            sdk_fixture(sdk)
             for base, relative in re.findall(r'\(Join-Path \$(vc|sdk) "([^"]+)"\)', source):
                 path = (vc if base == 'vc' else sdk) / relative.replace('\\', '/')
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -339,11 +339,12 @@ ${env:ProgramFiles(x86)} = $env:PROGRAMS
 & $env:CHECK -Installation $env:INSTALLATION
 Write-Output "SELECTED=$env:GYP_MSVS_OVERRIDE_PATH"
 '''
-            environment = dict(PROGRAMS=str(programs), CHECK=str(helper), INSTALLATION=str(installation))
+            environment = dict(PROGRAMS=str(programs), CHECK=str(helper), INSTALLATION=str(installation),
+                               WINDOWSSDKDIR='')
             passed = run_ps(code, **environment)
             self.assertEqual(passed.returncode, 0, passed.stderr)
             self.assertIn(f'SELECTED={installation}', passed.stdout)
-            for path in (vc / 'bin/Hostx64/arm64/cl.exe', sdk / 'Lib/10.0.26100.0/ucrt/arm64/ucrt.lib',
+            for path in (vc / 'bin/Hostx64/arm64/cl.exe', sdk / f'Lib/{SDK_VERSION}/ucrt/arm64/ucrt.lib',
                          sdk / 'Debuggers/arm64/dbghelp.dll', redist / 'vcruntime140.dll'):
                 with self.subTest(missing=path):
                     saved = path.read_bytes()

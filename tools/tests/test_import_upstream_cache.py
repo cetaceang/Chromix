@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import shutil
@@ -10,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from tools import import_upstream_cache as importer
+from tools.tests.test_fetch_upstream_cache import synthetic_windows_source, unavailable_source, windows153_source
 
 
 class ImportUpstreamCacheTest(unittest.TestCase):
@@ -24,10 +26,16 @@ class ImportUpstreamCacheTest(unittest.TestCase):
         self.donor = self.cache / "tree/build/src"
         self.platform = "linux"
         self.arch = "x64"
-        for relative in ("CHROMIUM_VERSION", "build/ungoogled-revisions.psd1", "build/upstream-cache.json"):
+        for relative in ("CHROMIUM_VERSION", "CHROMIUM_LINUX_VERSION", "CHROMIUM_MACOS_VERSION", "CHROMIUM_WINDOWS_VERSION",
+                         "build/ungoogled-revisions.psd1", "build/upstream-cache.json"):
             destination = self.repo / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(importer.REPO / relative, destination)
+            if (importer.REPO / relative).is_file():
+                shutil.copyfile(importer.REPO / relative, destination)
+        path = self.repo / "build/upstream-cache.json"
+        manifest = importer.read_json(path)
+        manifest["sources"]["windows"] = synthetic_windows_source(self.repo)
+        self.write(path, json.dumps(manifest))
         self.prepare()
 
     def write(self, path, data, mode=0o644):
@@ -147,6 +155,171 @@ class ImportUpstreamCacheTest(unittest.TestCase):
         self.write(self.donor / "out/Default/.ninja_deps", b"donor dependency database")
         self.write(self.donor / "out/Default/obj/object.o", b"upstream object")
 
+    def linux_overrides(self):
+        pins = importer.load_shared_pins(self.repo)
+        pins.update(LinuxChromiumVersion="153.0.8010.36",
+                    LinuxUngoogledVersion="153.0.8010.36-1", LinuxUngoogledCommit="e" * 40,
+                    UngoogledLinuxVersion="153.0.8010.36-1", UngoogledLinuxCommit="f" * 40)
+        self.write(self.repo / "build/ungoogled-revisions.psd1",
+                   "@{\n" + "".join(f'  {key} = "{value}"\n' for key, value in pins.items()) + "}\n")
+        self.write(self.repo / "CHROMIUM_LINUX_VERSION", "153.0.8010.36\n")
+        path = self.repo / "build/upstream-cache.json"
+        manifest = importer.read_json(path)
+        manifest["sources"]["linux"].update(
+            chromium_version="153.0.8010.36", ungoogled_commit="e" * 40,
+            head_sha="f" * 40, head_branch="153.0.8010.36-1")
+        self.write(path, json.dumps(manifest))
+
+    def test_linux_override_identity_and_nonlinux_identity_are_independent(self):
+        before = {platform: importer.repository_identity(self.repo, platform, "x64")
+                  for platform in ("macos", "windows")}
+        self.linux_overrides()
+        identity, _ = importer.repository_identity(self.repo, "linux", "x64")
+        self.assertEqual(identity["chromium_version"], "153.0.8010.36")
+        self.assertEqual(identity["ungoogled_commit"], "e" * 40)
+        self.assertEqual(identity["head_sha"], "f" * 40)
+        for platform, identity in before.items():
+            self.assertEqual(importer.repository_identity(self.repo, platform, "x64"), identity)
+        self.write(self.repo / "CHROMIUM_LINUX_VERSION", "unrelated invalid Linux pin\n")
+        for platform in ("linux", "macos", "windows"):
+            with self.subTest(platform=platform), self.assertRaises(importer.Miss):
+                importer.repository_identity(self.repo, platform, "x64")
+
+    def test_disabled_windows_fixture_refuses_import_before_donor_validation(self):
+        path = self.repo / "build/upstream-cache.json"
+        original = importer.read_json(path)
+        for arch in ("x64", "arm64"):
+            for phase in ("toolchain", "objects"):
+                with self.subTest(arch=arch, phase=phase):
+                    self.write(path, json.dumps(original))
+                    self.prepare("windows")
+                    disabled = copy.deepcopy(original)
+                    disabled["sources"]["windows"] = unavailable_source(
+                        self.repo, "windows", disabled["sources"]["windows"])
+                    self.write(path, json.dumps(disabled))
+                    self.write(self.src / importer.MARKER, "stale authorization")
+                    with mock.patch.object(importer, "validate_source") as canonical, \
+                            mock.patch.object(importer, "donor_source") as donor, \
+                            mock.patch.object(importer, "install_transaction") as install:
+                        entry = importer.run_import(phase, "windows", arch, self.work, self.cache, repo=self.repo)
+                    self.assert_miss(entry, "source_unavailable")
+                    for key in ("files_copied", "bytes_copied", "directories_reused", "objects_copied"):
+                        self.assertEqual(entry["counts"][key], 0)
+                    canonical.assert_not_called()
+                    donor.assert_not_called()
+                    install.assert_not_called()
+                    if phase == "toolchain":
+                        self.assertFalse((self.src / importer.MARKER).exists())
+                    self.assertFalse((self.src / importer.RUST / "bin/bindgen.exe").exists())
+
+    def test_disabled_sources_allow_other_platform_imports(self):
+        path = self.repo / "build/upstream-cache.json"
+        original = importer.read_json(path)
+        for disabled in ("windows", "linux", "macos"):
+            manifest = copy.deepcopy(original)
+            manifest["sources"][disabled] = unavailable_source(
+                self.repo, disabled, manifest["sources"][disabled])
+            self.write(path, json.dumps(manifest))
+            for platform in ("linux", "macos", "windows"):
+                with self.subTest(disabled=disabled, platform=platform):
+                    if platform == disabled:
+                        for arch in ("x64", "arm64"):
+                            with self.assertRaisesRegex(importer.Miss, "source_unavailable"):
+                                importer.repository_identity(self.repo, platform, arch)
+                    else:
+                        self.prepare(platform)
+                        self.assertEqual(self.run_phase()["status"], "hit")
+
+    def test_disabled_manifest_missing_extra_or_cross_platform_fields_fail_closed(self):
+        path = self.repo / "build/upstream-cache.json"
+        original = importer.read_json(path)
+        for disabled in ("windows", "linux", "macos"):
+            source = unavailable_source(self.repo, disabled, original["sources"][disabled])
+            variants = [{key: value for key, value in source.items() if key != missing}
+                        for missing in source]
+            variants += [dict(source, **{key: value}) for key, value in (
+                ("run_id", 101), ("run_id", None), ("artifacts", {}), ("artifacts", None),
+                ("available", None), ("available", "false"), ("available", 0), ("available", 1),
+                ("chromium_version", "151.0.0.0"), ("ungoogled_commit", "0" * 40),
+                ("head_sha", "0" * 40), ("head_branch", "151.0.0.0-1"),
+                ("event", "pull_request"), ("workflow_path", "wrong.yml"))]
+            variants += [unavailable_source(self.repo, other, original["sources"][other])
+                         for other in ("linux", "macos", "windows") if other != disabled]
+            for index, changed in enumerate(variants):
+                manifest = copy.deepcopy(original)
+                manifest["sources"][disabled] = changed
+                self.write(path, json.dumps(manifest))
+                for platform in ("linux", "macos", "windows"):
+                    with self.subTest(disabled=disabled, variant=index, platform=platform):
+                        with self.assertRaises(importer.Miss) as caught:
+                            importer.repository_identity(self.repo, platform, "x64")
+                        self.assertNotIn("source_unavailable", str(caught.exception))
+
+    def test_windows_153_import_rejects_old_152_donor_and_receipt(self):
+        path = self.repo / "build/upstream-cache.json"
+        manifest = importer.read_json(path)
+        manifest["sources"]["windows"] = windows153_source(self.repo)
+        self.write(path, json.dumps(manifest))
+        self.prepare("windows")
+        self.result["manifest"]["chromium_version"] = "152.0.7977.82"
+        self.save_receipt()
+        self.assert_miss(self.run_phase(), "pinned identity mismatch: chromium_version")
+        self.receipt()
+        self.write(self.donor / "chrome/VERSION", "MAJOR=152\nMINOR=0\nBUILD=7977\nPATCH=82\n")
+        self.assert_miss(self.run_phase(), "donor chrome/VERSION")
+        self.assertFalse((self.src / importer.RUST / "bin/bindgen.exe").exists())
+
+    def test_legacy_available_flag_absent_matches_explicit_true(self):
+        path = self.repo / "build/upstream-cache.json"
+        manifest = importer.read_json(path)
+        for platform in ("linux", "macos", "windows"):
+            identity, _ = importer.repository_identity(self.repo, platform, "x64")
+            self.assertNotIn("available", manifest["sources"][platform])
+            manifest["sources"][platform]["available"] = True
+            self.write(path, json.dumps(manifest))
+            self.assertEqual(importer.repository_identity(self.repo, platform, "x64")[0], identity)
+
+    def test_linux_153_import_rejects_old_152_donor_and_receipt(self):
+        self.linux_overrides()
+        self.prepare()
+        self.result["manifest"]["chromium_version"] = "152.0.7977.82"
+        self.save_receipt()
+        self.assert_miss(self.run_phase(), "pinned identity mismatch: chromium_version")
+        self.receipt()
+        self.write(self.donor / "chrome/VERSION", "MAJOR=152\nMINOR=0\nBUILD=7977\nPATCH=82\n")
+        self.assert_miss(self.run_phase(), "donor chrome/VERSION")
+        self.assertFalse((self.src / importer.MARKER).exists())
+        self.assertFalse((self.src / importer.CLANG).exists())
+
+    def test_linux_override_matches_fetcher_and_imports(self):
+        from tools.fetch_upstream_cache import load_manifest
+        self.linux_overrides()
+        self.prepare()
+        _, self.result["manifest"] = load_manifest("linux", "x64", root=self.repo)
+        self.save_receipt()
+        self.assertEqual(self.run_phase()["status"], "hit")
+
+    def test_manifest_fallback_or_global_override_requires_matching_identity(self):
+        self.linux_overrides()
+        path = self.repo / "build/upstream-cache.json"
+        original = path.read_text()
+        for field in ("chromium_version", "ungoogled_commit"):
+            for target in ("global", "linux"):
+                with self.subTest(field=field, target=target):
+                    manifest = json.loads(original)
+                    if target == "linux":
+                        del manifest["sources"]["linux"][field]
+                    else:
+                        manifest[field] = manifest["sources"]["linux"][field]
+                    self.write(path, json.dumps(manifest))
+                    baseline = json.loads(original)
+                    if baseline["sources"]["linux"][field] == baseline[field]:
+                        importer.repository_identity(self.repo, "linux", "x64")
+                    else:
+                        with self.assertRaisesRegex(importer.Miss, "does not match repository pins"):
+                            importer.repository_identity(self.repo, "linux", "x64")
+        self.write(path, original)
+
     def test_linux_hit_copies_only_complete_allowlist_and_preserves_source(self):
         original = importer.inventory(self.src)
         donor_tree = importer.inventory(self.donor)
@@ -263,7 +436,7 @@ class ImportUpstreamCacheTest(unittest.TestCase):
     def test_changed_repository_manifest_pin_rejection(self):
         manifest_path = self.repo / "build/upstream-cache.json"
         manifest = importer.read_json(manifest_path)
-        manifest["sources"]["linux"]["head_sha"] = "f" * 40
+        manifest["sources"]["linux"]["head_sha"] = "0" * 40
         manifest_path.write_text(json.dumps(manifest))
         self.assert_miss(self.run_phase(), "platform commit does not match")
 
@@ -521,6 +694,27 @@ class ImportUpstreamCacheTest(unittest.TestCase):
                     importer.gn_assignments(args)
         self.write(args, '# comment\na = ["x", 1, false] # inline\nb = true\n')
         self.assertEqual(importer.gn_assignments(args), {"a": '["x",1,false]', "b": 'true'})
+
+    def test_cli_disabled_windows_fixture_returns_miss_with_no_import(self):
+        path = self.repo / "build/upstream-cache.json"
+        manifest = importer.read_json(path)
+        manifest["sources"]["windows"] = unavailable_source(
+            self.repo, "windows", manifest["sources"]["windows"])
+        self.write(path, json.dumps(manifest))
+        for name in ("import_upstream_cache.py", "fetch_upstream_cache.py", "platform_pins.py",
+                     "upstream_script_identity.py"):
+            self.write(self.repo / "tools" / name, (importer.REPO / "tools" / name).read_bytes())
+        for arch in ("x64", "arm64"):
+            result = subprocess.run([sys.executable, str(self.repo / "tools/import_upstream_cache.py"),
+                                     "--phase", "toolchain", "--platform", "windows", "--arch", arch,
+                                     "--workdir", str(self.work), "--cache-dir", str(self.cache)],
+                                    capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("source_unavailable", result.stdout)
+            report = importer.read_json(self.work / importer.REPORT)["phases"]["toolchain"]
+            self.assert_miss(report, "source_unavailable")
+            self.assertEqual(report["counts"]["bytes_copied"], 0)
+            self.assertFalse((self.src / importer.CLANG).exists())
 
     def test_cli_missing_cache_reports_miss_and_exits_zero(self):
         result = subprocess.run([sys.executable, str(importer.REPO / "tools/import_upstream_cache.py"),

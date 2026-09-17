@@ -958,6 +958,7 @@ class V8GPUFeatureName {
   explicit V8GPUFeatureName(Enum value) : value_(value) {}
   Enum AsEnum() const { return value_; }
   String AsString() const { return AsCStr(); }
+  String AsStringView() const { return AsCStr(); }
   const char* AsCStr() const {
     return value_ == Enum::DepthClipControl ? "depth-clip-control" : "texture-compression-bc";
   }

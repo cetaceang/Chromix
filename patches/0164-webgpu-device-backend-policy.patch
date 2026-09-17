@@ -1,7 +1,7 @@
 diff --git a/third_party/blink/renderer/modules/webgpu/gpu_adapter.cc b/third_party/blink/renderer/modules/webgpu/gpu_adapter.cc
 --- a/third_party/blink/renderer/modules/webgpu/gpu_adapter.cc
 +++ b/third_party/blink/renderer/modules/webgpu/gpu_adapter.cc
-@@ -42,7 +42,8 @@
+@@ -43,7 +43,8 @@
  
    // An explicit empty allowlist exposes no features; unset preserves Dawn's set.
    const base::UxrConfig& config = base::UxrConfig::GetInstance();

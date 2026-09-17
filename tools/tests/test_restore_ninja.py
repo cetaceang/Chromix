@@ -393,6 +393,16 @@ class RestoreNinjaShellTest(unittest.TestCase):
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(REPO / relative, destination)
         (self.repo / "tools/restored_reuse_evidence.py").write_text("import sys\nassert '--phase' in sys.argv\n")
+        # Patch contents are covered by test_verify_patch_stack.py; this fixture checks call wiring.
+        (self.repo / "tools/verify_patch_stack.py").write_text(
+            'import os, sys\nfrom pathlib import Path\n'
+            'args = dict(zip(sys.argv[1::2], sys.argv[2::2]))\n'
+            'assert args["--src"] == os.environ["SRC"]\n'
+            'assert args["--repo"] == os.environ["REPO"]\n'
+            'assert args["--platform"] in ("linux", "macos")\n'
+            'output = Path(args["--output"])\n'
+            'assert output.parent == Path(os.environ["WORK"]) / "fingerprint-diagnostics"\n'
+            'output.write_text("{}\\n")\n')
         shell(self.repo / "build/prepare-ungoogled.sh", "exit 0\n")
         shell(self.repo / "build/posix/prepare-restored-tools.sh", 'touch "$1/src/.chromix-toolchain-ready"\n')
         shell(self.repo / "build/macos/select-xcode.sh", "select_macos_xcode() { :; }\n")
@@ -496,7 +506,9 @@ class RestoreNinjaShellTest(unittest.TestCase):
 @unittest.skipUnless(PWSH.exists(), "PowerShell required")
 class DirectWindowsRestoredBuildTest(unittest.TestCase):
     def run_builder(self, *, restored=True, bindgen_present=False, fail="", ninja_rc=0, resume=False,
-                    product_version="152.0.7977.82", metadata_present=True, chrome_present=True):
+                    product_version=None, metadata_present=True, chrome_present=True):
+        if product_version is None:
+            product_version = (REPO / "CHROMIUM_VERSION").read_text().strip()
         temporary = tempfile.TemporaryDirectory(prefix="direct windows restored ")
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
@@ -521,7 +533,8 @@ class DirectWindowsRestoredBuildTest(unittest.TestCase):
             if executable:
                 path.chmod(0o755)
 
-        for relative in ("build/windows/build.ps1", "build/ungoogled-revisions.psd1",
+        for relative in ("build/windows/build.ps1", "build/windows/assert-target-arch.ps1",
+                         "build/ungoogled-revisions.psd1",
                          "tools/merge_gn_args.py", "tools/upstream_script_identity.py"):
             destination = repo / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -681,7 +694,8 @@ function Get-Item {
         self.assertEqual((src / "tools/clang/scripts/update.py").read_text(), "# commondatastorage.googleapis.com\n")
         self.assertNotIn("chromium.9oo91esource.qjz9zk", (src / "tools/rust/build_bindgen.py").read_text())
         self.assertFalse((src / "out/Chromix").exists())
-        self.assertIn("Windows PE product version verified: 152.0.7977.82", result.stdout)
+        version = (REPO / "CHROMIUM_VERSION").read_text().strip()
+        self.assertIn(f"Windows PE product version verified: {version}", result.stdout)
         self.assertIn("metadata only; not a runtime smoke test", result.stdout)
 
     def test_present_bindgen_still_finishes_without_endpoint_normalization(self):
@@ -737,8 +751,11 @@ function Get-Item {
                                      {'exit_code': 19})
 
     def test_numeric_product_version_mismatch_rejects_completion(self):
+        pinned = [int(part) for part in (REPO / "CHROMIUM_VERSION").read_text().strip().split(".")]
+        versions = [".".join(str(value + (index == changed)) for index, value in enumerate(pinned))
+                    for changed in range(4)] + ["0.0.0.0"]
         for restored in (False, True):
-            for version in ("153.0.7977.82", "152.1.7977.82", "152.0.7978.82", "152.0.7977.83", "0.0.0.0"):
+            for version in versions:
                 with self.subTest(restored=restored, version=version):
                     result, events, _, _ = self.run_builder(restored=restored, product_version=version)
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)

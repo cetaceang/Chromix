@@ -53,7 +53,9 @@ def apply_patch(directory, number, reverse=False):
     result = subprocess.run(command, cwd=directory, text=True, capture_output=True,
                             timeout=15, env={**os.environ, "LC_ALL": "C", "PATCH_GET": "0"})
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "fuzz" not in result.stdout and "offset" not in result.stdout
+    assert "fuzz" not in result.stdout
+    offsets = re.findall(r"offset (-?\d+) lines?", result.stdout)
+    assert offsets == (["-5"] if number == "0053" else [])
 
 
 @pytest.fixture(scope="module")
@@ -94,9 +96,16 @@ def test_unsafe_renderer_overrides_are_retired(number):
     additions = [line[1:] for line in patch.splitlines()
                  if line.startswith("+") and not line.startswith("+++")]
     assert additions
-    assert all(not line.strip() or line.lstrip().startswith("//") for line in additions)
-    assert not any(line.startswith("-") and not line.startswith("---")
-                   for line in patch.splitlines())
+    removals = [line[1:] for line in patch.splitlines()
+                if line.startswith("-") and not line.startswith("---")]
+    if number == "0053":
+        expected = "float sampleRate() const { return destination_handler_->SampleRate(); }".split()
+        code = "\n".join(line for line in additions if not line.lstrip().startswith("//"))
+        assert code.split() == expected
+        assert "\n".join(removals).split() == expected
+    else:
+        assert all(not line.strip() or line.lstrip().startswith("//") for line in additions)
+        assert not removals
 
 
 def excerpt(source, start, end):

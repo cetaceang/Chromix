@@ -14,6 +14,8 @@ are omitted and recorded. The 300 GiB limit and disk-headroom checks still apply
 
 GH_TOKEN authenticates GitHub API requests only. Availability/validation failures
 write a miss and exit zero; invalid arguments or destination paths exit nonzero.
+Schema 1 sources default to available; ``available: false`` requires explicit
+platform identity and forbids run/artifact fields. All sources remain validated.
 Linux/macOS require a host zstd executable. The destination must be dedicated to
 this tool; result.json records ownership and the absolute source path on a hit.
 """
@@ -48,6 +50,11 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
 
+try:
+    from .platform_pins import PinError, load_pins, load_shared_pins
+except ImportError:
+    from platform_pins import PinError, load_pins, load_shared_pins
+
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "build/upstream-cache.json"
 OWNER = "chromix-upstream-cache-v1"
@@ -67,6 +74,10 @@ SOURCES = {
     "linux": ("portablelinux", "UngoogledLinuxCommit", ["build/src"]),
     "macos": ("macos", "UngoogledMacOSCommit", ["src"]),
     "windows": ("windows", "UngoogledWindowsCommit", ["src", "build/src"]),
+}
+UNAVAILABLE_SOURCE_FIELDS = {
+    "available", "chromium_version", "ungoogled_commit", "repository", "repository_id",
+    "head_sha", "head_branch", "event", "workflow_path", "source_roots",
 }
 ORIGINAL_SOURCE_ROOTS = {
     "linux": "/repo/build/src",
@@ -114,26 +125,38 @@ def load_manifest(platform, arch, run_id=None, root=ROOT):
     try:
         raw = path.read_bytes()
         manifest = json.loads(raw)
-        pins = dict(re.findall(r'^\s*(\w+)\s*=\s*"([^"\r\n]+)"\s*$',
-                               (root / "build/ungoogled-revisions.psd1").read_text(), re.M))
-        version = (root / "CHROMIUM_VERSION").read_text().strip()
+        global_pins = load_shared_pins(root)
+        pins = load_pins(root, platform)
+        version = pins["ChromiumVersion"]
         require(manifest["schema_version"] == 1, "manifest_schema")
-        require(version == pins["ChromiumVersion"] == manifest["chromium_version"]
-                and manifest["ungoogled_commit"] == pins["UngoogledCommit"], "pin_mismatch")
+        require(manifest["chromium_version"] == global_pins["ChromiumVersion"]
+                and manifest["ungoogled_commit"] == global_pins["UngoogledCommit"], "pin_mismatch")
         require(set(manifest["sources"]) == set(SOURCES), "manifest_targets")
         for target, (repo, pin_key, roots) in SOURCES.items():
             source = manifest["sources"][target]
+            target_pins = load_pins(root, target)
+            target_version = target_pins["ChromiumVersion"]
+            target_core = target_pins["UngoogledCommit"]
+            available = source.get("available", True)
+            require(type(available) is bool, "manifest_availability")
+            if not available:
+                require(set(source) == UNAVAILABLE_SOURCE_FIELDS, "manifest_unavailable_source")
+            require(source.get("chromium_version", manifest["chromium_version"]) == target_version
+                    and source.get("ungoogled_commit", manifest["ungoogled_commit"]) == target_core,
+                    "pin_mismatch")
             require(source["repository"] == f"ungoogled-software/ungoogled-chromium-{repo}"
-                    and source["head_sha"] == pins[pin_key]
+                    and source["head_sha"] == target_pins[pin_key]
                     and re.fullmatch(r"[a-f0-9]{40}", source["head_sha"]), "pin_mismatch")
             require(source["source_roots"] == roots
                     and source["event"] in ("push", "workflow_dispatch")
-                    and source["head_branch"] in (version, pins[pin_key.replace("Commit", "Version")])
+                    and source["head_branch"] in (target_version, target_pins[pin_key.replace("Commit", "Version")])
                     and source["workflow_path"] == (
                         ".github/workflows/build-x64.yml" if target == "windows"
                         else ".github/workflows/build.yml"), "untrusted_manifest_source")
-            for key in ("repository_id", "run_id"):
-                require(type(source[key]) is int and source[key] > 0, "manifest_id")
+            require(type(source["repository_id"]) is int and source["repository_id"] > 0, "manifest_id")
+            if not available:
+                continue
+            require(type(source["run_id"]) is int and source["run_id"] > 0, "manifest_id")
             require(set(source["artifacts"]) == ({"x64"} if target == "windows"
                                                 else {"x64", "arm64"}), "manifest_targets")
             for artifact in source["artifacts"].values():
@@ -149,19 +172,24 @@ def load_manifest(platform, arch, run_id=None, root=ROOT):
                         "manifest_archive")
                 timestamp(artifact["expires_at"])
         source = manifest["sources"][platform]
+        identity = {
+            "path": str(path.resolve()), "sha256": hashlib.sha256(raw).hexdigest(),
+            "schema_version": 1, "target": f"{platform}-{arch}", "chromium_version": version,
+            "repository": source["repository"], "head_sha": source["head_sha"],
+        }
+        if source.get("available", True) is False:
+            identity.update(available=False, ungoogled_commit=source["ungoogled_commit"])
+            raise CacheMiss("source_unavailable", details={"manifest": identity})
         require(arch in source["artifacts"], "unsupported_target")
         require(run_id is None or run_id == source["run_id"], "run_id_mismatch")
         pin = {key: value for key, value in source.items() if key != "artifacts"}
         pin["artifact"] = source["artifacts"][arch]
         pin["chromium_version"] = version
-        identity = {
-            "path": str(path.resolve()), "sha256": hashlib.sha256(raw).hexdigest(),
-            "schema_version": 1, "target": f"{platform}-{arch}", "chromium_version": version,
-            "repository": pin["repository"], "head_sha": pin["head_sha"],
-            "run_id": pin["run_id"], "artifact_id": pin["artifact"]["id"],
-            "artifact_digest": pin["artifact"]["digest"],
-        }
+        identity.update(run_id=pin["run_id"], artifact_id=pin["artifact"]["id"],
+                        artifact_digest=pin["artifact"]["digest"])
         return pin, identity
+    except PinError as exc:
+        raise CacheMiss("pin_mismatch") from exc
     except (OSError, AttributeError, KeyError, TypeError, ValueError) as exc:
         raise CacheMiss("invalid_manifest_or_pins") from exc
 

@@ -2,14 +2,12 @@ diff --git a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_ba
 index 1111111..2222222 100644
 --- a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
 +++ b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
-@@ -165,6 +165,7 @@
- #include "third_party/blink/renderer/platform/heap/member.h"
+@@ -168,4 +168,5 @@
  #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
  #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 +#include "third_party/blink/renderer/platform/weborigin/security_origin.h"
  #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
  #include "third_party/blink/renderer/platform/wtf/functional.h"
- #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 @@ -3127,6 +3128,8 @@
      std::vector<uint8_t>* out,
      int width,

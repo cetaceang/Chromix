@@ -6,7 +6,9 @@ This record tracks the implementation requested by `/root/fingerprint-p0-p2-back
 
 ### 2026-09-14 update — backend policies and executable acceptance probes
 
-The current series contains **191 patches**. New patches `0166`–`0191`:
+The merged series contains **213 patches**. Backend patches `0166`–`0191`
+retain their numbers; incoming display patches `0166`–`0187` are now
+`0192`–`0213`. Backend patches `0166`–`0191`:
 
 - Route public WebAuthn/PDF/speech/keyboard queries through actual backends;
   synthetic capability tables remain explicit fixtures.
@@ -62,7 +64,7 @@ privacy, font-file/rasterization equivalence, physical audio/media/input devices
 DRM/remote decoder paths, SOCKS UDP ASSOCIATE, external DNS/ICE/TURN/IPv6 and
 QUIC migration/0-RTT/Alt-Svc. The matrix remains **0 reviewed devices / 33
 unsampled cells**. Earlier counts below are historical checkpoints, not current
-191-patch acceptance.
+213-patch acceptance.
 
 ### 2026-09-14 update — shared native GPU policy and reviewed device matrix
 

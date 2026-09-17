@@ -35,7 +35,7 @@ def requested_version(repo: str, event: dict, event_name: str, manual_version: s
             or int(current['id']) != int(event_run['id'])):
         raise ValueError('Triggering workflow run identity changed')
     # A coalesced wake-up remains useful even if its original attempt is now stale.
-    version = release.source_version(repo, event_run['head_sha'])
+    version = release.source_version(repo, event_run['head_sha'], release.WORKFLOW_PLATFORMS[event_run['name']])
     if manual_version and manual_version != version:
         raise ValueError('Release version differs from the validated event source version')
     return version
@@ -73,6 +73,7 @@ def discover_runs(repo: str, version: str, *, include_build_only: bool = False) 
     versions = {}
     selected = {}
     for workflow in release.WORKFLOWS:
+        platform = release.WORKFLOW_PLATFORMS[workflow]
         seen_shas = set()
         for run in newest_workflow_runs(repo, workflow):
             sha = run['head_sha']
@@ -84,11 +85,12 @@ def discover_runs(repo: str, version: str, *, include_build_only: bool = False) 
                 message = commit.get('message') if isinstance(commit, dict) else None
                 if not isinstance(message, str) or '[skip ci]' in message.lower():
                     continue
-            if sha not in versions:
+            key = (sha, platform)
+            if key not in versions:
                 if len(versions) >= MAX_VERSION_LOOKUPS:
                     raise ValueError('Release source-version lookup limit reached; narrow the catch-up scope')
-                versions[sha] = release.source_version(repo, sha)
-            if (versions[sha] == version and run.get('status') == 'completed'
+                versions[key] = release.source_version(repo, sha, platform)
+            if (versions[key] == version and run.get('status') == 'completed'
                     and run.get('conclusion') == 'success'
                     and release.native_verification_passed(repo, run)):
                 selected[workflow] = run

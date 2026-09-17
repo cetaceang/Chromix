@@ -2,11 +2,11 @@ diff --git a/third_party/blink/renderer/modules/webaudio/base_audio_context.h b/
 index 8f0e99ecc4..471c2f42f8 100644
 --- a/third_party/blink/renderer/modules/webaudio/base_audio_context.h
 +++ b/third_party/blink/renderer/modules/webaudio/base_audio_context.h
-@@ -116,6 +116,7 @@
-   // https://webaudio.github.io/web-audio-api/#BaseAudioContext
-   // Cannot be called from the audio thread.
-   AudioDestinationNode* destination() const;
-+  // Scheduling, decoding and JS must agree with the actual rendering rate.
-   float sampleRate() const { return destination_handler_->SampleRate(); }
+@@ -124,3 +124,6 @@
+-  float sampleRate() const { return destination_handler_->SampleRate(); }
++  float sampleRate() const {
++    // Scheduling, decoding and JS must agree with the actual rendering rate.
++    return destination_handler_->SampleRate();
++  }
    double currentTime() const { return destination_handler_->CurrentTime(); }
    AudioListener* listener() { return listener_.Get(); }

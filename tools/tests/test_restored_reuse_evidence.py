@@ -2,10 +2,14 @@ import hashlib
 import io
 import json
 import os
+import signal
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -48,6 +52,7 @@ class RestoredReuseEvidenceTest(unittest.TestCase):
         self.inputs = ["obj/a.o", "obj/b.obj", "../../source.cc"]
         self.version = 5
         self.make_log()
+        self.real_query = evidence.query
         self.query = mock.patch.object(evidence, "query", side_effect=self.query_result).start()
 
     def query_result(self, ninja, out, args, limit):
@@ -1264,6 +1269,35 @@ class RestoredReuseEvidenceTest(unittest.TestCase):
         path.write_text(json.dumps(data))
         self.assertEqual(self.cli("before"), 1)
 
+    @unittest.skipUnless(os.name == "posix", "executable fixture requires POSIX")
+    def test_real_query_failure_after_successful_build_never_proves_or_restarts_retention(self):
+        baseline = self.before()
+        baseline_path = self.work / "upstream-reuse/baseline.json"
+        original, info = baseline_path.read_bytes(), baseline_path.stat()
+        self.ninja.write_text(f"#!{sys.executable}\nimport sys, time\n"
+                              "if sys.argv[1:] == ['--version']:\n"
+                              "    print('1.11.1')\n"
+                              "else:\n"
+                              "    sys.stderr.write('loading manifest\\n')\n"
+                              "    sys.stderr.flush()\n"
+                              "    time.sleep(30)\n")
+        self.ninja.chmod(0o755)
+        self.query.side_effect = self.real_query
+        with mock.patch.object(evidence, "NINJA_INPUTS_TIMEOUT", 0.3):
+            self.assertEqual(self.cli("after", 0), 1)
+        report = self.result()
+        self.assertEqual(report["exit_code"], 0)
+        self.assertEqual(report["status"], "error")
+        self.assertFalse(report["retention_proven"])
+        for text in ("'-t', 'inputs', 'chrome'", "timed out", "timeout=0.3s", "loading manifest\\n"):
+            self.assertIn(text, report["reason"])
+        self.query.side_effect = self.query_result
+        self.assertEqual(self.cli("before"), 1)
+        self.assertFalse(self.result()["retention_proven"])
+        self.assertEqual(baseline_path.read_bytes(), original)
+        self.assertEqual(baseline_path.stat().st_mtime_ns, info.st_mtime_ns)
+        self.assertEqual(json.loads(original), baseline)
+
     def test_ninja_110_requires_newer_selector_before_inputs_query(self):
         self.query.side_effect = lambda *args: b"1.10.2\n"
         self.assertEqual(self.cli("before"), 1)
@@ -1293,6 +1327,234 @@ class RestoredReuseEvidenceTest(unittest.TestCase):
             evidence.main([*args, "--exit-code", "0"])
         with mock.patch("sys.stderr", new=io.StringIO()), self.assertRaises(SystemExit):
             evidence.main([value if value != "before" else "after" for value in args])
+
+
+@unittest.skipUnless(os.name == "posix", "executable fixtures require POSIX")
+class NinjaQueryTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.out = Path(self.tmp.name)
+        self.ninja = self.out / "ninja"
+        self.sigterm_handler = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(lambda: self.assertIs(signal.getsignal(signal.SIGTERM), self.sigterm_handler))
+        self.spawn = subprocess.Popen
+        self.popen = mock.patch.object(evidence.subprocess, "Popen", wraps=self.spawn).start()
+        self.addCleanup(mock.patch.stopall)
+
+    def executable(self, body):
+        self.ninja.write_text(f"#!{sys.executable}\nimport os, sys, time\n" + body)
+        self.ninja.chmod(0o755)
+
+    def query(self, args, limit=4096):
+        return evidence.query(self.ninja, self.out, args, limit)
+
+    def assert_cleaned(self):
+        process = self.popen.call_args
+        self.assertEqual(process.kwargs["cwd"], self.out)
+        self.assertEqual(process.kwargs["stdin"], subprocess.DEVNULL)
+        self.assertIs(process.kwargs["start_new_session"], True)
+        pid = int((self.out / "pid").read_text())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
+
+    def test_sleeping_executable_times_out_and_is_reaped_even_after_stdout_eof(self):
+        for close_stdout in (False, True):
+            with self.subTest(close_stdout=close_stdout):
+                self.executable("open('pid', 'w').write(str(os.getpid()))\n"
+                                "sys.stderr.write('still loading\\n'); sys.stderr.flush()\n"
+                                + ("os.close(1)\n" if close_stdout else "") + "time.sleep(30)\n")
+                threads = set(threading.enumerate())
+                started = time.monotonic()
+                with mock.patch.object(evidence, "NINJA_TIMEOUT", 0.3):
+                    with self.assertRaises(evidence.EvidenceError) as raised:
+                        self.query(["--version"])
+                reason = str(raised.exception)
+                for text in ("'--version'", "timed out", "timeout=0.3s", "elapsed=", "returncode=-9",
+                             "stdout_bytes=0", "stderr=b'still loading\\n'"):
+                    self.assertIn(text, reason)
+                self.assertLess(time.monotonic() - started, 5)
+                self.assertLessEqual(len(reason), 512)
+                self.assertEqual(set(threading.enumerate()), threads)
+                self.assert_cleaned()
+
+    def test_inputs_has_its_own_bounded_timeout_and_version_stays_short(self):
+        self.assertEqual(evidence.NINJA_INPUTS_TIMEOUT, 600)
+        self.assertLessEqual(evidence.NINJA_TIMEOUT, 120)
+        self.assertLess(evidence.NINJA_TIMEOUT, evidence.NINJA_INPUTS_TIMEOUT)
+        self.executable("time.sleep(0.75)\nsys.stdout.buffer.write(b'obj/a.o\\n')\n")
+        with mock.patch.object(evidence, "NINJA_TIMEOUT", 0.3), \
+                mock.patch.object(evidence, "NINJA_INPUTS_TIMEOUT", 2):
+            with self.assertRaisesRegex(evidence.EvidenceError, "timed out; timeout=0.3s"):
+                self.query(["--version"])
+            names, metadata = evidence.target_inputs(self.ninja, self.out, ["chrome"])
+            self.assertEqual(names, {"obj/a.o"})
+            self.assertEqual(metadata["sha256"], hashlib.sha256(b"obj/a.o\n").hexdigest())
+        with mock.patch.object(evidence, "NINJA_INPUTS_TIMEOUT", 0.3):
+            with self.assertRaisesRegex(evidence.EvidenceError, "timed out; timeout=0.3s"):
+                self.query(["-t", "inputs", "chrome"])
+
+    def test_stdout_cap_kills_streaming_executable_without_waiting_for_timeout(self):
+        self.executable("open('pid', 'w').write(str(os.getpid()))\n"
+                        "while True:\n    os.write(1, b'x' * 65536)\n")
+        started = time.monotonic()
+        with self.assertRaises(evidence.EvidenceError) as raised:
+            self.query(["-t", "inputs", "chrome"], limit=128)
+        reason = str(raised.exception)
+        for text in ("exceeds stdout byte cap", "stdout_bytes=129", "stdout_cap=128", "timeout=600s"):
+            self.assertIn(text, reason)
+        self.assertNotIn("timed out", reason)
+        self.assertLess(time.monotonic() - started, 5)
+        self.assert_cleaned()
+
+    def test_nonzero_exit_has_bounded_escaped_stderr_and_separate_stdout(self):
+        self.executable("open('pid', 'w').write(str(os.getpid()))\n"
+                        "sys.stdout.buffer.write(b'obj/a.o\\n')\n"
+                        "sys.stderr.buffer.write(b'ninja: missing target\\n\\r\\x1b[31m\\xff' + b'x' * 200000)\n"
+                        "sys.exit(7)\n")
+        with self.assertRaises(evidence.EvidenceError) as raised:
+            self.query(["-t", "inputs", "chrome"], limit=8)
+        reason = str(raised.exception)
+        for text in ("failed (nonzero exit)", "returncode=7", "stdout_bytes=8", "stdout_cap=8",
+                     "stderr_bytes=200029", "missing target\\n\\r\\x1b[31m\\xff", "..."):
+            self.assertIn(text, reason)
+        self.assertTrue(all(32 <= ord(char) < 127 for char in reason))
+        self.assertLessEqual(len(reason), 512)
+        self.assertNotIn("timed out", reason)
+        self.assertNotIn("exceeds", reason)
+        self.assert_cleaned()
+
+    def test_exact_stdout_cap_and_empty_stdout_succeed_and_cancel_timer(self):
+        for data in (b"", b"obj/a.o\n"):
+            with self.subTest(data=data):
+                self.executable(f"open('pid', 'w').write(str(os.getpid()))\n"
+                                f"sys.stdout.buffer.write({data!r})\n")
+                threads = set(threading.enumerate())
+                self.assertEqual(self.query(["-t", "inputs", "chrome"], limit=len(data)), data)
+                self.assertEqual(set(threading.enumerate()), threads)
+                self.assert_cleaned()
+
+    def test_stderr_never_becomes_membership_even_with_success_exit(self):
+        self.executable("sys.stdout.buffer.write(b'obj/a.o\\n')\n"
+                        "sys.stderr.buffer.write(b'obj/forged.o\\n')\n")
+        with self.assertRaisesRegex(evidence.EvidenceError, "unexpected stderr.*returncode=0"):
+            evidence.target_inputs(self.ninja, self.out, ["chrome"])
+
+    def test_spawn_failure_restores_sigterm_handler(self):
+        with self.assertRaises(FileNotFoundError):
+            self.query(["--version"])
+        self.assertIs(signal.getsignal(signal.SIGTERM), self.sigterm_handler)
+
+    def test_sigterm_during_spawn_cleans_query_and_restores_previous_handler(self):
+        self.executable("time.sleep(30)\n")
+        processes, handled = [], []
+
+        def spawning(*args, **kwargs):
+            process = self.spawn(*args, **kwargs)
+            processes.append(process)
+            os.kill(os.getpid(), signal.SIGTERM)
+            return process
+
+        def previous_handler(signum, frame):
+            handled.append(signum)
+
+        signal.signal(signal.SIGTERM, previous_handler)
+        self.popen.side_effect = spawning
+        try:
+            with self.assertRaisesRegex(evidence.EvidenceError, "interrupted by SIGTERM"):
+                self.query(["-t", "inputs", "chrome"])
+            self.assertEqual(handled, [signal.SIGTERM])
+            self.assertIs(signal.getsignal(signal.SIGTERM), previous_handler)
+            self.assertEqual(processes[0].returncode, -signal.SIGKILL)
+            with self.assertRaises(ProcessLookupError):
+                os.killpg(processes[0].pid, 0)
+        finally:
+            signal.signal(signal.SIGTERM, self.sigterm_handler)
+            for process in processes:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=5)
+
+    def test_worker_thread_does_not_detach_without_a_sigterm_handler(self):
+        self.executable("print('1.12.1')\n")
+        results = []
+        worker = threading.Thread(target=lambda: results.append(self.query(["--version"])), daemon=True)
+        worker.start()
+        worker.join(timeout=5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(results, [b"1.12.1\n"])
+        self.assertIs(self.popen.call_args.kwargs["start_new_session"], False)
+        self.assertIs(signal.getsignal(signal.SIGTERM), self.sigterm_handler)
+
+    @unittest.skipUnless(sys.platform == "linux", "process group check requires procfs")
+    def test_caller_sigterm_cleans_detached_query_group(self):
+        self.executable("import subprocess\n"
+                        "open('pid', 'w').write(str(os.getpid()))\n"
+                        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+                        "with open('child', 'w') as stream:\n    stream.write(str(child.pid))\n"
+                        "time.sleep(30)\n")
+        script = ("import sys\nfrom pathlib import Path\n"
+                  "from tools import restored_reuse_evidence as evidence\n"
+                  "out = Path(sys.argv[1])\n"
+                  "evidence.query(out / 'ninja', out, ['-t', 'inputs', 'chrome'], 4096)\n"
+                  "(out / 'returned').write_text('query must not return')\n")
+        for group_signal in (False, True):
+            with self.subTest(group_signal=group_signal):
+                for name in ("pid", "child"):
+                    (self.out / name).unlink(missing_ok=True)
+                with subprocess.Popen([sys.executable, "-c", script, str(self.out)], cwd=evidence.REPO,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                      start_new_session=True) as caller:
+                    try:
+                        deadline = time.monotonic() + 5
+                        ready = self.out / "child"
+                        while (not ready.exists() or not ready.read_text()) and time.monotonic() < deadline:
+                            self.assertIsNone(caller.poll(), "evidence caller exited before query started")
+                            time.sleep(0.01)
+                        self.assertTrue(ready.exists() and ready.read_text(), "query did not start within 5s")
+                        pid = int((self.out / "pid").read_text())
+                        self.assertNotEqual(os.getpgid(pid), os.getpgid(caller.pid))
+                        if group_signal:
+                            os.killpg(caller.pid, signal.SIGTERM)
+                        else:
+                            caller.send_signal(signal.SIGTERM)
+                        stdout, stderr = caller.communicate(timeout=5)
+                        self.assertEqual(caller.returncode, -signal.SIGTERM, stderr.decode())
+                        self.assertEqual(stdout, b"")
+                        self.assertEqual(stderr, b"")
+                        self.assertFalse((self.out / "returned").exists())
+                        with self.assertRaises(ProcessLookupError):
+                            os.kill(pid, 0)
+                        child = Path("/proc") / ready.read_text() / "stat"
+                        if child.exists():
+                            fields = child.read_text().rsplit(")", 1)[1].split()
+                            self.assertEqual(int(fields[2]), pid)
+                            self.assertEqual(fields[0], "Z", "query child is still running")
+                    finally:
+                        if (self.out / "pid").exists():
+                            try:
+                                os.killpg(int((self.out / "pid").read_text()), signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                        if caller.poll() is None:
+                            os.killpg(caller.pid, signal.SIGKILL)
+                        caller.communicate(timeout=5)
+
+    @unittest.skipUnless(sys.platform == "linux", "process state check requires procfs")
+    def test_timeout_kills_pipe_inheriting_child_after_parent_exits(self):
+        self.executable("import subprocess\n"
+                        "open('pid', 'w').write(str(os.getpid()))\n"
+                        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+                        "open('child', 'w').write(str(child.pid))\n")
+        started = time.monotonic()
+        with mock.patch.object(evidence, "NINJA_TIMEOUT", 0.3):
+            with self.assertRaisesRegex(evidence.EvidenceError, "timed out.*returncode=0"):
+                self.query(["--version"])
+        self.assertLess(time.monotonic() - started, 5)
+        self.assert_cleaned()
+        child = Path("/proc") / (self.out / "child").read_text() / "stat"
+        if child.exists():
+            self.assertEqual(child.read_text().split()[2], "Z")
 
 
 @unittest.skipUnless(AVAILABLE and os.name == "posix", "official tiny-fixture Ninja binaries unavailable")
@@ -1488,17 +1750,52 @@ class RealNinjaEvidenceTest(unittest.TestCase):
                 self.assertFalse(report["retention_proven"])
                 self.assertEqual(baseline_path.read_bytes(), saved)
 
-    def test_query_output_cap_and_timeout(self):
+    def test_real_inputs_ignores_deps_database_and_does_not_modify_build_files(self):
+        for ninja in AVAILABLE:
+            with self.subTest(ninja=ninja), tempfile.TemporaryDirectory() as tmp:
+                work, out = self.make_work(Path(tmp), ninja)
+                (out / "header").write_text("implicit compiler dependency\n")
+                build = out / "build.ninja"
+                build.write_text(build.read_text() +
+                    "rule depcopy\n"
+                    "  command = cp source $out && printf '$out: source header\\n' > $out.d\n"
+                    "  depfile = $out.d\n  deps = gcc\n"
+                    "build dep.o: depcopy source\n"
+                    "build dep-archive: copy dep.o\n")
+                before = evidence.target_inputs(ninja, out, ["dep-archive"])
+                subprocess.run([str(ninja), "dep-archive"], cwd=out, check=True, capture_output=True)
+                deps = out / ".ninja_deps"
+                self.assertGreater(deps.stat().st_size, 16)
+                dep_query = subprocess.run([str(ninja), "-t", "deps", "dep.o"], cwd=out,
+                                           check=True, capture_output=True)
+                self.assertIn(b"header", dep_query.stdout)
+                for content in (deps.read_bytes(), b"invalid deps log, must not be loaded or repaired\n"):
+                    with self.subTest(valid=content.startswith(b"# ninjadeps")):
+                        deps.write_bytes(content)
+                        files = {path: (path.read_bytes(), evidence.stamp(path.stat()))
+                                 for path in out.rglob("*") if path.is_file()}
+                        self.assertEqual(evidence.target_inputs(ninja, out, ["dep-archive"]), before)
+                        self.assertEqual(evidence.query(ninja, out, ["--version"], 128).strip(),
+                                         ninja.parent.name.removeprefix("chromix-ninja-v").encode())
+                        after = {path: (path.read_bytes(), evidence.stamp(path.stat()))
+                                 for path in out.rglob("*") if path.is_file()}
+                        self.assertEqual(after, files)
+
+    def test_real_query_nonzero_reports_ninja_stderr(self):
+        for ninja in AVAILABLE:
+            with self.subTest(ninja=ninja), tempfile.TemporaryDirectory() as tmp:
+                work, out = self.make_work(Path(tmp), ninja)
+                with self.assertRaises(evidence.EvidenceError) as raised:
+                    evidence.query(ninja, out, ["-t", "inputs", "nonexistent"], evidence.MAX_INPUT_BYTES)
+                reason = str(raised.exception)
+                for text in ("failed (nonzero exit)", "returncode=1", "unknown target", "nonexistent"):
+                    self.assertIn(text, reason)
+
+    def test_query_stdout_cap_on_real_ninja(self):
         with tempfile.TemporaryDirectory() as tmp:
             work, out = self.make_work(Path(tmp), AVAILABLE[0])
-            with self.assertRaisesRegex(evidence.EvidenceError, "byte cap"):
+            with self.assertRaisesRegex(evidence.EvidenceError, "stdout byte cap"):
                 evidence.query(AVAILABLE[0], out, ["-t", "inputs", "chrome"], 4)
-            sleeper = Path(tmp) / "sleeping-ninja"
-            sleeper.write_text("#!/bin/sh\nexec sleep 10\n")
-            sleeper.chmod(0o755)
-            with mock.patch.object(evidence, "NINJA_TIMEOUT", 0.01):
-                with self.assertRaisesRegex(evidence.EvidenceError, "failed or timed out"):
-                    evidence.query(sleeper, out, ["--version"], 4096)
 
 
 if __name__ == "__main__":

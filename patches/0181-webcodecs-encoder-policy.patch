@@ -11,7 +11,7 @@ index eb2fb1670a919d93218c06bfbfe6001d04187be1..545f75dbfb27dc2d45cebbddd30b9bd0
  
  #include <algorithm>
  #include <string>
-@@ -436,6 +438,10 @@
+@@ -444,6 +446,10 @@
  
  bool VerifyCodecSupportStatic(VideoEncoderTraits::ParsedConfig* config,
                                String* js_error_message) {

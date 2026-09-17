@@ -1,0 +1,50 @@
+diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.h b/third_party/blink/renderer/core/frame/web_frame_widget_impl.h
+--- a/third_party/blink/renderer/core/frame/web_frame_widget_impl.h
++++ b/third_party/blink/renderer/core/frame/web_frame_widget_impl.h
+@@ -497,6 +497,7 @@
+   float PageScaleInMainFrame() override;
+   const display::ScreenInfo& GetScreenInfo() override;
+   const display::ScreenInfos& GetScreenInfos() override;
++  std::optional<display::ScreenInfos> GetEmulatedScreenInfos();
+   const display::ScreenInfo& GetOriginalScreenInfo() override;
+   const display::ScreenInfos& GetOriginalScreenInfos() override;
+   gfx::Rect WindowRect() override;
+@@ -780,6 +781,9 @@
+   // Similar to UpdateSurfaceAndScreenInfo but the surface allocation
+   // and compositor viewport rect remains the same.
+   void UpdateScreenInfo(const display::ScreenInfos& screen_infos);
++  void RefreshScreenInfo();
++  uint64_t ScreenUpdateSequence() const { return screen_update_sequence_; }
++  bool IsScreenUpdateCurrent(uint64_t sequence) const;
+   void UpdateSurfaceAndCompositorRect(
+       const viz::LocalSurfaceId& new_local_surface_id,
+       const gfx::Rect& compositor_viewport_pixel_rect);
+@@ -885,6 +889,7 @@
+   bool doing_drag_and_drop_ = false;
+ 
+  private:
++  friend class ScreenMetricsEmulator;
+   friend class WebFrameWidgetSimTest;
+   friend class WebViewImpl;
+   friend class ReportTimeSwapPromise;
+@@ -1158,7 +1163,7 @@
+       const gfx::PointF& pos_in_root_frame);
+ 
+   // Called during |UpdateVisualProperties| to apply the new size to the widget.
+-  void ApplyVisualPropertiesSizing(const VisualProperties& visual_properties);
++  bool ApplyVisualPropertiesSizing(const VisualProperties& visual_properties);
+ 
+   // Returns true iff the visual property state contains an update that will
+   // change the fullscreen state (e.g. on/off or current display).
+@@ -1318,6 +1323,11 @@
+   Member<ScreenMetricsEmulator> device_emulator_;
+   bool uxr_display_initialized_ = false;
+   std::optional<display::ScreenInfos> last_web_exposed_screen_infos_;
++  std::optional<display::ScreenInfos> inherited_emulated_screen_infos_;
++  std::optional<display::ScreenInfo> last_orientation_screen_info_;
++  display::ScreenInfos web_screen_infos_with_orientation_override_;
++  uint64_t screen_update_sequence_ = 0;
++  uint64_t visual_properties_update_sequence_ = 0;
+ 
+   Member<AnimationFrameTimingMonitor> animation_frame_timing_monitor_;
+ 

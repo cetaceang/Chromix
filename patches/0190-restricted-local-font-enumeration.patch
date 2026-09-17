@@ -11,12 +11,9 @@ index f066f2052eb0c6236b27e311afa9d72e37a0a061..e7885f5b355186e8828017ed5cbebf1e
  
  #include <algorithm>
  
-@@ -154,6 +156,8 @@
-   table.ParseFromArray(mapped_mem.data(),
-                        base::checked_cast<int>(mapped_mem.size()));
+@@ -155,3 +157,5 @@
    for (const auto& element : table.fonts()) {
 +    if (!FontCache::IsUxrFontFamilyAllowed(String::FromUtf8(element.family())))
 +      continue;
      // If the optional postscript name filter is set in QueryOptions,
      // only allow items that match.
-     if (hasPostscriptNameFilter &&

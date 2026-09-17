@@ -21,6 +21,7 @@ try:
     from .import_upstream_cache import CLANG, RUST, Miss, digest_file
     from .macos_runtime import bindgen_environment, runtime_environment
     from .macos_sdk_identity import sdk_content_identity, validated_sdk_content
+    from .platform_pins import load_pins
     from .restore_upstream_cache import linked, verify_restored
     from .upstream_object_cache import ninja_deps, ninja_log, write_json
     from .upstream_script_identity import ENDPOINTS
@@ -28,6 +29,7 @@ except ImportError:
     from import_upstream_cache import CLANG, RUST, Miss, digest_file
     from macos_runtime import bindgen_environment, runtime_environment
     from macos_sdk_identity import sdk_content_identity, validated_sdk_content
+    from platform_pins import load_pins
     from restore_upstream_cache import linked, verify_restored
     from upstream_object_cache import ninja_deps, ninja_log, write_json
     from upstream_script_identity import ENDPOINTS
@@ -38,6 +40,50 @@ INSPECTION = ".chromix-restored-build-inspection.json"
 SCHEMA = 2
 COMPILED_SUFFIXES = {".o", ".obj", ".a", ".lib", ".rlib", ".rmeta", ".pch", ".gch", ".pcm", ".bc"}
 METADATA = {"args.gn", "build.ninja", ".ninja_deps", ".ninja_log"}
+DEVTOOLS = "third_party/devtools-frontend/src"
+TYPESCRIPT_WRAPPER = DEVTOOLS + "/third_party/typescript/typescript.py"
+TYPESCRIPT_PACKAGE = DEVTOOLS + "/node_modules/typescript"
+# Complete standard-library declaration set shipped by the pinned TypeScript 6.0.2 package.
+TYPESCRIPT_LIBRARIES = """
+lib.d.ts lib.decorators.d.ts lib.decorators.legacy.d.ts
+lib.dom.asynciterable.d.ts lib.dom.d.ts lib.dom.iterable.d.ts
+lib.es2015.collection.d.ts lib.es2015.core.d.ts lib.es2015.d.ts lib.es2015.generator.d.ts
+lib.es2015.iterable.d.ts lib.es2015.promise.d.ts lib.es2015.proxy.d.ts lib.es2015.reflect.d.ts
+lib.es2015.symbol.d.ts lib.es2015.symbol.wellknown.d.ts
+lib.es2016.array.include.d.ts lib.es2016.d.ts lib.es2016.full.d.ts lib.es2016.intl.d.ts
+lib.es2017.arraybuffer.d.ts lib.es2017.d.ts lib.es2017.date.d.ts lib.es2017.full.d.ts
+lib.es2017.intl.d.ts lib.es2017.object.d.ts lib.es2017.sharedmemory.d.ts lib.es2017.string.d.ts
+lib.es2017.typedarrays.d.ts
+lib.es2018.asyncgenerator.d.ts lib.es2018.asynciterable.d.ts lib.es2018.d.ts lib.es2018.full.d.ts
+lib.es2018.intl.d.ts lib.es2018.promise.d.ts lib.es2018.regexp.d.ts
+lib.es2019.array.d.ts lib.es2019.d.ts lib.es2019.full.d.ts lib.es2019.intl.d.ts
+lib.es2019.object.d.ts lib.es2019.string.d.ts lib.es2019.symbol.d.ts
+lib.es2020.bigint.d.ts lib.es2020.d.ts lib.es2020.date.d.ts lib.es2020.full.d.ts
+lib.es2020.intl.d.ts lib.es2020.number.d.ts lib.es2020.promise.d.ts lib.es2020.sharedmemory.d.ts
+lib.es2020.string.d.ts lib.es2020.symbol.wellknown.d.ts
+lib.es2021.d.ts lib.es2021.full.d.ts lib.es2021.intl.d.ts lib.es2021.promise.d.ts
+lib.es2021.string.d.ts lib.es2021.weakref.d.ts
+lib.es2022.array.d.ts lib.es2022.d.ts lib.es2022.error.d.ts lib.es2022.full.d.ts
+lib.es2022.intl.d.ts lib.es2022.object.d.ts lib.es2022.regexp.d.ts lib.es2022.string.d.ts
+lib.es2023.array.d.ts lib.es2023.collection.d.ts lib.es2023.d.ts lib.es2023.full.d.ts lib.es2023.intl.d.ts
+lib.es2024.arraybuffer.d.ts lib.es2024.collection.d.ts lib.es2024.d.ts lib.es2024.full.d.ts
+lib.es2024.object.d.ts lib.es2024.promise.d.ts lib.es2024.regexp.d.ts
+lib.es2024.sharedmemory.d.ts lib.es2024.string.d.ts
+lib.es2025.collection.d.ts lib.es2025.d.ts lib.es2025.float16.d.ts lib.es2025.full.d.ts
+lib.es2025.intl.d.ts lib.es2025.iterator.d.ts lib.es2025.promise.d.ts lib.es2025.regexp.d.ts
+lib.es5.d.ts lib.es6.d.ts
+lib.esnext.array.d.ts lib.esnext.collection.d.ts lib.esnext.d.ts lib.esnext.date.d.ts
+lib.esnext.decorators.d.ts lib.esnext.disposable.d.ts lib.esnext.error.d.ts lib.esnext.full.d.ts
+lib.esnext.intl.d.ts lib.esnext.sharedmemory.d.ts lib.esnext.temporal.d.ts lib.esnext.typedarrays.d.ts
+lib.scripthost.d.ts lib.webworker.asynciterable.d.ts lib.webworker.d.ts
+lib.webworker.importscripts.d.ts lib.webworker.iterable.d.ts
+""".split()
+# DevTools 511172b786248e29d7493bf954faa57f834dc5b3 + portablelinux revert-tsgo-usage.patch.
+TYPESCRIPT_PORTABLE = "23758f202fffeeb81e6d65fc378fb2d7a59558d682f138f5e7552c1c3139b5de"
+TYPESCRIPT_REPAIRED = {
+    "x64": "ce2996d03f0896752e2fb443b1b1751b337d48fb939eb09ac2acabcb890384c1",
+    "arm64": "35df08a4541b20f917ea4806a547f6ccf2082492e6ef5d05323a266db148c03d",
+}
 
 
 def _sdk_root(path: Path, root: Path) -> bool:
@@ -231,11 +277,77 @@ def linux_sysroot_identity(src: Path, arch: str, *, host_arch: str) -> dict:
     return result
 
 
+def _relocated_sysroot_identity(identity: dict, names: set[str]) -> dict | None:
+    """Normalize only complete hashed identities under one canonical source root."""
+    if not isinstance(identity, dict) or set(identity) != names:
+        return None
+    source_root = None
+
+    def normalize(record, relative, *, directory=False):
+        nonlocal source_root
+        fields = {"path", "mode", "mtime_ns"} if directory else {"path", "size", "mtime_ns", "sha256"}
+        if not isinstance(record, dict) or set(record) != fields:
+            raise ValueError("incomplete sysroot identity")
+        numeric = "mode" if directory else "size"
+        if (type(record[numeric]) is not int or not 0 <= record[numeric] <= (0o7777 if directory else 4096)
+                or type(record["mtime_ns"]) is not int or record["mtime_ns"] < 0
+                or not directory and (not isinstance(record["sha256"], str)
+                                      or re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is None)):
+            raise ValueError("invalid sysroot metadata")
+        value = record["path"]
+        if not isinstance(value, str) or any(char in value for char in ("\0", "\\", ":")):
+            raise ValueError("invalid sysroot path")
+        path, suffix = Path(value), Path(relative)
+        if (not value.startswith("/") or value.startswith("//") or path.as_posix() != value
+                or ".." in path.parts or path.parts[-len(suffix.parts):] != suffix.parts):
+            raise ValueError("noncanonical sysroot path")
+        root = path.parents[len(suffix.parts) - 1]
+        if (root.name != "src" or source_root is not None and root != source_root
+                or any(linked(parent) for parent in (path, *path.parents))):
+            raise ValueError("inconsistent or linked sysroot root")
+        source_root = root
+        return dict(record, path=relative)
+
+    result = {}
+    try:
+        for name, entry in identity.items():
+            if (not isinstance(entry, dict) or set(entry) != {"root", "stamp", "first_class"}
+                    or not isinstance(entry["first_class"], dict)):
+                return None
+            relative = name.rsplit("/", 1)[0]
+            root = normalize(entry["root"], relative, directory=True)
+            stamp = normalize(entry["stamp"], name)
+            first_class = {}
+            for filename, record in entry["first_class"].items():
+                if (not isinstance(filename, str)
+                        or re.fullmatch(r"\.[^/\\\x00]+_is_first_class_gcs", filename) is None):
+                    return None
+                first_class[filename] = normalize(record, relative + "/" + filename)
+            result[name] = {"root": root, "stamp": stamp, "first_class": first_class}
+    except (OSError, ValueError, RuntimeError, IndexError):
+        return None
+    return result
+
+
 def _sysroots_changed(previous: dict | None, current: dict) -> bool | None:
     if previous is None:
         return None
     if "sysroot_identity" in previous:
-        return previous["sysroot_identity"] != current
+        if previous["sysroot_identity"] == current:
+            return False
+        host = previous.get("host")
+        if (type(previous.get("schema_version")) is not int or previous["schema_version"] != SCHEMA
+                or previous.get("platform") != "linux" or not isinstance(host, dict)
+                or host.get("platform") != "linux"
+                or (previous.get("arch"), host.get("arch")) not in
+                (("x64", "x64"), ("arm64", "arm64"), ("arm64", "x64"))):
+            return True
+        cpus = {"x64": "amd64", "arm64": "arm64"}
+        names = {f"build/linux/debian_bullseye_{cpus[arch]}-sysroot/.stamp"
+                 for arch in (previous["arch"], host["arch"])}
+        before = _relocated_sysroot_identity(previous["sysroot_identity"], names)
+        after = _relocated_sysroot_identity(current, names)
+        return before is None or after is None or before != after
     environment = previous.get("environment")
     if not isinstance(environment, dict) or not isinstance(environment.get("sysroots"), dict):
         return None
@@ -412,6 +524,89 @@ def generator_fingerprint(src: Path, platform: str, arch: str, *, host_arch: str
         path = src / relative
         result[name] = {"path": relative.as_posix(),
                         "sha256": digest_file(path) if path.is_file() else None}
+    return result
+
+
+def prepare_linux_typescript(src: Path, *, host_arch: str, repair=False, repo: Path = ROOT) -> dict:
+    """Replace only the pinned portablelinux DevTools wrapper; never use host tsc."""
+    pins = load_pins(repo, "linux")
+    if tuple(pins[key] for key in ("ChromiumVersion", "UngoogledCommit", "UngoogledLinuxCommit")) != (
+            "153.0.8010.36", "dd8fb9b5c837982faf41ba58cd30a5664e77c329",
+            "a5ffa5e4a9fb722b97a5cf7966e29450a150c3dd") or host_arch not in TYPESCRIPT_REPAIRED:
+        raise ValueError("unverified Linux TypeScript wrapper pins/host")
+
+    def regular(relative):
+        path = _safe_file(src, relative)
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not info.st_size:
+            raise ValueError(f"missing, empty or linked TypeScript input: {relative}")
+        return path
+
+    wrapper = regular(TYPESCRIPT_WRAPPER)
+    original = wrapper.read_bytes()
+    before = hashlib.sha256(original).hexdigest()
+    if before not in (TYPESCRIPT_PORTABLE, *TYPESCRIPT_REPAIRED.values()):
+        raise ValueError("unknown restored Linux TypeScript wrapper")
+    package = regular(TYPESCRIPT_PACKAGE + "/package.json")
+    if hashlib.sha256(package.read_bytes()).hexdigest() != (
+            "3004f96b830f722041ea418dc29642d934fc64dcc207992e22a1dc37c7b270ae"):
+        raise ValueError("unexpected pinned TypeScript package metadata")
+    for name in ("tsc.js", "_tsc.js", *TYPESCRIPT_LIBRARIES):
+        regular(TYPESCRIPT_PACKAGE + "/lib/" + name)
+    digest = hashlib.sha256()
+    def walk_error(error):
+        raise error
+    for directory, dirs, files in os.walk(package.parent, followlinks=False, onerror=walk_error):
+        dirs.sort()
+        for name in dirs:
+            _safe_file(src, (Path(directory) / name).relative_to(src).as_posix())
+        for name in sorted(files):
+            path = regular((Path(directory) / name).relative_to(src).as_posix())
+            digest.update(json.dumps([path.relative_to(package.parent).as_posix(), digest_file(path)]).encode())
+
+    desired = TYPESCRIPT_REPAIRED[host_arch]
+    result = {"path": TYPESCRIPT_WRAPPER, "sha256": before,
+              "package_sha256": digest.hexdigest(), "version": "6.0.2",
+              "node": tool_paths("linux", host_arch)["node"].as_posix(),
+              "repair_needed": before != desired}
+    if not repair:
+        return result
+    node = src / result["node"]
+    if host_arch not in binary_architectures(node, "linux") or not os.access(node, os.X_OK):
+        raise ValueError("TypeScript Node does not match the native host")
+    completed = subprocess.run([str(node), str(src / TYPESCRIPT_PACKAGE / "lib/tsc.js"), "--version"],
+                               cwd=src, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               check=False, timeout=30)
+    if completed.returncode or completed.stdout.strip() != "Version 6.0.2":
+        raise ValueError(f"pinned TypeScript probe failed: {completed.stdout[:2000]}")
+    if before != desired:
+        lines = original.splitlines(keepends=True)
+        start = lines.index(b"def GetBinaryPath():\n")
+        end = lines.index(b"def RunTypeScriptRaw(cmd_parts, stdout=None):\n")
+        getter = f'''def GetBinaryPath():
+    return os_path.normpath(os_path.join(os_path.dirname(__file__), '..', '..',
+                                        'node_modules', 'typescript', 'lib', 'tsc.js'))
+
+
+def GetNodePath():
+    return os_path.normpath(os_path.join(os_path.dirname(__file__), '..', '..',
+                                        '..', '..', 'node', 'linux',
+                                        'node-linux-{host_arch}', 'bin', 'node'))
+
+
+'''.encode()
+        tail = [b"    cmd = [GetNodePath(), GetBinaryPath()] + cmd_parts\n"
+                if line == b"    cmd = [GetBinaryPath()] + cmd_parts\n" else
+                b"        cmd = [GetNodePath(), GetBinaryPath()] + cmd_parts\n"
+                if line == b"        cmd = [GetBinaryPath()] + cmd_parts\n" else line
+                for line in lines[end:]]
+        restored = b"".join(lines[:start]) + getter + b"".join(tail)
+        if hashlib.sha256(restored).hexdigest() != desired:
+            raise ValueError("unexpected repaired TypeScript wrapper")
+        if regular(TYPESCRIPT_WRAPPER).read_bytes() != original:
+            raise ValueError("TypeScript wrapper changed during preparation")
+        wrapper.write_bytes(restored)
+    result.update(sha256=desired, repair_needed=False)
     return result
 
 
@@ -645,8 +840,7 @@ def repair_linux_arm64_tool_script(src: Path) -> None:
 
 
 def verify_tooling(work: Path, platform: str, repo: Path = ROOT) -> None:
-    pins = dict(re.findall(r'^\s*(\w+) = "([^"\n]+)"',
-                           (repo / "build/ungoogled-revisions.psd1").read_text(), re.M))
+    pins = load_pins(repo, platform)
     names = {"ungoogled-chromium": pins["UngoogledCommit"]}
     if platform == "macos":
         names["ungoogled-chromium-macos"] = pins["UngoogledMacOSCommit"]
@@ -750,6 +944,9 @@ def _prepare(workdir: Path, platform: str, arch: str, *, phase: str, repo: Path,
                           or bool(pending and pending.get("needs_invalidation")))
     data["operation"] = "generator_fingerprint"
     generators = generator_fingerprint(src, platform, arch, host_arch=inspection["host"]["arch"])
+    if platform == "linux":
+        data["operation"] = "inspect_linux_typescript"
+        generators["typescript"] = prepare_linux_typescript(src, host_arch=inspection["host"]["arch"], repo=repo)
     generators_changed = (bool(pending and pending.get("generators_changed"))
                           or bool(pending and pending.get("generator_fingerprint") != generators)
                           or bool(old and old.get("generator_fingerprint") != generators))
@@ -783,6 +980,12 @@ def _prepare(workdir: Path, platform: str, arch: str, *, phase: str, repo: Path,
         write_json(report_path, data)
         write_json(pending_path, dict(data, phase="inspect"))
         raise ValueError(message)
+    if platform == "linux":
+        data["operation"] = "prepare_linux_typescript"
+        typescript = prepare_linux_typescript(src, host_arch=inspection["host"]["arch"], repair=True, repo=repo)
+        generators_changed |= generators["typescript"] != typescript
+        generators["typescript"] = typescript
+        data["generators_changed"] = generators_changed
     data["operation"] = "environment_identity"
     environment = environment_identity(src, platform)
     data["operation"] = "tool_fingerprint"

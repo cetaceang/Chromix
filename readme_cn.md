@@ -42,7 +42,7 @@ Canvas 原生路径修复和验收边界见 [Canvas 链路记录](docs/canvas-ch
 
 Windows ARM64 在 `windows-2022`（x64）上交叉编译，再由 `windows-11-arm` 执行原生验证。**构建完成不等于已验收或已发布**，请以 Release 的 Assets 为准。下方 Windows 示例使用 x64；下载已发布的 ARM64 包时，将示例中的 `win-x64` 全部替换为 `win-arm64`。
 
-当前源码固定到 Chromium **`152.0.7977.82`**，对应发布标签为 [`v152.0.7977.82`](https://github.com/xiaozhou26/Chromix/releases/tag/v152.0.7977.82)。二进制发布可能滞后于源码。
+当前共享源码基线及 Linux/Windows 固定到 Chromium **`153.0.8010.36`**。截至 2026-09-17，macOS 上游尚无 153 标签或分支，因此通过 `CHROMIUM_MACOS_VERSION` 和平台覆盖字段保留 **`152.0.7977.82`**。Linux x64/ARM64 原构建包已发布为 [`Chromix 153.0.8010.36`](https://github.com/xiaozhou26/Chromix/releases/tag/v153.0.8010.36)，并设为 GitHub Latest。本次合并后的 213 补丁源码尚未完成新的浏览器构建；已发布的 Linux 包不代表这套合并源码已通过原生验收。现有 [`v152.0.7977.82`](https://github.com/xiaozhou26/Chromix/releases/tag/v152.0.7977.82) 发布保持不变。
 
 同一 Chromium 版本的各平台通过构建、校验、解压、版本和无界面运行检查后，可以追加到同一发布标签。不同平台可能来自不同源码提交，具体来源以发布说明中的提交 SHA、工作流和运行记录为准。已有归档不会被同名但内容不同的文件替换。
 
@@ -288,18 +288,19 @@ Node.js 顶层 `executablePath` 也不是该包装层的下载绕过选项；`la
 
 | 层次 | 固定版本 |
 |---|---|
-| Chromium | `152.0.7977.82` |
-| ungoogled-chromium | `152.0.7977.82-1` |
-| ungoogled-chromium-windows | `152.0.7977.82-1.1` |
-| ungoogled-chromium-portablelinux | `152.0.7977.82-1` |
+| Chromium（Linux/Windows） | `153.0.8010.36` |
+| ungoogled-chromium（Linux/Windows） | `153.0.8010.36-1` |
+| ungoogled-chromium-windows | `153.0.8010.36-1.1` |
+| ungoogled-chromium-portablelinux | `153.0.8010.36-1` |
+| Chromium / ungoogled-chromium（macOS 覆盖） | `152.0.7977.82` / `152.0.7977.82-1` |
 | ungoogled-chromium-macos | `152.0.7977.82-1.1` |
-| Chromix | [patches/series](patches/series) 中的 148 个补丁 |
+| Chromix | [patches/series](patches/series) 中的 213 个补丁 |
 
 完整提交固定值见 [build/ungoogled-revisions.psd1](build/ungoogled-revisions.psd1)。
 
 ### Windows x64
 
-需要 Visual Studio 2022 的 C++ 桌面开发工作负载、Windows 11 SDK 10.0.26100 及 Debugging Tools、Python 3、Git、PowerShell 7 和 7-Zip。约 120 GB 空闲磁盘只是起始估算，实际需求取决于源码、对象、快照和打包同时占用的空间。
+需要 Visual Studio 2022 的 C++ 桌面开发工作负载、Windows 11 SDK 10.0.28000.0 的头文件、库及 Debugging Tools、Python 3、Git、PowerShell 7 和 7-Zip。约 120 GB 空闲磁盘只是起始估算，实际需求取决于源码、对象、快照和打包同时占用的空间。
 
 在仓库根目录的 Developer PowerShell 中执行：
 

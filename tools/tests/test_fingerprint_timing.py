@@ -292,8 +292,21 @@ def test_no_eager_recursive_getter_arguments():
 
 
 def test_native_network_getters_unchanged(patched_source):
-    for name in ("fetchStart", "WorkerReady", "connectStart", "connectEnd", "requestStart", "responseStart"):
+    for name in ("WorkerReady", "connectStart", "connectEnd", "requestStart", "responseStart"):
         assert method(patched_source, name) == method(native_fixture(), name)
+
+
+def test_fetch_start_only_guards_static_cache_cycle(patched_source):
+    original = method(native_fixture(), "fetchStart")
+    actual = method(patched_source, "fetchStart")
+    prefix, suffix = original.split("    return responseStart();", 1)
+    assert actual.startswith(prefix)
+    assert actual.endswith("    return responseStart();" + suffix)
+    guard = actual[len(prefix):actual.index("    return responseStart();")]
+    assert "!info_->allow_timing_details" in guard
+    assert "return PerformanceEntry::startTime();" in guard
+    assert not re.search(r"\b(?:fetchStart|responseStart|requestStart)\(\);", guard)
+    assert "uxr-net-timing" not in guard
 
 
 def test_fixture_applies_and_reverses_exactly(tmp_path):
@@ -310,6 +323,7 @@ def test_fixture_applies_and_reverses_exactly(tmp_path):
 @pytest.mark.parametrize("context", [
     '#include "base/notreached.h"',
     '  return fetch_initiator_type_names::kOther;',
+    '          network::mojom::ServiceWorkerRouterSourceType::kCache) {',
     '      info_->timing->connect_timing->domain_lookup_start.is_null()) {',
     '      info_->timing->connect_timing->domain_lookup_end.is_null()) {',
     '  // We would add a DCHECK(false) here but this case may happen, for instance on',
@@ -390,7 +404,7 @@ struct String {
 };
 using DOMHighResTimeStamp = double;
 namespace network::mojom {
-enum class ServiceWorkerRouterSourceType { kCache };
+enum class ServiceWorkerRouterSourceType { kCache, kNetwork };
 }
 struct ConnectTiming {
   base::TimeTicks domain_lookup_start, domain_lookup_end;
@@ -420,7 +434,10 @@ struct ResourceTimingInfo {
 struct LocalDOMWindow {};
 template <typename T> T* DynamicTo(void*) { return nullptr; }
 struct RuntimeEnabledFeatures {
-  static bool ServiceWorkerStaticRouterTimingInfoEnabled(LocalDOMWindow*) { return true; }
+  static inline bool static_router_timing = true;
+  static bool ServiceWorkerStaticRouterTimingInfoEnabled(LocalDOMWindow*) {
+    return static_router_timing;
+  }
 };
 struct Performance {
   static double MonotonicTimeToDOMHighResTimeStamp(base::TimeTicks origin,
@@ -463,13 +480,184 @@ struct PerformanceResourceTiming : PerformanceEntry {
 
 CPP_MAIN = r'''
 template <typename T> auto read(const T& entry) {
-  return std::array<double, 7>{entry.fetchStart(), entry.domainLookupStart(),
+  return std::array<double, 8>{entry.fetchStart(), entry.domainLookupStart(),
       entry.domainLookupEnd(), entry.connectStart(), entry.secureConnectionStart(),
-      entry.connectEnd(), entry.requestStart()};
+      entry.connectEnd(), entry.requestStart(), entry.responseStart()};
+}
+void test_cache_fallbacks() {
+  auto& config = base::UxrConfig::GetInstance();
+  size_t cases = 0, cycles = 0;
+  for (bool enabled : {false, true}) {
+    config.enabled = enabled;
+    for (bool reused : {false, true}) {
+      for (bool allowed : {false, true}) {
+        for (int gate = 0; gate < 8; ++gate) {
+          for (int mask = 0; mask < 129; ++mask) {
+            for (int clock = 0; clock < 3; ++clock) {
+              for (bool isolated : {false, true}) {
+                RuntimeEnabledFeatures::static_router_timing = gate != 1;
+                ConnectTiming connect;
+                LoadTiming timing;
+                RouterInfo router;
+                mojom::blink::ResourceTimingInfo info;
+                info.timing = gate == 4 ? nullptr : &timing;
+                info.service_worker_router_info = gate == 2 ? nullptr : &router;
+                if (gate == 3) {
+                  router.actual_source_type = network::mojom::ServiceWorkerRouterSourceType::kNetwork;
+                }
+                info.allow_timing_details = allowed;
+                info.did_reuse_connection = reused;
+                info.allow_negative_values = clock == 2;
+                info.is_secure_transport = isolated;
+                // A null connection and an allocated all-null connection both occur.
+                timing.connect_timing = mask == 0 ? nullptr : &connect;
+                const double origin = clock == 0 ? 1000 : 930;
+                const auto tick = [&](int bit, double offset) {
+                  return base::TimeTicks{mask & (1 << bit) ? origin + offset : 0};
+                };
+                connect.domain_lookup_start = tick(0, 10);
+                connect.domain_lookup_end = tick(1, 20);
+                connect.connect_start = tick(2, 30);
+                connect.connect_end = tick(3, 40);
+                timing.send_start = tick(4, 50);
+                timing.receive_headers_end = tick(5, 70);
+                timing.receive_headers_start = tick(6, 60);
+                if (gate == 5) info.last_redirect_end_time = {1004};
+                if (gate == 6) timing.service_worker_ready_time = {1008};
+                if (gate == 7) timing.service_worker_ready_time = {1000};
+                native::PerformanceResourceTiming original(&info);
+                persona::PerformanceResourceTiming actual(&info);
+                original.isolated = actual.isolated = isolated;
+                original.start = actual.start = clock == 2 ? -80 : 1;
+                const auto convert = [&](base::TimeTicks value) {
+                  return Performance::MonotonicTimeToDOMHighResTimeStamp(
+                      actual.TimeOrigin(), value, info.allow_negative_values, isolated);
+                };
+                // Independent timestamp oracle: never call native getters for cyclic inputs.
+                base::TimeTicks terminal;
+                for (auto candidate : {timing.receive_headers_start, timing.receive_headers_end,
+                                       timing.send_start, reused ? base::TimeTicks{} : connect.connect_end,
+                                       reused ? base::TimeTicks{} : connect.connect_start,
+                                       connect.domain_lookup_end, connect.domain_lookup_start}) {
+                  if (!candidate.is_null()) { terminal = candidate; break; }
+                }
+                if (timing.receive_headers_start.is_null() && timing.receive_headers_end.is_null() &&
+                    timing.send_start.is_null() && (reused || connect.connect_end.is_null()) &&
+                    !reused && !connect.connect_start.is_null() && !connect.domain_lookup_end.is_null()) {
+                  terminal = connect.domain_lookup_end;
+                }
+                const bool cache_branch = gate == 0 || gate == 7;
+                const bool native_cycle = cache_branch && allowed && terminal.is_null();
+                double expected_fetch = actual.start;
+                if (gate == 5) expected_fetch = convert(timing.request_start);
+                else if (gate == 6) expected_fetch = convert(timing.service_worker_ready_time);
+                else if (cache_branch) {
+                  if (!allowed) expected_fetch = 0;
+                  else if (!terminal.is_null()) expected_fetch = convert(terminal);
+                }
+                const auto saved_info = info;
+                const auto saved_timing = timing;
+                const auto saved_connect = connect;
+                const double response_first = actual.responseStart();
+                const auto got = read(actual);
+                assert(got[0] == expected_fetch);
+                assert(got[7] == response_first);
+                if (native_cycle) {
+                  for (size_t index = 0; index < got.size(); ++index) {
+                    assert(got[index] == (index == 4 && !info.is_secure_transport ? 0 : actual.start));
+                  }
+                  ++cycles;
+                } else if (!enabled || cache_branch) {
+                  assert(got == read(original));
+                }
+                for (double value : got) assert(std::isfinite(value));
+                assert(actual.requestStart() == got[6]);
+                assert(actual.connectEnd() == got[5]);
+                assert(actual.secureConnectionStart() == got[4]);
+                assert(actual.connectStart() == got[3]);
+                assert(actual.domainLookupEnd() == got[2]);
+                assert(actual.domainLookupStart() == got[1]);
+                assert(actual.fetchStart() == got[0]);
+                assert(read(actual) == got);
+                assert(info == saved_info && timing == saved_timing && connect == saved_connect);
+                ++cases;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  assert(cycles > 0);
+  std::cout << "cache-fallbacks: " << cases << " cases passed\n";
+}
+void test_cache_connection_edges() {
+  auto& config = base::UxrConfig::GetInstance();
+  RuntimeEnabledFeatures::static_router_timing = true;
+  size_t cases = 0;
+  for (int flags = 0; flags < 32; ++flags) {
+    config.enabled = flags & 1;
+    const bool reused = flags & 2, allowed = flags & 4;
+    const bool isolated = flags & 8, secure = flags & 16;
+    for (bool has_connect : {false, true}) {
+      for (int phases = 0; phases < 8; ++phases) {
+        for (int tls = 0; tls < 4; ++tls) {
+          ConnectTiming connect;
+          connect.connect_start = connect.connect_end = {};
+          connect.ssl_start = {tls & 1 ? 1025.0 : 0};
+          connect.ssl_end = {tls & 2 ? 1035.0 : 0};
+          LoadTiming timing;
+          timing.connect_timing = has_connect ? &connect : nullptr;
+          timing.send_start = {phases & 1 ? 1050.0 : 0};
+          timing.receive_headers_end = {phases & 2 ? 1070.0 : 0};
+          timing.receive_headers_start = {phases & 4 ? 1060.0 : 0};
+          RouterInfo router;
+          mojom::blink::ResourceTimingInfo info;
+          info.timing = &timing;
+          info.service_worker_router_info = &router;
+          info.allow_timing_details = allowed;
+          info.did_reuse_connection = reused;
+          info.is_secure_transport = secure;
+          native::PerformanceResourceTiming original(&info);
+          persona::PerformanceResourceTiming actual(&info);
+          original.isolated = actual.isolated = isolated;
+          const auto convert = [&](base::TimeTicks value) {
+            return Performance::MonotonicTimeToDOMHighResTimeStamp(
+                actual.TimeOrigin(), value, false, isolated);
+          };
+          const double fetch = !allowed ? 0 : phases & 4 ? convert(timing.receive_headers_start)
+              : phases & 2 ? convert(timing.receive_headers_end)
+              : phases & 1 ? convert(timing.send_start) : actual.start;
+          const double ssl = !allowed || !secure ? 0
+              : !reused && has_connect && (tls & 1) ? convert(connect.ssl_start) : fetch;
+          const double request = !allowed ? 0 : phases & 1 ? convert(timing.send_start) : fetch;
+          const std::array<double, 8> expected{fetch, fetch, fetch, fetch, ssl, fetch, request, fetch};
+          const auto saved_info = info;
+          const auto saved_timing = timing;
+          const auto saved_connect = connect;
+          assert(actual.secureConnectionStart() == ssl);
+          assert(read(actual) == expected);
+          if (!allowed || phases) assert(read(actual) == read(original));
+          assert(read(actual) == expected);
+          assert(info == saved_info && timing == saved_timing && connect == saved_connect);
+          ++cases;
+        }
+      }
+    }
+  }
+  std::cout << "cache-connection-edges: " << cases << " cases passed\n";
 }
 int main(int argc, char** argv) {
   assert(argc == 2);
   const std::string scenario = argv[1];
+  if (scenario == "cache-connection-edges") {
+    test_cache_connection_edges();
+    return 0;
+  }
+  if (scenario == "cache-fallbacks") {
+    test_cache_fallbacks();
+    return 0;
+  }
   auto& config = base::UxrConfig::GetInstance();
   size_t cases = 0;
   for (bool enabled : {false, true}) {
@@ -598,8 +786,8 @@ int main(int argc, char** argv) {
 '''
 
 
-@pytest.fixture(scope="module")
-def timing_executable(tmp_path_factory, patched_source):
+@pytest.fixture(scope="module", params=["-O0", "-O2"], ids=["debug", "optimized"])
+def timing_executable(tmp_path_factory, patched_source, request):
     compiler = shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
     if compiler is None:
         pytest.skip("a C++20 compiler is required for the standalone timing harness")
@@ -618,7 +806,7 @@ def timing_executable(tmp_path_factory, patched_source):
     root = tmp_path_factory.mktemp("timing-cpp")
     cpp, exe = root / "timing.cc", root / "timing"
     cpp.write_text(source)
-    result = subprocess.run([compiler, "-std=c++20", "-O0", "-Wall", "-Wextra", "-Werror",
+    result = subprocess.run([compiler, "-std=c++20", request.param, "-Wall", "-Wextra", "-Werror",
                              str(cpp), "-o", str(exe)], capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
     return exe
@@ -633,3 +821,13 @@ def test_standalone_native_and_persona_behavior(timing_executable, scenario):
                             text=True, timeout=10)
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout == f"{scenario}: 1024 cases passed\n"
+
+
+@pytest.mark.parametrize("scenario,cases", [
+    ("cache-fallbacks", 49536), ("cache-connection-edges", 2048),
+])
+def test_static_router_cache_fallbacks(timing_executable, scenario, cases):
+    result = subprocess.run([str(timing_executable), scenario], capture_output=True,
+                            text=True, timeout=10)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout == f"{scenario}: {cases} cases passed\n"

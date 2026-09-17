@@ -34,15 +34,11 @@ class CrossPlatformBuildRegressionTest(unittest.TestCase):
             self.assertIn("utils/domain_substitution.py", source)
 
     def test_platform_commits_are_explicitly_pinned(self):
-        source = REVISIONS.read_text(encoding="utf-8")
-        self.assertIn(
-            'UngoogledLinuxCommit = "02c59ed68d1963a647bb478064823d114e466ffb"',
-            source,
-        )
-        self.assertIn(
-            'UngoogledMacOSCommit = "038db2b41f7aeb00bbceb2f5a56912b26eb5b284"',
-            source,
-        )
+        from tools.platform_pins import load_pins
+
+        for platform, field in (("linux", "UngoogledLinuxCommit"), ("macos", "UngoogledMacOSCommit")):
+            self.assertRegex(load_pins(REPO, platform)[field], r"^[a-f0-9]{40}$")
+        self.assertEqual(load_pins(REPO, "macos")["ChromiumVersion"], "152.0.7977.82")
 
     def test_workflow_matches_sdk_asset_names(self):
         source = "\n".join((WORKFLOWS / f"build-{platform}-{arch}.yml").read_text()
@@ -104,6 +100,50 @@ class CrossPlatformBuildRegressionTest(unittest.TestCase):
                 self.assertIn('test "$(go env GOVERSION)" = go1.27.1', verify["run"])
                 mac_tools = next(step for step in steps if step.get("name") == "Install macOS build tools")
                 self.assertEqual(mac_tools["run"], "brew install ninja coreutils gpatch zstd")
+
+    def test_posix_resolves_platform_version_before_cache_and_runtime(self):
+        import yaml
+
+        workflow = yaml.safe_load((WORKFLOWS / "build-posix-github.yml").read_text())
+        self.assertNotIn("CHROMIUM_VERSION", workflow["env"])
+        for name, job in workflow["jobs"].items():
+            with self.subTest(job=name):
+                steps = job["steps"]
+                resolve = next(step for step in steps if step.get("name") == "Resolve platform Chromium version")
+                checkout = next(step for step in steps if step.get("uses") == "actions/checkout@v4")
+                python = next(step for step in steps if step.get("uses") == "actions/setup-python@v5")
+                self.assertLess(steps.index(checkout), steps.index(resolve))
+                self.assertLess(steps.index(python), steps.index(resolve))
+                self.assertEqual(resolve["env"], {"BUILD_PLATFORM": "${{ inputs.platform }}"})
+                self.assertIn('tools/platform_pins.py --platform "$BUILD_PLATFORM" --field ChromiumVersion',
+                              resolve["run"])
+                self.assertIn('>> "$GITHUB_ENV"', resolve["run"])
+                self.assertNotIn("continue-on-error", resolve)
+                if name.startswith("posix-"):
+                    cache = next(step for step in steps if step.get("uses") == "actions/cache@v4")
+                    self.assertLess(steps.index(resolve), steps.index(cache))
+                    self.assertIn("${{ env.CHROMIUM_VERSION }}", cache["with"]["key"])
+                    for pin in ("CHROMIUM_VERSION", "CHROMIUM_LINUX_VERSION", "CHROMIUM_MACOS_VERSION", "tools/platform_pins.py",
+                                "build/ungoogled-revisions.psd1"):
+                        self.assertIn("'" + pin + "'", cache["with"]["key"])
+                else:
+                    smoke = next(step for step in steps if step.get("name") == "Verify checksum and native launcher")
+                    gate = next(step for step in steps if step.get("name") == "Native ARM64 fingerprint regression gate")
+                    self.assertIn('--chromium-version "$CHROMIUM_VERSION"', smoke["run"])
+                    self.assertIn('--expected-version "$CHROMIUM_VERSION"', gate["run"])
+                    self.assertLess(steps.index(resolve), steps.index(smoke))
+                    self.assertLess(steps.index(resolve), steps.index(gate))
+
+    def test_posix_entrypoints_trigger_on_independent_pins(self):
+        import yaml
+
+        for platform in ("linux", "macos"):
+            for arch in ("x64", "arm64"):
+                workflow = yaml.safe_load((WORKFLOWS / f"build-{platform}-{arch}.yml").read_text())
+                paths = workflow[True]["push"]["paths"]
+                self.assertIn(f"CHROMIUM_{platform.upper()}_VERSION", paths)
+                self.assertIn("CHROMIUM_VERSION", paths)
+                self.assertIn("tools/platform_pins.py", paths)
 
     def test_linux_arm64_cross_build_requires_same_run_native_verification(self):
         import yaml

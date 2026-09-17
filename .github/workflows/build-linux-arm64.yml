@@ -4,37 +4,37 @@ on:
   workflow_dispatch:
     inputs:
       resume_run_id:
-        description: 'Completed Linux ARM64 run whose exact checkpoint starts this new eight-stage build'
+        description: 'Build: checkpoint donor run; verify: only final-bundle donor 35112146785 (no compilation)'
         type: string
         default: ''
       resume_tree_stage:
-        description: 'Donor checkpoint stage (1-8)'
+        description: 'Build: donor checkpoint stage (1-8); verify: must be final, never a tree checkpoint'
         type: string
         default: '7'
       resume_artifact_ids:
-        description: 'Complete comma-separated artifact ID set recorded for the donor checkpoint'
+        description: 'Build: complete checkpoint IDs; verify: exactly 10465215017,10464950664 (bundle + source receipt)'
         type: string
         default: ''
       resume_attempt:
-        description: 'Exact attempt that uploaded the donor checkpoint'
+        description: 'Exact donor upload attempt; verify requires 1'
         type: string
         default: '1'
       compile_jobs:
-        description: 'Ninja jobs: auto uses CPU/memory limits, or a positive integer'
+        description: 'Build: Ninja jobs auto or positive integer; verify requires auto (no compiler invoked)'
         type: string
         default: auto
       build_profile:
-        description: 'ThinLTO optimization profile'
+        description: 'Build: ThinLTO optimization profile; verify requires fast (does not rebuild)'
         type: choice
         options: [fast, release]
         default: fast
       build_mode:
-        description: 'Staged snapshot/resume or a single job that must finish'
+        description: 'Staged/single build, or verify the pinned Linux 153 final bundle natively without compiling'
         type: choice
-        options: [staged, single]
+        options: [staged, single, verify]
         default: staged
       use_upstream_cache:
-        description: 'Require pinned full upstream source + out/Default reuse; false permits cold builds'
+        description: 'Build only: require pinned full upstream reuse; verify requires true and never restores a tree'
         type: boolean
         default: true
   push:
@@ -72,6 +72,8 @@ on:
       - 'sdk/python/pyproject.toml'
       - '.github/workflows/build-linux-arm64.yml'
       - '.github/workflows/build-posix-github.yml'
+      - 'tools/platform_pins.py'
+      - 'CHROMIUM_LINUX_VERSION'
       - 'CHROMIUM_VERSION'
       - 'UNGOOGLED_VERSION'
 
@@ -85,6 +87,7 @@ concurrency:
 
 jobs:
   build:
+    if: ${{ inputs.build_mode != 'verify' }}
     name: Linux arm64 (x64-host build + native smoke)
     uses: ./.github/workflows/build-posix-github.yml
     with:
@@ -101,3 +104,89 @@ jobs:
       resume_artifact_ids: ${{ inputs.resume_artifact_ids || '' }}
       use_upstream_cache: ${{ github.event_name != 'workflow_dispatch' || inputs.use_upstream_cache }}
     secrets: inherit
+
+  reverify:
+    name: Reverify pinned Linux 153 ARM64 final bundle (no build)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_mode == 'verify' }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 65
+    env:
+      REVERIFY_INPUTS: ${{ toJSON(inputs) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Initialize absolute session paths
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/chromix-arm64-reverify/diagnostics"
+          # Chromium's nested SingletonSocket path must fit Linux's 108-byte limit.
+          TMPDIR="$(mktemp -d /tmp/cx-arm64.XXXXXX)"
+          echo "TMPDIR=$TMPDIR" >> "$GITHUB_ENV"
+          echo "REVERIFY_DIR=${RUNNER_TEMP}/chromix-arm64-reverify" >> "$GITHUB_ENV"
+      - name: Validate explicit prebuilt-only dispatch
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR" "$REVERIFY_DIR/diagnostics"
+          python3 tools/reverify_linux_arm64.py guard --prebuilt-only \
+            2>&1 | tee "$REVERIFY_DIR/diagnostics/guard.log"
+      - name: Download and validate pinned donor bundle and source receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 tools/reverify_linux_arm64.py prepare --prebuilt-only --directory "$REVERIFY_DIR" \
+            2>&1 | tee "$REVERIFY_DIR/diagnostics/prepare.log"
+      - name: Install native runtime and fingerprint dependencies
+        run: |
+          set -euo pipefail
+          {
+            sudo apt-get update
+            sudo apt-get install -y apparmor-utils libasound2t64 libatk1.0-0t64 libatk-bridge2.0-0t64 \
+              libcups2t64 libgbm1 libgtk-3-0t64 libnss3 libx11-xcb1 libxcomposite1 \
+              libxdamage1 libxfixes3 libxkbcommon0 libxrandr2 unzip
+            timeout -k 15s 300s python3 -m pip install --disable-pip-version-check --timeout 30 --retries 1 \
+              -r tools/fingerprint-requirements.txt
+          } 2>&1 | tee "$REVERIFY_DIR/diagnostics/dependencies.log"
+      - name: Verify sandboxed native launcher and exact Linux 153 version
+        run: |
+          set -euo pipefail
+          bash build/linux/prepare-ci-sandbox.sh "$REVERIFY_DIR/bundle/chromix/chrome" \
+            2>&1 | tee "$REVERIFY_DIR/diagnostics/sandbox.log"
+          python3 tools/verify_linux_bundle.py \
+            --bundle-dir "$REVERIFY_DIR/bundle/chromix" --arch arm64 --runtime \
+            --chromium-version 153.0.8010.36 \
+            > "$REVERIFY_DIR/diagnostics/native-smoke.json" \
+            2> "$REVERIFY_DIR/diagnostics/native-smoke.stderr.log"
+      - name: Native ARM64 fingerprint regression gate (all suites)
+        id: acceptance
+        run: |
+          set -euo pipefail
+          timeout -k 30s 2100s python3 tools/fingerprint_acceptance.py \
+            --browser "$REVERIFY_DIR/bundle/chromix/chrome" \
+            --expected-sha256 be8a47546e2771d20b7ffdde88059e6ae83d840ce03145b0a23a9acaf076c33f \
+            --expected-version 153.0.8010.36 \
+            --source-report "$REVERIFY_DIR/diagnostics/source-final.json" \
+            --output-dir "$REVERIFY_DIR/diagnostics/acceptance" \
+            2>&1 | tee "$REVERIFY_DIR/diagnostics/acceptance.log"
+      - name: Bind reverified result to donor and verifier commit
+        if: always()
+        env:
+          ACCEPTANCE_OUTCOME: ${{ steps.acceptance.outcome }}
+          REVERIFY_DIR: ${{ runner.temp }}/chromix-arm64-reverify
+        run: |
+          set -euo pipefail
+          mkdir -p "$REVERIFY_DIR/diagnostics"
+          python3 tools/reverify_linux_arm64.py finalize --prebuilt-only --directory "$REVERIFY_DIR" \
+            2>&1 | tee "$REVERIFY_DIR/diagnostics/finalize.log"
+      - name: Upload re-verification logs and acceptance diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chromix-linux-arm64-reverified-donor-35112146785-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/chromix-arm64-reverify/diagnostics/
+          if-no-files-found: error
+          retention-days: 14

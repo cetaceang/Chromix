@@ -290,7 +290,8 @@ npx @xiaoxiaofeihh/chromix --version
 ## Versioning
 
 The npm package follows SemVer independently of Chromium's four-part version.
-The bundled SDK currently targets Chromium source `152.0.7977.82`; the actual
+The source checkout targets Chromium `153.0.8010.36` on Linux/Windows and retains
+macOS `152.0.7977.82` until its upstream 153 platform release exists. The actual
 binary release selected by `stable` or `latest` is shown by `chromix info`.
 
 ## License

@@ -21,7 +21,6 @@ from unittest import mock
 
 from tools import fetch_upstream_cache as cache
 
-VERSION = b"MAJOR=152\nMINOR=0\nBUILD=7977\nPATCH=82\n"
 NOW = datetime(2026, 9, 8, tzinfo=timezone.utc)
 MTIME = 1700000000123456700
 
@@ -76,6 +75,44 @@ def zip_bytes(entries):
     return output.getvalue()
 
 
+def synthetic_windows_source(repo):
+    """Return a test-only donor; it is not an upstream artifact claim."""
+    pins = cache.load_pins(repo, "windows")
+    payload = zip_bytes([("artifacts.zip", "file", zip_bytes([]))])
+    return {
+        "chromium_version": pins["ChromiumVersion"], "ungoogled_commit": pins["UngoogledCommit"],
+        "repository": "ungoogled-software/ungoogled-chromium-windows", "repository_id": 177210827,
+        "head_sha": pins["UngoogledWindowsCommit"], "head_branch": pins["UngoogledWindowsVersion"],
+        "event": "push", "workflow_path": ".github/workflows/build-x64.yml",
+        "run_id": 101, "source_roots": ["src", "build/src"],
+        "artifacts": {"x64": {
+            "id": 102, "name": "synthetic-windows-donor", "size_in_bytes": len(payload),
+            "digest": digest(payload), "expires_at": "2099-01-01T00:00:00Z",
+            "inner_archive": "artifacts.zip",
+        }},
+    }
+
+
+def windows153_source(repo):
+    """Configure a test-only Windows153 target independently of production pins."""
+    pins = cache.load_shared_pins(repo)
+    pins.update(WindowsChromiumVersion="153.0.8010.36", WindowsUngoogledVersion="153.0.8010.36-1",
+                WindowsUngoogledCommit="e" * 40, UngoogledWindowsVersion="153.0.8010.36-1.1",
+                UngoogledWindowsCommit="f" * 40)
+    (repo / "build/ungoogled-revisions.psd1").write_text(
+        "@{\n" + "".join(f'  {key} = "{value}"\n' for key, value in pins.items()) + "}\n")
+    (repo / "CHROMIUM_WINDOWS_VERSION").write_text("153.0.8010.36\n")
+    return synthetic_windows_source(repo)
+
+
+def unavailable_source(repo, target, source):
+    pins = cache.load_pins(repo, target)
+    return {key: value for key, value in dict(
+        source, available=False, chromium_version=pins["ChromiumVersion"],
+        ungoogled_commit=pins["UngoogledCommit"]).items()
+        if key not in ("run_id", "artifacts")}
+
+
 class Response(io.BytesIO):
     status = 200
 
@@ -106,9 +143,13 @@ class FetchUpstreamCacheTest(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         (self.root / "build").mkdir()
-        for name in ("CHROMIUM_VERSION", "build/ungoogled-revisions.psd1", "build/upstream-cache.json"):
-            shutil.copyfile(cache.ROOT / name, self.root / name)
+        for name in ("CHROMIUM_VERSION", "CHROMIUM_LINUX_VERSION", "CHROMIUM_MACOS_VERSION", "CHROMIUM_WINDOWS_VERSION",
+                     "build/ungoogled-revisions.psd1", "build/upstream-cache.json"):
+            if (cache.ROOT / name).is_file():
+                shutil.copyfile(cache.ROOT / name, self.root / name)
         self.manifest = json.loads((self.root / "build/upstream-cache.json").read_text())
+        self.manifest["sources"]["windows"] = synthetic_windows_source(self.root)
+        self.save_manifest()
         self.destination = self.root / "cache"
         self.pin, self.identity = cache.load_manifest("windows", "x64", root=self.root)
         disk = mock.patch.object(cache.shutil, "disk_usage", return_value=mock.Mock(free=1024**4))
@@ -119,8 +160,11 @@ class FetchUpstreamCacheTest(unittest.TestCase):
         (self.root / "build/upstream-cache.json").write_text(json.dumps(self.manifest))
 
     def fixture_client(self, platform="windows", arch="x64", source="src", extra=()):
+        version = cache.load_pins(self.root, platform)["ChromiumVersion"]
+        version_bytes = "".join(f"{key}={value}\n" for key, value in zip(
+            ("MAJOR", "MINOR", "BUILD", "PATCH"), version.split("."))).encode()
         entries = [(source, "dir", b""), (source + "/BUILD.gn", "file", b"build"),
-                   (source + "/chrome/VERSION", "file", VERSION),
+                   (source + "/chrome/VERSION", "file", version_bytes),
                    (source + "/chrome/browser/file.cc", "file", b"source"),
                    (source + "/out/Default/args.gn", "file", b"target_cpu=\"x64\""),
                    (source + "/out/Default/build.ninja", "file", b"build-ninja"),
@@ -143,6 +187,249 @@ class FetchUpstreamCacheTest(unittest.TestCase):
         client.json = mock.Mock(side_effect=[run, artifact])
         client.open = mock.Mock(side_effect=lambda *a, **kw: Response(outer))
         return client
+
+    def linux_overrides(self):
+        pins = cache.load_shared_pins(self.root)
+        pins.update(LinuxChromiumVersion="153.0.8010.36",
+                    LinuxUngoogledVersion="153.0.8010.36-1",
+                    LinuxUngoogledCommit="e" * 40,
+                    UngoogledLinuxVersion="153.0.8010.36-1", UngoogledLinuxCommit="f" * 40)
+        (self.root / "build/ungoogled-revisions.psd1").write_text(
+            "@{\n" + "".join(f'  {key} = "{value}"\n' for key, value in pins.items()) + "}\n")
+        (self.root / "CHROMIUM_LINUX_VERSION").write_text("153.0.8010.36\n")
+        self.manifest["sources"]["linux"].update(
+            chromium_version="153.0.8010.36", ungoogled_commit="e" * 40,
+            head_sha="f" * 40, head_branch="153.0.8010.36-1")
+        self.save_manifest()
+
+    def test_linux_source_overrides_preserve_schema_and_nonlinux_identity(self):
+        before = {target: cache.load_manifest(target, "x64", root=self.root)
+                  for target in ("macos", "windows")}
+        global_identity = {key: self.manifest[key] for key in ("chromium_version", "ungoogled_commit")}
+        sources = copy.deepcopy(self.manifest["sources"])
+        self.linux_overrides()
+        for arch in ("x64", "arm64"):
+            pin, identity = cache.load_manifest("linux", arch, root=self.root)
+            self.assertEqual(pin["chromium_version"], "153.0.8010.36")
+            self.assertEqual(pin["ungoogled_commit"], "e" * 40)
+            self.assertEqual(identity["chromium_version"], "153.0.8010.36")
+            self.assertEqual(identity["schema_version"], 1)
+        for key, value in global_identity.items():
+            self.assertEqual(self.manifest[key], value)
+        for target, (old_pin, old_identity) in before.items():
+            self.assertEqual(self.manifest["sources"][target], sources[target])
+            pin, identity = cache.load_manifest(target, "x64", root=self.root)
+            self.assertEqual(pin, old_pin)
+            self.assertEqual({key: value for key, value in identity.items() if key != "sha256"},
+                             {key: value for key, value in old_identity.items() if key != "sha256"})
+
+    def test_source_override_mismatches_are_rejected(self):
+        self.linux_overrides()
+        for target in ("linux", "macos", "windows"):
+            for field in ("chromium_version", "ungoogled_commit"):
+                with self.subTest(target=target, field=field):
+                    changed = copy.deepcopy(self.manifest)
+                    changed["sources"][target][field] = "wrong"
+                    (self.root / "build/upstream-cache.json").write_text(json.dumps(changed))
+                    with self.assertRaisesRegex(cache.CacheMiss, "pin_mismatch"):
+                        cache.load_manifest(target, "x64", root=self.root)
+        self.save_manifest()
+
+    def test_linux_manifest_fallback_requires_matching_shared_identity(self):
+        self.linux_overrides()
+        for field in ("chromium_version", "ungoogled_commit"):
+            with self.subTest(field=field):
+                saved = self.manifest["sources"]["linux"].pop(field)
+                self.save_manifest()
+                if saved == self.manifest[field]:
+                    cache.load_manifest("linux", "x64", root=self.root)
+                else:
+                    with self.assertRaisesRegex(cache.CacheMiss, "pin_mismatch"):
+                        cache.load_manifest("linux", "x64", root=self.root)
+                self.manifest["sources"]["linux"][field] = saved
+        self.save_manifest()
+
+    def test_each_source_validates_its_platform_version_file(self):
+        self.linux_overrides()
+        for value in ("invalid\n", None):
+            path = self.root / "CHROMIUM_LINUX_VERSION"
+            if value is None:
+                path.unlink()
+            else:
+                path.write_text(value)
+            for target in cache.SOURCES:
+                with self.subTest(value=value, target=target):
+                    with self.assertRaisesRegex(cache.CacheMiss, "pin_mismatch"):
+                        cache.load_manifest(target, "x64", root=self.root)
+
+    def test_checked_in_windows_cache_is_unavailable_without_network(self):
+        manifest = json.loads(cache.MANIFEST.read_text())
+        self.assertEqual(manifest["chromium_version"], "153.0.8010.36")
+        source = manifest["sources"]["windows"]
+        self.assertIs(source["available"], False)
+        self.assertEqual(set(source), cache.UNAVAILABLE_SOURCE_FIELDS)
+        self.assertEqual(source["chromium_version"], "153.0.8010.36")
+        self.assertEqual(source["head_sha"], "d99843ca7c336a61f482844d31385a53e9970979")
+        for arch in ("x64", "arm64"):
+            client = mock.Mock()
+            result = cache.fetch("windows", arch, self.destination, root=cache.ROOT, client=client)
+            self.assertEqual(result["reason"], "source_unavailable")
+            self.assertEqual(result["download_bytes"], 0)
+            self.assertEqual(client.mock_calls, [])
+
+    def test_macos_identity_requires_explicit_152_source_under_shared_153(self):
+        pin, _ = cache.load_manifest("macos", "x64", root=self.root)
+        self.assertEqual(pin["chromium_version"], "152.0.7977.82")
+        for field in ("chromium_version", "ungoogled_commit"):
+            value = self.manifest["sources"]["macos"].pop(field)
+            self.save_manifest()
+            for target in cache.SOURCES:
+                with self.subTest(field=field, target=target), self.assertRaisesRegex(cache.CacheMiss, "pin_mismatch"):
+                    cache.load_manifest(target, "x64", root=self.root)
+            self.manifest["sources"]["macos"][field] = value
+            self.save_manifest()
+
+    def test_manifest_shared_identity_cannot_follow_macos_override(self):
+        self.manifest.update(chromium_version="152.0.7977.82",
+                             ungoogled_commit="e71b91c6e336d0f25cfc6b9ef09298a9d2506e24")
+        self.save_manifest()
+        for target in cache.SOURCES:
+            with self.subTest(target=target), self.assertRaisesRegex(cache.CacheMiss, "pin_mismatch"):
+                cache.load_manifest(target, "x64", root=self.root)
+
+    def test_disabled_windows_fixture_refuses_network_before_donor_validation(self):
+        manifest = self.manifest
+        manifest["sources"]["windows"] = unavailable_source(
+            self.root, "windows", manifest["sources"]["windows"])
+        self.save_manifest()
+        source = manifest["sources"]["windows"]
+        pins = cache.load_pins(self.root, "windows")
+        self.assertIs(source["available"], False)
+        self.assertEqual(set(source), cache.UNAVAILABLE_SOURCE_FIELDS)
+        self.assertEqual(source["chromium_version"], pins["ChromiumVersion"])
+        self.assertEqual(source["ungoogled_commit"], pins["UngoogledCommit"])
+        self.assertEqual(source["head_sha"], pins["UngoogledWindowsCommit"])
+        self.assertEqual(source["head_branch"], pins["UngoogledWindowsVersion"])
+        self.assertEqual(manifest["chromium_version"], "153.0.8010.36")
+        for arch in ("x64", "arm64"):
+            for run_id in (None, 34806882978, 33898278106):
+                with self.subTest(arch=arch, run_id=run_id):
+                    client = mock.Mock()
+                    result = cache.fetch("windows", arch, self.destination, run_id, root=self.root, client=client)
+                    self.assertEqual(result["reason"], "source_unavailable")
+                    self.assertEqual(result["status"], "miss")
+                    self.assertIsNone(result["source"])
+                    self.assertEqual([result[key] for key in
+                                      ("download_bytes", "inner_bytes", "extracted_bytes")], [0, 0, 0])
+                    self.assertEqual(result["manifest"]["chromium_version"], pins["ChromiumVersion"])
+                    self.assertIs(result["manifest"]["available"], False)
+                    self.assertNotIn("run_id", result["manifest"])
+                    self.assertNotIn("artifact_id", result["manifest"])
+                    self.assertEqual(list(self.destination.iterdir()), [self.destination / "result.json"])
+                    self.assertEqual(json.loads((self.destination / "result.json").read_text()), result)
+                    self.assertEqual(client.mock_calls, [])
+        for target, version in (("linux", "153.0.8010.36"), ("macos", "152.0.7977.82")):
+            for arch in ("x64", "arm64"):
+                self.assertEqual(cache.load_manifest(target, arch)[0]["chromium_version"], version)
+
+    def test_disabled_source_cannot_reuse_previous_verified_hit(self):
+        client = self.fixture_client()
+        self.assertEqual(cache.fetch("windows", "x64", self.destination, root=self.root,
+                                     client=client)["status"], "hit")
+        self.manifest["sources"]["windows"] = unavailable_source(
+            self.root, "windows", self.manifest["sources"]["windows"])
+        self.save_manifest()
+        client = mock.Mock()
+        result = cache.fetch("windows", "x64", self.destination, root=self.root, client=client)
+        self.assertEqual(result["reason"], "source_unavailable")
+        self.assertEqual(result["download_bytes"], 0)
+        self.assertFalse((self.destination / "tree").exists())
+        self.assertEqual(client.mock_calls, [])
+
+    def test_disabled_sources_are_platform_scoped_and_legacy_sources_still_validate(self):
+        original = copy.deepcopy(self.manifest)
+        for disabled in cache.SOURCES:
+            self.manifest = copy.deepcopy(original)
+            self.manifest["sources"][disabled] = unavailable_source(
+                self.root, disabled, self.manifest["sources"][disabled])
+            self.save_manifest()
+            for target in cache.SOURCES:
+                with self.subTest(disabled=disabled, target=target):
+                    if target == disabled:
+                        for arch in ("x64", "arm64"):
+                            with self.assertRaisesRegex(cache.CacheMiss, "source_unavailable"):
+                                cache.load_manifest(target, arch, root=self.root)
+                    else:
+                        pin, _ = cache.load_manifest(target, "x64", root=self.root)
+                        self.assertEqual(pin["head_sha"], original["sources"][target]["head_sha"])
+
+    def test_disabled_source_requires_exact_fields_before_any_target_is_selected(self):
+        original = copy.deepcopy(self.manifest)
+        for disabled in cache.SOURCES:
+            source = unavailable_source(self.root, disabled, original["sources"][disabled])
+            variants = [{key: value for key, value in source.items() if key != missing}
+                        for missing in source]
+            variants += [dict(source, **{key: value}) for key, value in (
+                ("run_id", None), ("run_id", 101), ("artifacts", {}), ("artifacts", None),
+                ("artifact", {}), ("reason", "not provided"), ("repository_id", True),
+                ("available", None), ("available", 0), ("available", 1),
+                ("available", "false"), ("available", []), ("available", True))]
+            for index, changed in enumerate(variants):
+                self.manifest = copy.deepcopy(original)
+                self.manifest["sources"][disabled] = changed
+                self.save_manifest()
+                for target in cache.SOURCES:
+                    with self.subTest(disabled=disabled, variant=index, target=target):
+                        with self.assertRaises(cache.CacheMiss) as caught:
+                            cache.load_manifest(target, "x64", root=self.root)
+                        self.assertNotEqual(str(caught.exception), "source_unavailable")
+
+    def test_disabled_source_cannot_hide_cross_platform_or_old_identity(self):
+        original = copy.deepcopy(self.manifest)
+        for disabled in cache.SOURCES:
+            source = unavailable_source(self.root, disabled, original["sources"][disabled])
+            variants = [dict(source, **{key: value}) for key, value in (
+                ("chromium_version", "151.0.0.0"), ("ungoogled_commit", "0" * 40),
+                ("head_sha", "0" * 40), ("head_branch", "151.0.0.0-1"),
+                ("event", "pull_request"), ("workflow_path", "wrong.yml"),
+                ("source_roots", ["wrong"])) if source[key] != value]
+            variants += [unavailable_source(self.root, other, original["sources"][other])
+                         for other in cache.SOURCES if other != disabled]
+            for index, changed in enumerate(variants):
+                self.manifest = copy.deepcopy(original)
+                self.manifest["sources"][disabled] = changed
+                self.save_manifest()
+                for target in cache.SOURCES:
+                    with self.subTest(disabled=disabled, variant=index, target=target):
+                        with self.assertRaises(cache.CacheMiss) as caught:
+                            cache.load_manifest(target, "x64", root=self.root)
+                        self.assertNotEqual(str(caught.exception), "source_unavailable")
+
+    def test_available_true_and_legacy_absent_flag_share_artifact_identity(self):
+        for target in cache.SOURCES:
+            self.assertNotIn("available", self.manifest["sources"][target])
+            old_pin, old_identity = cache.load_manifest(target, "x64", root=self.root)
+            self.manifest["sources"][target]["available"] = True
+            self.save_manifest()
+            pin, identity = cache.load_manifest(target, "x64", root=self.root)
+            self.assertIs(pin.pop("available"), True)
+            self.assertEqual(pin, old_pin)
+            self.assertEqual({k: v for k, v in identity.items() if k != "sha256"},
+                             {k: v for k, v in old_identity.items() if k != "sha256"})
+
+    @unittest.skipUnless(shutil.which("zstd"), "host zstd required")
+    def test_linux_and_macos_can_fetch_with_windows_disabled(self):
+        self.manifest["sources"]["windows"] = unavailable_source(
+            self.root, "windows", self.manifest["sources"]["windows"])
+        self.save_manifest()
+        for platform in ("linux", "macos"):
+            for arch in ("x64", "arm64"):
+                with self.subTest(platform=platform, arch=arch):
+                    source = self.manifest["sources"][platform]["source_roots"][0]
+                    client = self.fixture_client(platform, arch, source)
+                    result = cache.fetch(platform, arch, self.destination, root=self.root, client=client)
+                    self.assertEqual(result["status"], "hit", result)
+                    self.assertGreater(result["download_bytes"], 0)
 
     def test_all_five_pins_match_and_windows_arm64_misses(self):
         for platform, arch in (("linux", "x64"), ("linux", "arm64"), ("macos", "x64"),
@@ -188,6 +475,113 @@ class FetchUpstreamCacheTest(unittest.TestCase):
         result = cache.fetch("windows", "x64", self.destination, self.pin["run_id"] + 1, self.root)
         self.assertEqual(result["reason"], "run_id_mismatch")
         self.assertEqual(result["status"], "miss")
+
+    def test_linux_donor_requires_completed_success_before_download(self):
+        for arch in ("x64", "arm64"):
+            pin, _ = cache.load_manifest("linux", arch, root=self.root)
+            for status, conclusion in (("queued", None), ("in_progress", None),
+                                       ("completed", "failure"), ("completed", "cancelled")):
+                with self.subTest(arch=arch, status=status, conclusion=conclusion):
+                    run, artifact = metadata(pin)
+                    run.update(status=status, conclusion=conclusion)
+                    client = mock.Mock()
+                    client.json.side_effect = [run, artifact]
+                    with mock.patch.object(cache.shutil, "which", return_value="/usr/bin/zstd"):
+                        result = cache.fetch("linux", arch, self.destination, root=self.root, client=client)
+                    self.assertEqual(result["status"], "miss")
+                    self.assertEqual(result["reason"], "untrusted_run")
+                    self.assertEqual(result["manifest"]["chromium_version"], "153.0.8010.36")
+                    self.assertEqual(result["download_bytes"], 0)
+                    self.assertIsNone(result["source"])
+                    self.assertFalse((self.destination / "tree").exists())
+                    client.download.assert_not_called()
+                    self.assertEqual(json.loads((self.destination / "result.json").read_text()), result)
+
+    def test_linux_completed_run_cannot_authorize_replaced_checkpoint(self):
+        for arch in ("x64", "arm64"):
+            with self.subTest(arch=arch):
+                pin, _ = cache.load_manifest("linux", arch, root=self.root)
+                run, artifact = metadata(pin)
+                artifact.update(id=artifact["id"] + 1, digest=digest(b"replacement checkpoint"))
+                client = mock.Mock()
+                client.json.side_effect = [run, artifact]
+                with mock.patch.object(cache.shutil, "which", return_value="/usr/bin/zstd"):
+                    result = cache.fetch("linux", arch, self.destination, root=self.root, client=client)
+                self.assertEqual(result["reason"], "artifact_mismatch")
+                self.assertEqual(result["download_bytes"], 0)
+                client.download.assert_not_called()
+
+    def test_linux_153_rejects_completed_152_run_before_download(self):
+        for arch in ("x64", "arm64"):
+            with self.subTest(arch=arch):
+                pin, _ = cache.load_manifest("linux", arch, root=self.root)
+                run, artifact = metadata(pin)
+                run.update(id=33895980718, head_branch="152.0.7977.82-1",
+                           head_sha="02c59ed68d1963a647bb478064823d114e466ffb")
+                client = mock.Mock()
+                client.json.side_effect = [run, artifact]
+                with mock.patch.object(cache.shutil, "which", return_value="/usr/bin/zstd"):
+                    result = cache.fetch("linux", arch, self.destination, root=self.root, client=client)
+                self.assertEqual(result["reason"], "untrusted_run")
+                self.assertEqual(result["download_bytes"], 0)
+                client.download.assert_not_called()
+
+    def test_windows_153_rejects_152_run_metadata_before_download(self):
+        self.manifest["sources"]["windows"] = windows153_source(self.root)
+        self.save_manifest()
+        self.pin, self.identity = cache.load_manifest("windows", "x64", root=self.root)
+        run, artifact = metadata(self.pin)
+        run.update(id=33898278106, head_branch="152.0.7977.82-1.1",
+                   head_sha="333bc7dfff72ff4abc4d9cc76bc41de300a46e06")
+        client = mock.Mock()
+        client.json.side_effect = [run, artifact]
+        result = cache.fetch("windows", "x64", self.destination, root=self.root, client=client)
+        self.assertEqual(result["reason"], "untrusted_run")
+        self.assertEqual(result["download_bytes"], 0)
+        client.download.assert_not_called()
+
+    def test_legacy_windows_152_expired_metadata_cannot_download(self):
+        pins = cache.load_shared_pins(self.root)
+        pins.update(ChromiumVersion="152.0.7977.82", UngoogledVersion="152.0.7977.82-1",
+                    UngoogledCommit="e71b91c6e336d0f25cfc6b9ef09298a9d2506e24")
+        (self.root / "CHROMIUM_VERSION").write_text(pins["ChromiumVersion"] + "\n")
+        self.manifest.update(chromium_version=pins["ChromiumVersion"], ungoogled_commit=pins["UngoogledCommit"])
+        for key in ("WindowsChromiumVersion", "WindowsUngoogledVersion", "WindowsUngoogledCommit"):
+            pins.pop(key, None)
+        pins.update(UngoogledWindowsVersion="152.0.7977.82-1.1",
+                    UngoogledWindowsCommit="333bc7dfff72ff4abc4d9cc76bc41de300a46e06")
+        (self.root / "build/ungoogled-revisions.psd1").write_text(
+            "@{\n" + "".join(f'  {key} = "{value}"\n' for key, value in pins.items()) + "}\n")
+        (self.root / "CHROMIUM_WINDOWS_VERSION").unlink(missing_ok=True)
+        source = synthetic_windows_source(self.root)
+        for key in ("chromium_version", "ungoogled_commit"):
+            source.pop(key)
+        self.manifest["sources"]["windows"] = source
+        self.save_manifest()
+        pin, _ = cache.load_manifest("windows", "x64", root=self.root)
+        self.assertEqual(pin["chromium_version"], "152.0.7977.82")
+        run, artifact = metadata(pin)
+        artifact.update(expired=True, expires_at="2026-09-10T08:06:38Z")
+        client = mock.Mock()
+        client.json.side_effect = [run, artifact]
+        result = cache.fetch("windows", "x64", self.destination, root=self.root, client=client)
+        self.assertEqual(result["reason"], "artifact_expired")
+        self.assertEqual(result["download_bytes"], 0)
+        client.download.assert_not_called()
+
+    def test_windows_manifest_fallback_requires_matching_shared_identity(self):
+        self.manifest["sources"]["windows"] = windows153_source(self.root)
+        self.save_manifest()
+        for field in ("chromium_version", "ungoogled_commit"):
+            with self.subTest(field=field):
+                saved = self.manifest["sources"]["windows"].pop(field)
+                self.save_manifest()
+                if saved == self.manifest[field]:
+                    cache.load_manifest("windows", "x64", root=self.root)
+                else:
+                    with self.assertRaisesRegex(cache.CacheMiss, "pin_mismatch"):
+                        cache.load_manifest("windows", "x64", root=self.root)
+                self.manifest["sources"]["windows"][field] = saved
 
     def test_run_and_artifact_provenance(self):
         run, artifact = metadata(self.pin)
@@ -1662,11 +2056,22 @@ class FetchUpstreamCacheTest(unittest.TestCase):
         self.assertEqual(error.exception.code, 2)
 
     def test_cli_miss_exit_zero_structured_output_and_foreign_result(self):
-        with mock.patch("sys.stdout", new=io.StringIO()) as output, mock.patch("sys.stderr", new=io.StringIO()):
-            code = cache.main(["--platform", "windows", "--arch", "arm64", "--destination", str(self.destination)])
-        self.assertEqual(code, 0)
-        self.assertEqual(json.loads(output.getvalue())["status"], "miss")
-        self.assertEqual(json.loads((self.destination / "result.json").read_text())["status"], "miss")
+        original_load = cache.load_manifest
+        self.manifest["sources"]["windows"] = unavailable_source(
+            self.root, "windows", self.manifest["sources"]["windows"])
+        self.save_manifest()
+        for arch in ("x64", "arm64"):
+            with mock.patch("sys.stdout", new=io.StringIO()) as output, \
+                    mock.patch("sys.stderr", new=io.StringIO()), mock.patch.object(cache, "GitHub") as client, \
+                    mock.patch.object(cache, "load_manifest", wraps=lambda p, a, r, root: original_load(p, a, r, root=self.root)):
+                code = cache.main(["--platform", "windows", "--arch", arch, "--destination", str(self.destination)])
+            self.assertEqual(code, 0)
+            result = json.loads(output.getvalue())
+            self.assertEqual(result["status"], "miss")
+            self.assertEqual(result["reason"], "source_unavailable")
+            self.assertEqual(result["download_bytes"], 0)
+            self.assertEqual(json.loads((self.destination / "result.json").read_text()), result)
+            client.assert_not_called()
         (self.destination / "result.json").write_text('{"status":"hit"}')
         with self.assertRaises(cache.LocalError):
             cache.destination_path(str(self.destination))

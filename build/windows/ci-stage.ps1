@@ -531,6 +531,7 @@ function Assert-CiScripts {
     "$PSScriptRoot\ci-parts.ps1",
     "$PSScriptRoot\assert-target-arch.ps1",
     "$PSScriptRoot\assert-arm64-toolchain.ps1",
+    "$PSScriptRoot\ensure-windows-sdk.ps1",
     "$PSScriptRoot\prepare-ungoogled.ps1",
     "$PSScriptRoot\update-restored-source.ps1",
     "$PSScriptRoot\package-win.ps1"
@@ -596,33 +597,9 @@ function Initialize-VisualStudio {
   Write-Host "==> Visual Studio compiler: $compiler"
 }
 
-function Install-Debuggers {
-  $dbghelp = "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\x64\dbghelp.dll"
-  $targetDbghelp = "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\arm64\dbghelp.dll"
-  if ((Test-Path $dbghelp) -and ($Arch -ne "arm64" -or (Test-Path $targetDbghelp))) { return }
-  Write-Host "==> installing Windows SDK Debugging Tools"
-  New-Item -ItemType Directory -Force -Path $Root | Out-Null
-  $iso = "$Root\winsdk.iso"
-  for ($attempt = 1; $attempt -le 5; $attempt++) {
-    & curl.exe -sSL -o $iso "https://go.microsoft.com/fwlink/?linkid=2348707"
-    if ((Test-Path $iso) -and ((Get-Item $iso).Length -gt 10MB)) { break }
-    Start-Sleep -Seconds 10
-  }
-  if (-not (Test-Path $iso) -or ((Get-Item $iso).Length -lt 10MB)) { throw "Windows SDK ISO download failed" }
-  $image = Mount-DiskImage -ImagePath $iso -StorageType ISO -PassThru
-  $letter = ($image | Get-Volume).DriveLetter
-  try {
-    $setup = Start-Process -FilePath "$letter`:\WinSDKSetup.exe" `
-      -ArgumentList "/features", "OptionId.WindowsDesktop.Debuggers", "/q", "/norestart" -PassThru -Wait
-    if ($setup.ExitCode -ne 0) { throw "WinSDKSetup failed with exit $($setup.ExitCode)" }
-  } finally {
-    Dismount-DiskImage -ImagePath $iso | Out-Null
-    Remove-Item $iso -Force -ErrorAction SilentlyContinue
-  }
-  if (-not (Test-Path $dbghelp)) { throw "dbghelp.dll is missing after Debugging Tools install" }
-  if ($Arch -eq "arm64" -and -not (Test-Path $targetDbghelp)) {
-    throw "ARM64 dbghelp.dll is missing after Debugging Tools install"
-  }
+function Install-WindowsSdk {
+  & "$PSScriptRoot\ensure-windows-sdk.ps1" -Arch $Arch `
+    -ChromiumVersion $Revisions.ChromiumVersion -DownloadDir $Root -Install
 }
 
 function Invoke-BoundedBrowser {
@@ -788,8 +765,8 @@ Write-OutVar snapshot_safe true
 Assert-CiScripts
 Free-Disk
 Initialize-VisualStudio
-Install-Debuggers
-if ($Arch -eq "arm64") { & "$PSScriptRoot\assert-arm64-toolchain.ps1" }
+Install-WindowsSdk
+if ($Arch -eq "arm64") { & "$PSScriptRoot\assert-arm64-toolchain.ps1" -ChromiumVersion $Revisions.ChromiumVersion }
 git config --global core.longpaths true
 
 Remove-Item Env:PYTHONUTF8 -ErrorAction SilentlyContinue

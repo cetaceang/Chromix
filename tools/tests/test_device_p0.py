@@ -208,3 +208,48 @@ def test_wire_cli_reports_route_result(tmp_path, monkeypatch, capsys, limit, all
     assert report['route_check']['route_verified'] is False
     assert report['packet_details'][0]['fields']['tcp.dstport'] == ['8080']
     assert json.loads(capsys.readouterr().out)['status'] == status
+
+
+@pytest.mark.parametrize('failure_scope', [None, 'iframe', 'worker'])
+def test_canvas_collector_keeps_all_scopes_without_device_backends(monkeypatch, failure_scope):
+    import canvas_chain_audit as canvas
+
+    calls = []
+    class Page:
+        def goto(self, origin, **kwargs):
+            calls.append(('goto', origin, kwargs))
+        def frame(self, *, url):
+            assert url == 'http://127.0.0.1:8123/frame'
+            return Frame()
+        def evaluate(self, script, argument=None):
+            scope = argument or 'window'
+            calls.append(scope)
+            assert script == (launch.WORKER_EVAL if argument else launch.PROBE_EVAL)
+            if scope == failure_scope:
+                raise RuntimeError(scope + ' failed')
+            return {'scope':scope}
+        def close(self):
+            calls.append('close')
+    class Frame:
+        def evaluate(self, script):
+            assert script == launch.PROBE_EVAL
+            calls.append('iframe')
+            if failure_scope == 'iframe':
+                raise RuntimeError('iframe failed')
+            return {'scope':'iframe'}
+    class Context:
+        def new_page(self):
+            return Page()
+    def unexpected(*args):
+        raise AssertionError('Canvas-only page must not request font/GPU evidence')
+    monkeypatch.setattr(launch.fonts, 'collect', unexpected)
+    monkeypatch.setattr(launch.gpu_backend, 'collect_system', unexpected)
+    if failure_scope:
+        with pytest.raises(RuntimeError, match=failure_scope + ' failed'):
+            canvas.collect_live(Context(), 'http://127.0.0.1:8123')
+    else:
+        observed = canvas.collect_live(Context(), 'http://127.0.0.1:8123')
+        assert observed == {scope:{'scope':scope} for scope in launch.pool.SCOPES}
+        assert calls[1:-1] == list(launch.pool.SCOPES)
+    assert calls[-1] == 'close'
+    assert calls[0][2] == {'wait_until':'load', 'timeout':launch.DEFAULT_TIMEOUT}

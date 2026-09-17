@@ -83,7 +83,6 @@ concurrency:
 env:
   DEPOT_TOOLS_METRICS: '0'
   DEPOT_TOOLS_COLLECT_METRICS: '0'
-  CHROMIUM_VERSION: '152.0.7977.82'
   CHROMIX_JOBS: ${{ inputs.compile_jobs }}
 
 jobs:
@@ -194,6 +193,15 @@ NODE_PY = """      - name: Set up Node.js
           python-version: '3.13'
 """
 
+PIN_VERSION = """      - name: Resolve platform Chromium version
+        env:
+          BUILD_PLATFORM: ${{ inputs.platform }}
+        run: |
+          set -euo pipefail
+          CHROMIUM_VERSION="$(python3 tools/platform_pins.py --platform "$BUILD_PLATFORM" --field ChromiumVersion)"
+          echo "CHROMIUM_VERSION=$CHROMIUM_VERSION" >> "$GITHUB_ENV"
+"""
+
 SDK_PREFLIGHT = """      - name: Verify complete Mac SDK contents
         if: runner.os == 'macOS' && inputs.use_upstream_cache
         run: python3 tools/inspect_macos_sdk.py --report "${RUNNER_TEMP}/chromix-logs/sdk-content.json"
@@ -205,7 +213,7 @@ CACHE_RESTORE = """      # The pinned download cache is deliberately outside the
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/chromix-build/download_cache
-          key: ${{ runner.os }}-${{ inputs.platform }}-${{ inputs.arch }}-downloads-v2-${{ env.CHROMIUM_VERSION }}-${{ hashFiles('build/ungoogled-revisions.psd1', 'build/prepare-ungoogled.sh') }}
+          key: ${{ runner.os }}-${{ inputs.platform }}-${{ inputs.arch }}-downloads-v2-${{ env.CHROMIUM_VERSION }}-${{ hashFiles('CHROMIUM_VERSION', 'CHROMIUM_LINUX_VERSION', 'CHROMIUM_MACOS_VERSION', 'build/ungoogled-revisions.psd1', 'tools/platform_pins.py', 'build/prepare-ungoogled.sh') }}
           restore-keys: |
             ${{ runner.os }}-${{ inputs.platform }}-${{ inputs.arch }}-downloads-v2-
 """
@@ -333,7 +341,7 @@ RUNTIME_FAILURE = """      - name: Upload failed macOS runtime bundle
 
 SNAPSHOT_ENSURE = """      - name: Verify handoff snapshot
         id: checkpoint
-        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true') }}
+        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true' || (inputs.platform == 'linux' && steps.linux_runtime_checkpoint.outputs.upload_snapshot == 'true')) }}
         run: |
           set -euo pipefail
           SNAP="${RUNNER_TEMP}/chromix-build/.snapshot-stage-%(stage)d"
@@ -343,7 +351,7 @@ SNAPSHOT_ENSURE = """      - name: Verify handoff snapshot
 """
 
 UPLOAD_PARTS = """      - name: Upload tree part 1
-        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true') && steps.checkpoint.outcome == 'success' }}
+        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true' || (inputs.platform == 'linux' && steps.linux_runtime_checkpoint.outputs.upload_snapshot == 'true')) && steps.checkpoint.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.artifact }}-tree-s%(stage)d-attempt-${{ github.run_attempt }}-part1
@@ -352,7 +360,7 @@ UPLOAD_PARTS = """      - name: Upload tree part 1
           retention-days: 3
           compression-level: 0
       - name: Upload tree part 2
-        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true') && steps.checkpoint.outcome == 'success' }}
+        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true' || (inputs.platform == 'linux' && steps.linux_runtime_checkpoint.outputs.upload_snapshot == 'true')) && steps.checkpoint.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.artifact }}-tree-s%(stage)d-attempt-${{ github.run_attempt }}-part2
@@ -361,7 +369,7 @@ UPLOAD_PARTS = """      - name: Upload tree part 1
           retention-days: 3
           compression-level: 0
       - name: Upload tree part 3
-        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true') && steps.checkpoint.outcome == 'success' }}
+        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true' || (inputs.platform == 'linux' && steps.linux_runtime_checkpoint.outputs.upload_snapshot == 'true')) && steps.checkpoint.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.artifact }}-tree-s%(stage)d-attempt-${{ github.run_attempt }}-part3
@@ -370,7 +378,7 @@ UPLOAD_PARTS = """      - name: Upload tree part 1
           retention-days: 3
           compression-level: 0
       - name: Upload tree part 4
-        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true') && steps.checkpoint.outcome == 'success' }}
+        if: ${{ !cancelled() && (steps.stage.outputs.upload_snapshot == 'true' || steps.runtime_checkpoint.outputs.upload_snapshot == 'true' || (inputs.platform == 'linux' && steps.linux_runtime_checkpoint.outputs.upload_snapshot == 'true')) && steps.checkpoint.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.artifact }}-tree-s%(stage)d-attempt-${{ github.run_attempt }}-part4
@@ -378,6 +386,51 @@ UPLOAD_PARTS = """      - name: Upload tree part 1
           if-no-files-found: warn
           retention-days: 3
           compression-level: 0
+"""
+
+LINUX_FAILURE = """      - name: Upload failed Linux runtime bundle
+        if: ${{ !cancelled() && inputs.platform == 'linux' && steps.stage.outcome == 'failure' && steps.stage.outputs.package_ready == 'true' && steps.stage.outputs.runtime_failed == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact }}-failed-runtime-s%(stage)d-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/chromix-build/dist/${{ inputs.artifact }}.zip
+            ${{ runner.temp }}/chromix-build/dist/SHA256SUMS
+            ${{ runner.temp }}/chromix-build/fingerprint-diagnostics/
+            ${{ runner.temp }}/chromix-logs/stage-%(stage)d.log
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Preserve failed Linux compiled checkpoint
+        id: linux_runtime_checkpoint
+        if: ${{ !cancelled() && inputs.platform == 'linux' && steps.stage.outcome == 'failure' && steps.stage.outputs.compiled_ready == 'true' }}
+        run: |
+          set -euo pipefail
+          WORK="${RUNNER_TEMP}/chromix-build"
+          python3 - "$WORK" <<'PY'
+          from pathlib import Path
+          import shutil
+          import sys
+
+          work = Path(sys.argv[1])
+          if work.is_symlink() or not work.is_dir() or work.resolve() != work:
+              raise SystemExit("unsafe Linux checkpoint work directory")
+          if (work / "src").is_symlink() or not (work / "src").is_dir():
+              raise SystemExit("Linux checkpoint source directory is missing or unsafe")
+          # Only redundant copies; retain the bundle, source, objects and caches.
+          copies = [work / "smoke", work / "dist/chromix"]
+          snapshots = [work / f".snapshot-stage-{stage}" for stage in range(1, 9)]
+          for path in [*copies, *snapshots]:
+              if path.is_symlink() or path.resolve() != path:
+                  raise SystemExit(f"unsafe Linux checkpoint cleanup path: {path}")
+          for path in [*copies, *snapshots]:
+              if path.is_dir():
+                  shutil.rmtree(path)
+          PY
+          bash build/posix/ci-parts.sh "$WORK" "$WORK/.snapshot-stage-%(stage)d"
+          echo "upload_snapshot=true" >> "$GITHUB_OUTPUT"
+
 """
 
 FINAL_UPLOADS = """      - name: Upload final bundle
@@ -475,6 +528,7 @@ def job(stage: int) -> str:
     parts.append(LINUX_CLEAN)
     parts.append(MAC_STEPS)
     parts.append(NODE_PY)
+    parts.append(PIN_VERSION)
     parts.append(SDK_PREFLIGHT)
     if stage == 1:
         parts.append(RESUME_STEPS)
@@ -486,6 +540,7 @@ def job(stage: int) -> str:
                  "        run: python3 tools/build_resources.py --github-env\n\n")
     parts.append(run_step(stage))
     parts.append(RUNTIME_FAILURE % {"stage": stage})
+    parts.append(LINUX_FAILURE % {"stage": stage})
     parts.append(SNAPSHOT_ENSURE % {"stage": stage})
     parts.append("\n")
     parts.append(UPLOAD_PARTS % {"stage": stage})
@@ -506,7 +561,7 @@ NATIVE_LINUX_ARM64 = """  verify-linux-arm64:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Install runtime libraries
+""" + PIN_VERSION + """      - name: Install runtime libraries
         run: |
           sudo apt-get update
           sudo apt-get install -y apparmor-utils libasound2t64 libatk1.0-0t64 libatk-bridge2.0-0t64 \\
@@ -540,6 +595,7 @@ NATIVE_LINUX_ARM64 = """  verify-linux-arm64:
             "${RUNNER_TEMP}/chromix-native-smoke/chromix/chrome"
           python3 "${GITHUB_WORKSPACE}/tools/verify_linux_bundle.py" \\
             --bundle-dir "${RUNNER_TEMP}/chromix-native-smoke/chromix" --arch arm64 --runtime \\
+            --chromium-version "$CHROMIUM_VERSION" \\
             2>&1 | tee "${RUNNER_TEMP}/chromix-linux-arm64-native-smoke.log"
       - name: Download same-run source verification receipt
         uses: actions/download-artifact@v4
@@ -554,7 +610,7 @@ NATIVE_LINUX_ARM64 = """  verify-linux-arm64:
           BROWSER="${RUNNER_TEMP}/chromix-native-smoke/chromix/chrome"
           HASH="$(sha256sum "$BROWSER" | cut -d ' ' -f 1)"
           timeout -k 30s 2100s python3 tools/fingerprint_acceptance.py \\
-            --browser "$BROWSER" --expected-sha256 "$HASH" \\
+            --browser "$BROWSER" --expected-sha256 "$HASH" --expected-version "$CHROMIUM_VERSION" \\
             --source-report "${RUNNER_TEMP}/chromix-native-source/source-final.json" \\
             --output-dir "${RUNNER_TEMP}/chromix-native-fingerprint"
       - name: Upload native verification diagnostics

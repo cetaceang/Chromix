@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from tools import reconcile_browser_release as reconcile
 from tools import release_browser as release
+from tools.tests.test_release_browser import arm64_pe, native_job
 
 
 REPO = "owner/chromix"
@@ -30,12 +31,19 @@ def backup_name(data):
     return "SHA256SUMS.backup." + checksum(data)
 
 
-def bundle_bytes(name):
+def bundle_bytes(name, version="1.2.3.4"):
     stream = io.BytesIO()
-    executable = "chromix/Chromium.app/Contents/MacOS/Chromium" if "-mac-" in name else "chromix/chrome"
+    if "-win-" in name:
+        members = ["chromix/chromix.cmd", "chromix/chrome.exe"]
+        if name == "chromix-win-arm64.zip":
+            members += ["chromix/chrome.dll", "chromix/chrome_elf.dll", "chromix/libEGL.dll", "chromix/libGLESv2.dll"]
+    else:
+        executable = "chromix/Chromium.app/Contents/MacOS/Chromium" if "-mac-" in name else "chromix/chrome"
+        members = ["chromix/chromix", executable]
     with zipfile.ZipFile(stream, "w") as archive:
-        for member in ("chromix/chromix", executable, "chromix/LICENSE.chromix", "chromix/LICENSE.chromium"):
-            archive.writestr(zipfile.ZipInfo(member), "fixture")
+        for member in (*members, "chromix/LICENSE.chromix", "chromix/LICENSE.chromium"):
+            data = arm64_pe(version=version) if name == "chromix-win-arm64.zip" and member.endswith((".exe", ".dll")) else b"fixture"
+            archive.writestr(zipfile.ZipInfo(member), data)
     return stream.getvalue()
 
 
@@ -70,7 +78,11 @@ class ReleaseRecoveryTest(unittest.TestCase):
         self.expired_artifact = False
         self.notes_failures = 0
         self.available_runs = None
+        self.tag = TAG
         self.versions = {SHA: TAG[1:], PINNED_SHA: TAG[1:]}
+        self.linux_versions = {}
+        self.windows_versions = {}
+        self.macos_versions = {}
         self.release_downloads = []
         self.gh = self.enterContext(patch.object(release, "gh", side_effect=self.fake_gh))
         self.enterContext(patch("sys.stdout", new_callable=io.StringIO))
@@ -85,6 +97,12 @@ class ReleaseRecoveryTest(unittest.TestCase):
                 sha = args[3][len(prefix):].split("&")[0]
                 runs = self.available_runs.values() if self.available_runs is not None else [self.current_run]
                 return json.dumps([{"workflow_runs": [run for run in runs if run["head_sha"] == sha]}])
+            prefix = f"repos/{REPO}/actions/runs/"
+            if args[3].startswith(prefix) and "/attempts/" in args[3]:
+                run_id = int(args[3][len(prefix):].split("/")[0])
+                runs = self.available_runs.values() if self.available_runs is not None else [self.current_run]
+                candidate = next(run for run in runs if run["id"] == run_id)
+                return json.dumps([{"jobs": [native_job(candidate)]}])
         if args[0] == "api":
             prefix = f"repos/{REPO}/actions/workflows/"
             if args[1].startswith(prefix):
@@ -95,16 +113,26 @@ class ReleaseRecoveryTest(unittest.TestCase):
             if args[1].startswith(prefix):
                 runs = self.available_runs.values() if self.available_runs is not None else [self.current_run]
                 return json.dumps(next(run for run in runs if run["id"] == int(args[1][len(prefix):])))
+            for filename, versions in (("CHROMIUM_LINUX_VERSION", self.linux_versions),
+                                       ("CHROMIUM_WINDOWS_VERSION", self.windows_versions),
+                                       ("CHROMIUM_MACOS_VERSION", self.macos_versions)):
+                prefix = f"repos/{REPO}/contents/{filename}?ref="
+                if args[1].startswith(prefix):
+                    sha = args[1][len(prefix):]
+                    if sha not in versions:
+                        raise subprocess.CalledProcessError(1, ["gh", *args], stderr="gh: Not Found (HTTP 404)\n")
+                    return versions[sha]
             prefix = f"repos/{REPO}/contents/CHROMIUM_VERSION?ref="
             if args[1].startswith(prefix):
                 return self.versions[args[1][len(prefix):]]
-            if args[1] == f"repos/{REPO}/git/matching-refs/tags/{TAG}":
+            if args[1] == f"repos/{REPO}/git/matching-refs/tags/{self.tag}":
                 target = self.metadata["target_commitish"] if self.metadata else PINNED_SHA
-                refs = [{"ref": f"refs/tags/{TAG}", "object": {"type": "commit", "sha": target}}]
+                refs = [{"ref": f"refs/tags/{self.tag}", "object": {"type": "commit", "sha": target}}]
                 return json.dumps(refs if self.metadata else [])
         if args[:2] == ("run", "download"):
             self.assertEqual(int(args[2]), self.run["id"])
-            name = args[args.index("--name") + 1] + ".zip"
+            name = args[args.index("--name") + 1]
+            name = "chromix-win-arm64.zip" if name == "win-arm64" else name + ".zip"
             self.artifact_downloads.append((int(args[2]), name))
             if self.expired_artifact:
                 raise subprocess.CalledProcessError(1, ["gh", *args])
@@ -130,7 +158,7 @@ class ReleaseRecoveryTest(unittest.TestCase):
             self.mutations.append(args)
             self.assertIsNone(self.metadata)
             self.assertIn("--draft", args)
-            self.metadata = {"tag_name": TAG, "draft": True,
+            self.metadata = {"tag_name": self.tag, "draft": True,
                              "target_commitish": args[args.index("--target") + 1],
                              "body": Path(args[args.index("--notes-file") + 1]).read_text()}
             return ""
@@ -179,7 +207,7 @@ class ReleaseRecoveryTest(unittest.TestCase):
             path = root / name
             path.write_bytes(self.remote[name])
             bundles = {name: path}
-        release.publish(REPO, self.run, TAG, bundles, root)
+        release.publish(REPO, self.run, self.tag, bundles, root)
 
     def switch_platform(self, workflow, run_id, sha=SHA):
         self.run.update(id=run_id, name=workflow, path=f".github/workflows/{workflow}.yml", head_sha=sha)
@@ -660,6 +688,102 @@ class ReleaseRecoveryTest(unittest.TestCase):
             reconcile.reconcile(REPO, TAG[1:])
         self.assertEqual(self.remote, before)
         self.assertEqual(self.mutations, [])
+
+    def configure_migration_recovery(self, tag, workflow):
+        self.tag = tag
+        self.versions = {SHA: "152.0.7977.82", PINNED_SHA: "152.0.7977.82"}
+        self.linux_versions = {SHA: "153.0.8010.36", PINNED_SHA: "153.0.8010.36"}
+        self.windows_versions = dict(self.linux_versions)
+        self.available_runs = {}
+        for index, name in enumerate(release.WORKFLOWS):
+            self.available_runs[name] = {**self.run, "id": 200 + index, "name": name,
+                                        "path": f".github/workflows/{name}.yml", "head_sha": SHA}
+        self.run = copy.deepcopy(self.available_runs[workflow])
+        self.current_run = copy.deepcopy(self.run)
+        self.artifacts = {name: bundle_bytes(name, version="153.0.8010.36") for name in release.ASSETS}
+        incoming = release.WORKFLOWS[workflow][0] + ".zip"
+        names = {name for name in release.ASSETS if ("-mac-" in name) == tag.startswith("v152")}
+        self.remote = {name: self.artifacts[name] for name in names - {incoming}}
+        self.old_manifest = "".join(f"{checksum(data).upper()} *{name}\r\n"
+                                    for name, data in sorted(self.remote.items())).encode()
+        self.remote["SHA256SUMS"] = self.old_manifest
+        self.metadata = {"tag_name": tag, "draft": False, "target_commitish": SHA,
+                         "body": f"Existing version group\nSource commit: `{SHA}`\n"}
+        self.mutations.clear()
+        self.artifact_downloads.clear()
+        self.release_downloads.clear()
+        self.expired_artifact = False
+        return incoming, names
+
+    def test_same_sha_linux_windows153_and_macos152_recover_without_cross_group_downloads(self):
+        groups = (("v153.0.8010.36", "build-win-arm64-github"), ("v152.0.7977.82", "build-macos-arm64"))
+        for tag, workflow in groups:
+            for failure in ("rollback", "interrupted"):
+                with self.subTest(tag=tag, failure=failure):
+                    incoming, names = self.configure_migration_recovery(tag, workflow)
+                    if failure == "rollback":
+                        self.primary_failures = 1
+                    else:
+                        self.abort_primary = True
+                    with self.assertRaises(subprocess.CalledProcessError if failure == "rollback" else SystemExit):
+                        self.attempt()
+                    merged = self.old_manifest + f"{checksum(self.artifacts[incoming])}  {incoming}\n".encode()
+                    self.assertEqual(self.remote[backup_name(merged)], merged)
+                    self.assertEqual(self.remote[incoming], self.artifacts[incoming])
+                    self.assertEqual(len(self.uploads(incoming)), 1)
+                    self.assertIn(f"Workflow: {workflow}", self.metadata["body"])
+                    if failure == "rollback":
+                        self.assertEqual(self.remote["SHA256SUMS"], self.old_manifest)
+                    else:
+                        self.assertNotIn("SHA256SUMS", self.remote)
+                    before = copy.deepcopy(self.remote)
+                    metadata = copy.deepcopy(self.metadata)
+                    self.mutations.clear()
+                    self.artifact_downloads.clear()
+                    self.release_downloads.clear()
+                    self.expired_artifact = True
+                    reconcile.reconcile(REPO, tag[1:])
+                    self.assertEqual(self.remote, {**before, "SHA256SUMS": merged})
+                    self.assertEqual(self.metadata, metadata)
+                    self.assertEqual(set(release.parse_manifest(merged.decode())), names)
+                    self.assertEqual(set(self.release_downloads) & release.ASSETS, names)
+                    self.assertEqual(self.artifact_downloads, [])
+                    self.assertEqual(len(self.mutations), 1)
+                    self.assertEqual(self.mutations[0][:3], ("release", "upload", tag))
+                    self.assertEqual(Path(self.mutations[0][3]).name, "SHA256SUMS")
+                    self.assert_remote_checksums()
+                    self.mutations.clear()
+                    reconcile.reconcile(REPO, tag[1:])
+                    self.assertEqual(self.mutations, [])
+                    self.assertEqual(self.artifact_downloads, [])
+
+    def test_windows_pin_errors_block_backup_recovery_without_shared_downgrade(self):
+        for value in ("152.0.7977.82", "153.0.8010.36-1.1", "", "forbidden", "404-lookalike"):
+            with self.subTest(value=value):
+                self.configure_migration_recovery("v153.0.8010.36", "build-win-arm64-github")
+                self.remote[backup_name(self.old_manifest)] = self.remote.pop("SHA256SUMS")
+                self.available_runs = {}
+                before = copy.deepcopy(self.remote)
+                metadata = copy.deepcopy(self.metadata)
+                self.gh.reset_mock()
+
+                def bad_windows_pin(*args):
+                    if args[:2] == ("api", f"repos/{REPO}/contents/CHROMIUM_WINDOWS_VERSION?ref={SHA}"):
+                        if value in ("forbidden", "404-lookalike"):
+                            message = "gh: Forbidden (HTTP 403)" if value == "forbidden" else "gh: Not Found (HTTP 404) extra"
+                            raise subprocess.CalledProcessError(1, ["gh", *args], stderr=message)
+                        return value
+                    return self.fake_gh(*args)
+
+                self.gh.side_effect = bad_windows_pin
+                with self.assertRaises(subprocess.CalledProcessError if value in ("forbidden", "404-lookalike") else ValueError):
+                    reconcile.reconcile(REPO, self.tag[1:])
+                self.assertEqual(self.remote, before)
+                self.assertEqual(self.metadata, metadata)
+                self.assertEqual(self.mutations, [])
+                self.assertEqual(self.artifact_downloads, [])
+                self.assertEqual(self.release_downloads, [])
+                self.assertFalse(any("/contents/CHROMIUM_VERSION?ref=" in str(call.args) for call in self.gh.call_args_list))
 
     def test_identical_retry_has_no_manifest_or_backup_uploads(self):
         self.attempt()

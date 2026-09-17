@@ -1,12 +1,12 @@
 {
   "notice": "Pinned Chromium source excerpts, not browser or physical-device acceptance.",
-  "chromium_version": "152.0.7977.82",
+  "chromium_version": "153.0.8010.36",
   "core_commit": "e71b91c6e336d0f25cfc6b9ef09298a9d2506e24",
   "core_inputs": [
     {
       "path": "patches/extra/bromite/fingerprinting-flags-client-rects-and-measuretext.patch",
       "sha256": "f8afff23b1afe2e0f04a3972282b9be5e9beebb86ce1693141b5df71f20ab857",
-      "target_fragment": "diff --git a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc\n--- a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc\n+++ b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc\n@@ -110,6 +110,9 @@\n // https://github.com/include-what-you-use/include-what-you-use/issues/1122\n // IWYU pragma: no_include \"base/numerics/clamped_math.h\"\n \n+#include \"third_party/blink/renderer/core/offscreencanvas/offscreen_canvas.h\"\n+#include \"third_party/blink/renderer/core/frame/local_dom_window.h\"\n+\n namespace blink {\n \n class MemoryManagedPaintCanvas;\n@@ -1200,9 +1203,22 @@ TextMetrics* BaseRenderingContext2D::mea\n   TextDirection direction =\n       ToTextDirection(state.GetDirection(), host, computed_style);\n \n-  return MakeGarbageCollected<TextMetrics>(\n+  TextMetrics* text_metrics = MakeGarbageCollected<TextMetrics>(\n       font, direction, state.GetTextBaseline(), state.GetTextAlign(), text,\n       host->GetPlainTextPainter());\n+\n+  // Scale text metrics if enabled\n+  if (RuntimeEnabledFeatures::FingerprintingCanvasMeasureTextNoiseEnabled()) {\n+    if (HostAsOffscreenCanvas()) {\n+      if (auto* window = DynamicTo<LocalDOMWindow>(GetTopExecutionContext())) {\n+        if (window->GetFrame() && window->GetFrame()->GetDocument())\n+          text_metrics->Shuffle(window->GetFrame()->GetDocument()->GetNoiseFactorX());\n+      }\n+    } else if (canvas) {\n+      text_metrics->Shuffle(canvas->GetDocument().GetNoiseFactorX());\n+    }\n+  }\n+  return text_metrics;\n }\n \n String BaseRenderingContext2D::lang() const {\n"
+      "target_fragment": "diff --git a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc\n--- a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc\n+++ b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc\n@@ -110,6 +110,9 @@\n // https://github.com/include-what-you-use/include-what-you-use/issues/1122\n // IWYU pragma: no_include \"base/numerics/clamped_math.h\"\n \n+#include \"third_party/blink/renderer/core/offscreencanvas/offscreen_canvas.h\"\n+#include \"third_party/blink/renderer/core/frame/local_dom_window.h\"\n+\n namespace blink {\n \n class MemoryManagedPaintCanvas;\n@@ -1189,9 +1192,22 @@ TextMetrics* BaseRenderingContext2D::mea\n   TextDirection direction =\n       ToTextDirection(state.GetDirection(), host, computed_style);\n \n-  return MakeGarbageCollected<TextMetrics>(\n+  TextMetrics* text_metrics = MakeGarbageCollected<TextMetrics>(\n       font, direction, state.GetTextBaseline(), state.GetTextAlign(), text,\n       host->GetPlainTextPainter());\n+\n+  // Scale text metrics if enabled\n+  if (RuntimeEnabledFeatures::FingerprintingCanvasMeasureTextNoiseEnabled()) {\n+    if (HostAsOffscreenCanvas()) {\n+      if (auto* window = DynamicTo<LocalDOMWindow>(GetTopExecutionContext())) {\n+        if (window->GetFrame() && window->GetFrame()->GetDocument())\n+          text_metrics->Shuffle(window->GetFrame()->GetDocument()->GetNoiseFactorX());\n+      }\n+    } else if (canvas) {\n+      text_metrics->Shuffle(canvas->GetDocument().GetNoiseFactorX());\n+    }\n+  }\n+  return text_metrics;\n }\n \n String BaseRenderingContext2D::lang() const {\n"
     },
     {
       "path": "patches/extra/bromite/flag-fingerprinting-canvas-image-data-noise.patch",
@@ -17,8 +17,8 @@
   "sources": {
     "0149": {
       "target": "third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc",
-      "upstream_sha256": "e0911a8cf677349caf60be8e281e80279fb7e2b8001e1760eb40831d193728ce",
-      "preimage_sha256": "6d5bb70249d9d3eb81b897249a1df96fd21ace03dfef7165ae7b7cacd695af36",
+      "upstream_sha256": "495a58a63af1a9b32b458b8953320bd0afe7920cfd054e25136e5a0720bf6fdb",
+      "preimage_sha256": "18856e21fa5b19d4a195a14a934de218d655c76afd6cf1968b1d78f3c65b9956",
       "predecessors": [
         {
           "path": "patches/0020-third_party-blink-renderer-modules-canvas-canvas2d-base_rendering_context_2d-cc.patch",
@@ -30,7 +30,7 @@
         },
         {
           "path": "patches/0146-canvas-text-noise-policy.patch",
-          "sha256": "690c9e8801a98109c6cd21dedc6ca64fe7555ad4e800c45c449f9e4b3934ae55"
+          "sha256": "c9d423336591b000dd6d9a0dfec2d33745caeb2a7d7e33edb58338bf2a83d3ba"
         }
       ],
       "sections": [
@@ -72,5 +72,7 @@
         }
       ]
     }
-  }
+  },
+  "source": "https://chromium.googlesource.com/chromium/src/+/refs/tags/153.0.8010.36",
+  "chromium_revision": "507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c"
 }

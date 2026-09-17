@@ -16,17 +16,60 @@ and GN arguments, not a different official Chromium checkout.
 
 | Layer | Version | Commit |
 |---|---|---|
-| Chromium | `152.0.7977.82` | source archive selected by ungoogled-chromium |
-| ungoogled-chromium | `152.0.7977.82-1` | `e71b91c6e336d0f25cfc6b9ef09298a9d2506e24` |
-| ungoogled-chromium-windows | `152.0.7977.82-1.1` | `333bc7dfff72ff4abc4d9cc76bc41de300a46e06` |
-| ungoogled-chromium-portablelinux | `152.0.7977.82-1` | `02c59ed68d1963a647bb478064823d114e466ffb` |
+| Chromium (shared/Linux/Windows) | `153.0.8010.36` | source archive selected by ungoogled-chromium |
+| ungoogled-chromium (shared/Linux/Windows) | `153.0.8010.36-1` | `dd8fb9b5c837982faf41ba58cd30a5664e77c329` |
+| Chromium (macOS override) | `152.0.7977.82` | source archive selected by ungoogled-chromium |
+| ungoogled-chromium (macOS override) | `152.0.7977.82-1` | `e71b91c6e336d0f25cfc6b9ef09298a9d2506e24` |
+| ungoogled-chromium-windows | `153.0.8010.36-1.1` | `d99843ca7c336a61f482844d31385a53e9970979` |
+| ungoogled-chromium-portablelinux | `153.0.8010.36-1` | `a5ffa5e4a9fb722b97a5cf7966e29450a150c3dd` |
 | ungoogled-chromium-macos | `152.0.7977.82-1.1` | `038db2b41f7aeb00bbceb2f5a56912b26eb5b284` |
 | Chromix patches | `patches/series` | content hash stored in source markers |
 
-The machine-readable pins are in `build/ungoogled-revisions.psd1`; the legacy
-version files remain available for tooling compatibility.
+The machine-readable pins are in `build/ungoogled-revisions.psd1`.
+`CHROMIUM_VERSION` and `UNGOOGLED_VERSION` describe the shared 153 baseline;
+Windows preparation reads those common fields and the matching Windows platform
+pin. `CHROMIUM_LINUX_VERSION` retains the Linux selection, and
+`CHROMIUM_MACOS_VERSION` plus the three `MacOS*` common-field overrides retain
+the complete macOS 152 Chromium/core/platform identity.
+
+**macOS 153 is blocked upstream:** the 2026-09-17 tags and branches API check
+found no 153 macOS tag or branch; the latest release and `master` remain at
+`038db2b41f7aeb00bbceb2f5a56912b26eb5b284`. Do not combine that 152 overlay with
+core 153 or advertise it as a 153 build. The existing macOS cache is explicitly
+152, and preparation, cache validation, smoke checks and release lookup use that
+platform version. The rebased Chromix patch stack still requires separate
+application/build/runtime validation on macOS 152 before any build is claimed.
+
+Windows tag `153.0.8010.36-1.1` was verified to embed core
+`dd8fb9b5c837982faf41ba58cd30a5664e77c329`. At the same check, its exact-tag x64
+run `34926228177` was not complete; no exact successful full-source/object
+snapshot was verified. The Windows source in `build/upstream-cache.json` is
+therefore `available: false`, with explicit 153 pins and no run/artifact fields.
+The old 152 cache is not reused or relabeled. Cache-required builds must wait
+for a verified matching snapshot; explicit cold preparation remains a separate
+choice. This source-only preparation does not launch or establish a 153 build.
 
 ## Linux x64/arm64 builds
+
+This branch requires the full source and `out/Default` caches from portablelinux
+[run 34757824818](https://github.com/ungoogled-software/ungoogled-chromium-portablelinux/actions/runs/34757824818):
+x64 artifact `10332136115` and final ARM64 artifact `10340607610`. Their exact
+sizes, SHA-256 digests and provenance are pinned in `build/upstream-cache.json`.
+Dispatch each Linux workflow with `use_upstream_cache=true`, `build_mode=staged`,
+`build_profile=fast` and `compile_jobs=auto`; leave `resume_run_id` and
+`resume_artifact_ids` empty. Those resume inputs select Chromix checkpoints,
+not upstream runs. A missing or invalid required cache fails instead of falling
+back to a cold build or a 152 checkpoint.
+
+The original Linux x64/ARM64 bundles are published under `v153.0.8010.36`;
+that immutable tag remains at `d80f322148d8c64271b27b48d5b94291b67ab6bd`, not
+this merged source stack. Its Linux override is 153, but its shared Windows/macOS
+baseline is 152. Release lookup validates the selected platform at both the build
+and immutable tag commits, so the current publisher cannot append Windows/macOS
+153 to that existing tag. The immutable-tag version policy needs a separate
+change before such publication; this merge neither moves the tag nor replaces
+assets. A future 153 tag created from these split pins would retain macOS 152 as
+well. Source preparation alone does not establish a new build or publication.
 
 The Linux ARM64 workflow builds on an x64 Ubuntu 24.04 host, matching the
 pinned portablelinux donor's cross-build environment. It restores ARM64 target
@@ -73,12 +116,13 @@ with a launcher, fonts, and Chromium/Chromix license files. These are runtime
 bundles, not fully static binaries; the target host still needs compatible
 system libraries and a working Chromium sandbox.
 
-The pinned portablelinux ARM64 patch has an incorrect Rust import hunk count
-(`7/7` instead of `8/8`). GNU patch can skip the following four Rust hunks,
-leaving x86_64 host-tool assumptions in place. Linux preparation corrects this
-specific patch header before applying the platform layer; the intended source
-changes and layer order stay unchanged. Prepared trees created with the old
-preparation hash require a clean work directory.
+Cold preparation for exactly `153.0.8010.36-1` uses the hash-guarded correction
+in `build/linux/recovery/153.0.8010.36-1-arm64.patch` for malformed hunk counts,
+Python expressions and Chromium153 contexts in the pinned ARM64 platform patch.
+Unknown revisions or changed patch hashes are rejected. Restored-cache builds
+keep the already prepared upstream source and do not reapply this cold-only
+correction. Full Chromium153 patch application, compilation and runtime
+acceptance remain required on the actual restored tree.
 
 ## Native macOS builds
 
@@ -292,7 +336,12 @@ and unavailable native tooling tests remain skipped. `actionlint` passed all fiv
 entrypoints and the reusable workflow with external shellcheck/pyflakes disabled.
 No full Chromium build or new cloud workflow was dispatched in this pass.
 
-### Resume the supplied Windows snapshot
+### Resume the supplied Windows 152 snapshot (historical)
+
+The donor and commands in this section belong to the immutable 152 source
+revision. Do not dispatch them against the current 153 pins: source and cache
+identity checks reject cross-version reuse. Existing 152 runs retain their
+original worktree/revision and are not changed by this preparation.
 
 At the 2026-09-10 metadata check, run `34080799322` is successful and its source
 commit `23fd0a7a0c63cd452cfaec6b2aba8469ef5d4123` pins Chromium `152.0.7977.82`.
@@ -942,9 +991,29 @@ binary API instead of waiting for a POSIX Release download.
 Prerequisites:
 
 - Visual Studio 2022 with the Desktop development with C++ workload
-- Windows 11 SDK 10.0.26100 and its Debugging Tools feature
+- Windows 11 SDK 10.0.28000.0 headers, libraries and Debugging Tools (Chromium 153)
 - Python 3, Git, PowerShell 7, and 7-Zip
 - about 120 GB free disk space
+
+SDK provisioning and build assertions are separate. CI provisions the selected SDK
+before source preparation; local builds and the ARM64 toolchain guard only check
+prerequisites and never download or install them. If needed, run the installer
+explicitly from an elevated PowerShell (use `-Arch arm64` for a cross-build):
+
+```powershell
+pwsh build/windows/ensure-windows-sdk.ps1 -Arch x64 -Install
+```
+
+The helper selects SDK `10.0.28000.0` for Chromium 153 and retains SDK
+`10.0.26100.0` for Chromium 152 pins. It checks nonempty headers, x86/x64 libraries,
+x64 tools and Debugging Tools; ARM64 also requires target libraries and debugger.
+Chromium 153 additionally needs the `NTDDI_WIN11_BR` SDK header definition.
+It skips downloading and installation when those prerequisites are already met.
+Otherwise it verifies the official Microsoft bootstrapper's SHA256 and
+Authenticode signer before installing all SDK features, then checks the files
+again. SDK servicing releases install under the `.0` directory; the pinned
+installers are `10.0.28000.2705` (153) and `10.0.26100.7705` (152).
+This source change does not modify an already-running Windows 152 workflow.
 
 Run from the repository root in a Developer PowerShell:
 

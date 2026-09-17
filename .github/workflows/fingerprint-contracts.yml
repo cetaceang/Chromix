@@ -62,7 +62,7 @@ jobs:
           'C:\Program Files\Git\usr\bin' >> $env:GITHUB_PATH
 
       - name: Install SDK test dependencies (no browser download)
-        run: python -m pip install pytest pytest-subtests tzdata psutil h2==4.3.0 aioquic==1.2.0 './sdk/python[cookies,measured]'
+        run: python -m pip install pytest pytest-subtests tzdata psutil h2==4.3.0 aioquic==1.2.0 langcodes==3.5.1 './sdk/python[cookies,measured]'
       - run: npm ci --ignore-scripts --prefix sdk/node
 
       - name: Independently fetch and hash pinned source preimages

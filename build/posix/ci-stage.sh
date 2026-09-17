@@ -230,6 +230,8 @@ fi
 # ---- completion checks -----------------------------------------------------
 if [ "$PLATFORM" = linux ]; then
   [ -x "$OUT/chrome" ] || die "build exited 0 but $OUT/chrome is missing"
+  emit compiled_ready true
+  emit runtime_verified false
 else
   [ -d "$OUT/Chromium.app" ] || die "build exited 0 but $OUT/Chromium.app is missing"
 fi
@@ -250,7 +252,9 @@ ASSET="chromix-linux-$ARCH.zip"
 grep -E "^[0-9a-fA-F]{64}  $ASSET\$" SHA256SUMS >/dev/null ||
   die "SHA256SUMS is missing the entry for $ASSET"
 if [ "$PLATFORM" = linux ]; then
-  sha256sum -c SHA256SUMS || die "bundle checksum verification failed"
+  [ "$(grep -Ec "^[0-9a-fA-F]{64}  chromix-linux-$ARCH\\.zip\$" SHA256SUMS)" -eq 1 ] ||
+    die "SHA256SUMS must contain exactly one entry for $ASSET"
+  sha256sum --check --strict SHA256SUMS || die "bundle checksum verification failed"
 else
   shasum -a 256 -c SHA256SUMS || die "bundle checksum verification failed"
 fi
@@ -259,14 +263,12 @@ SMOKE_DIR="$WORK/smoke"
 fail_runtime_check() {
   local code="$1"
   shift
-  if [ "$PLATFORM" = macos ]; then
-    emit runtime_failed true
-    rm -rf "$SMOKE_DIR"
-  fi
+  emit runtime_failed true
+  rm -rf "$SMOKE_DIR"
   die "$* (exit $code)"
 }
+emit package_ready true
 if [ "$PLATFORM" = macos ]; then
-  emit package_ready true
   emit runtime_verified false
 fi
 rm -rf "$SMOKE_DIR"
@@ -297,7 +299,8 @@ if [ "$PLATFORM" = linux ] && [ "$HOST_ARCH" != "$ARCH" ]; then
   exit 0
 fi
 
-CHROMIUM_VERSION_PIN="$(tr -d '\n' < "$REPO/CHROMIUM_VERSION")"
+CHROMIUM_VERSION_PIN="$(python3 "$REPO/tools/platform_pins.py" --repo "$REPO" \
+  --platform "$PLATFORM" --field ChromiumVersion)"
 if [ "$PLATFORM" = macos ]; then
   if python3 "$REPO/tools/macos_browser_smoke.py" --launcher "$LAUNCHER" \
       --output "$WORK/runtime-smoke-stage-$STAGE_INDEX" --profile "$SMOKE_DIR/profile" \
@@ -307,20 +310,21 @@ if [ "$PLATFORM" = macos ]; then
     fail_runtime_check "$?" "extracted macOS runtime smoke test failed; see runtime-smoke-stage-$STAGE_INDEX"
   fi
 else
-  bash "$REPO/build/linux/prepare-ci-sandbox.sh" "$SMOKE_DIR/chromix/chrome"
+  bash "$REPO/build/linux/prepare-ci-sandbox.sh" "$SMOKE_DIR/chromix/chrome" ||
+    fail_runtime_check "$?" "Linux sandbox preparation failed"
   VERSION_OUTPUT="$("$TIMEOUT" 30s "$LAUNCHER" --version)" ||
-    die "extracted launcher --version check failed"
+    fail_runtime_check "$?" "extracted launcher --version check failed"
   echo "$VERSION_OUTPUT"
   grep -qF "$CHROMIUM_VERSION_PIN" <<<"$VERSION_OUTPUT" ||
-    die "extracted browser version does not match the pinned Chromium version"
+    fail_runtime_check 1 "extracted browser version does not match the pinned Chromium version"
 
   DOM_OUTPUT="$("$TIMEOUT" 60s "$LAUNCHER" --headless --disable-gpu --no-first-run \
     --no-default-browser-check "--user-data-dir=$SMOKE_DIR/profile" \
     --dump-dom 'data:text/html,<p>chromix-smoke-ok</p>')" ||
-    die "extracted headless smoke test failed"
+    fail_runtime_check "$?" "extracted headless smoke test failed"
   echo "$DOM_OUTPUT"
   grep -qF '<p>chromix-smoke-ok</p>' <<<"$DOM_OUTPUT" ||
-    die "smoke page marker missing from dumped DOM"
+    fail_runtime_check 1 "smoke page marker missing from dumped DOM"
 fi
 
 NATIVE_BROWSER="$SMOKE_DIR/chromix/chrome"

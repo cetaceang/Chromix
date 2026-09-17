@@ -3,4 +3,5 @@
 # ungoogled-chromium-windows release; see build/ungoogled-revisions.psd1.
 #
 # major  version           channel
-152      152.0.7977.82      pinned ungoogled release
+153      153.0.8010.36      pinned ungoogled release (Linux/Windows)
+152      152.0.7977.82      pinned ungoogled release (macOS; awaiting upstream 153)

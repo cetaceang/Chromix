@@ -279,12 +279,30 @@ def test_legacy_signal_skip_requires_explicit_reason_without_error(category):
 
 
 def test_media_exceptions_not_skips_and_no_unconfirmed_capture():
-    sample = {"permissions": {key: {"available": True, "state": "prompt"} for key in ("camera", "microphone", "notifications")},
+    sample = {"permissions": {key: {"available": True, "state": "denied"} for key in ("camera", "microphone", "notifications")},
               "deviceProbe": {"available": True}, "devices": [], "devicesError": None,
               "permissionGrantsByRunner": 0, "deniedDocument": True,
+              "origin": "http://127.0.0.1:9876", "secureContext": True,
               "policyAllows": {"camera": False, "microphone": False}, "capture": {
                   key: {"exception": {"name": "NotAllowedError"}} for key in ("camera", "microphone")}}
     assert not failures(smoke.evaluate_media(sample, True))
+    for name in ("camera", "microphone"):
+        for exception in ("NotFoundError", "NotReadableError", "TypeError"):
+            broken = deepcopy(sample)
+            broken["capture"][name] = {"exception": {"name": exception}}
+            assert f"media.denied.{name}.capture_rejected" in failures(smoke.evaluate_media(broken, True))
+        for state in ("prompt", "granted"):
+            broken = deepcopy(sample)
+            broken["permissions"][name]["state"] = state
+            assert f"media.denied.{name}.policy_denied" in failures(smoke.evaluate_media(broken, True))
+        for capture in ({"unexpectedSuccess": True}, {"timeout": True}, {"notRun": "not denied"}):
+            broken = deepcopy(sample)
+            broken["capture"][name] = capture
+            assert f"media.denied.{name}.capture_rejected" in failures(smoke.evaluate_media(broken, True))
+    for field, value in (("origin", "null"), ("secureContext", False)):
+        broken = deepcopy(sample)
+        broken[field] = value
+        assert "media.denied.nonopaque_secure_context" in failures(smoke.evaluate_media(broken, True))
     sample["permissions"]["camera"] = {"error": {"name": "OperationError"}}
     sample["deviceProbe"] = {"error": {"name": "OperationError"}}
     assert failures(smoke.evaluate_media(sample, True))
@@ -482,7 +500,10 @@ function realm(fault = '') {
       if(fault==='capability-throws')throw new Error('capability backend failed');
       return {supported:config.audio.contentType.includes('opus'),smooth:false,powerEfficient:false};
     },
-    encodingInfo:async config=>{assert.equal(config.type,'record');stats.codecEncodes++;
+    encodingInfo:async config=>{
+      assert.equal(config.type,'webrtc');stats.codecEncodes++;
+      assert(['audio/x-chromix-invalid', 'audio/opus'].includes(config.audio.contentType));
+      assert.equal(config.audio.channels,'2');assert.equal(config.audio.samplerate,48000);
       return {supported:fault==='capability-lie',smooth:false,powerEfficient:false};}
   };
   env.navigator.gpu=gpuMock.gpu;env.GPUBufferUsage=gpuMock.bufferUsage;env.GPUTextureUsage=gpuMock.textureUsage;env.GPUMapMode={READ:1};

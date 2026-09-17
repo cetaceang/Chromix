@@ -417,6 +417,18 @@ class WindowsRequiredCacheTest(unittest.TestCase):
         self.powershell = shutil.which("pwsh") or "/opt/pwsh/pwsh"
         if not Path(self.powershell).is_file():
             self.skipTest("pwsh is unavailable")
+        from tools.tests.test_fetch_upstream_cache import synthetic_windows_source
+
+        self.fixture.pin_repo = self.fixture.repo
+        for relative in ("CHROMIUM_VERSION", "CHROMIUM_LINUX_VERSION", "CHROMIUM_MACOS_VERSION",
+                         "build/ungoogled-revisions.psd1", "build/upstream-cache.json"):
+            self.fixture.put(self.fixture.repo / relative, (REPO / relative).read_bytes())
+        for source in (REPO / "tools").glob("*.py"):
+            self.fixture.put(self.fixture.repo / "tools" / source.name, source.read_bytes())
+        path = self.fixture.repo / "build/upstream-cache.json"
+        manifest = json.loads(path.read_text())
+        manifest["sources"]["windows"] = synthetic_windows_source(self.fixture.repo)
+        path.write_text(json.dumps(manifest))
         stage = STAGE.read_text()
         policy = next(line for line in stage.splitlines() if line.startswith("$RequireUpstreamCache ="))
         start = stage.index('$domainProgress = Join-Path $Src')
@@ -460,7 +472,7 @@ Add-Content $env:CALL_LOG ("ninja:" + $OutDir.Replace('\', '/'))
     def run_stage(self, *, enabled=True, validate=False, resume=False, stage=1,
                   minutes=300, fetch_rc=0, switch=False, run_id="", tracked_error="", prefer=False):
         fixture = self.fixture
-        env = {**fixture.env, "TEST_REPO": str(REPO), "TEST_WORK": str(fixture.work),
+        env = {**fixture.env, "TEST_REPO": str(fixture.repo), "TEST_WORK": str(fixture.work),
                "TEST_CACHE": str(fixture.cache), "TEST_PYTHON": sys.executable,
                "TEST_STAGE": str(stage), "TEST_RESUME": str(int(resume)),
                "TEST_SWITCH": str(int(switch)), "TEST_RUN_ID": run_id,
@@ -648,14 +660,23 @@ class WindowsRestoredPreparationFixture:
         self.calls = self.root / "calls"
         self.pins = dict(re.findall(r'^\s*(\w+) = "([^"\n]+)"',
                                    (REPO / "build/ungoogled-revisions.psd1").read_text(), re.M))
-        self.put(self.repo / "build/ungoogled-revisions.psd1", (REPO / "build/ungoogled-revisions.psd1").read_text())
+        from tools.tests.test_fetch_upstream_cache import synthetic_windows_source
+
+        for relative in ("CHROMIUM_VERSION", "CHROMIUM_LINUX_VERSION", "CHROMIUM_MACOS_VERSION",
+                         "build/ungoogled-revisions.psd1", "build/upstream-cache.json"):
+            self.put(self.repo / relative, (REPO / relative).read_text())
+        path = self.repo / "build/upstream-cache.json"
+        manifest = json.loads(path.read_text())
+        manifest["sources"]["windows"] = synthetic_windows_source(self.repo)
+        self.put(path, json.dumps(manifest))
         self.put(self.repo / "patches/series", "patches/one.patch\n")
         self.put(self.repo / "patches/one.patch", "diff --git a/sample.cc b/sample.cc\n--- a/sample.cc\n+++ b/sample.cc\n"
                  "@@ -1 +1 @@\n-google.test upstream\n+google.test Chromix\n")
         self.put(self.src / "sample.cc", "blocked.test upstream\n")
         self.put(self.src / ".chromix-upstream-restored.json", '{"valid": true}')
         self.put(self.src / "out/Default/obj/retained.obj", "cached object")
-        self.put(self.repo / "tools/apply_restored_patches.py", (REPO / "tools/apply_restored_patches.py").read_text())
+        for name in ("apply_restored_patches.py", "verify_patch_stack.py"):
+            self.put(self.repo / "tools" / name, (REPO / "tools" / name).read_text())
         self.put(self.repo / "tools/restore_upstream_cache.py", '''import json, os, sys
 from pathlib import Path
 with open(os.environ['MOCK_CALLS'], 'a') as output:
@@ -715,7 +736,7 @@ function git {
         from tools import prepare_restored_build as helper
         from tools import restore_upstream_cache as restore
 
-        identity, _, manifest = restore.identities(REPO, "windows", "x64")
+        identity, _, manifest = restore.identities(self.repo, "windows", "x64")
         version = "\n".join(f"{key}={value}" for key, value in zip(
             ("MAJOR", "MINOR", "BUILD", "PATCH"), identity["chromium_version"].split(".")))
         self.put(self.src / "chrome/VERSION", version)
@@ -764,9 +785,11 @@ raise SystemExit(1 if os.environ.get('MOCK_PROBE_FAILURE') == sys.argv[1] else 0
 ''')
         # Real receipt/header checks and invalidation; only native execution is a tiny stub.
         self.put(self.repo / "tools/prepare_restored_build.py", f'''import os, subprocess, sys
+from functools import partial
 from pathlib import Path
 sys.path.insert(0, {str(REPO)!r})
 from tools import prepare_restored_build as helper
+helper.prepare = partial(helper.prepare, repo=Path(os.environ['MOCK_REPO']))
 root = Path(os.environ['MOCK_WORK'])
 paths = {{root / 'src' / path for path in helper.tool_paths('windows', 'x64').values()}}
 run = subprocess.run
@@ -946,7 +969,8 @@ assert args.workdir == Path(os.environ['MOCK_WORK'])
 selection = json.loads((args.workdir / 'upstream-cache-ninja.json').read_text())
 assert args.ninja == selection['selected']['path']
 calls = Path(os.environ['MOCK_CALLS'])
-assert calls.read_text().splitlines()[-1] == ('ninja-plan' if args.phase == 'before' else 'ninja')
+previous = 'torque' if os.environ['MOCK_STAGE'] == '1' else 'ninja-plan'
+assert calls.read_text().splitlines()[-1] == (previous if args.phase == 'before' else 'ninja')
 with calls.open('a') as output:
     output.write('evidence-' + args.phase + '\\n')
 directory = args.workdir / 'upstream-reuse'
@@ -1002,11 +1026,11 @@ function Verify-FinalBundle { Add-Content -LiteralPath $env:MOCK_CALLS -Value "v
 function Invoke-Tracked {
   param($File, $ArgList, $Cwd, $TimeoutSec, [switch]$FullFailureOutput)
   if ($File -ne $Ninja -or $Cwd -ne $Src) { throw "build did not use selected Ninja/source" }
-  if ($ValidateOnly) {
-    if ($ArgList -notlike "*gen/v8/torque-generated/bit-field-asserts.cc") { throw "unexpected validation target" }
+  if ($ArgList -eq "-C `"$OutDir`" -j 1 -v gen/v8/torque-generated/bit-field-asserts.cc") {
     Add-Content -LiteralPath $env:MOCK_CALLS -Value "torque"
+    return 0
   } else {
-    if ($ArgList -ne "-C `"$OutDir`" -j 4 chrome") { throw "unexpected build arguments" }
+    if ($ValidateOnly -or $ArgList -ne "-C `"$OutDir`" -j 4 chrome") { throw "unexpected build arguments" }
     Add-Content -LiteralPath $env:MOCK_CALLS -Value "ninja"
   }
   return [int]$env:MOCK_NINJA_RC
@@ -1050,7 +1074,7 @@ function Invoke-FixtureNinja {
         first = self.run_prep()
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
         self.assertEqual(self.phases(), ["verify", "verify", "inspect", "ninja-guard", "normalize", "bindgen", "finish",
-                                         "gn-bootstrap", "gn-gen", "ninja-plan", "evidence-before", "ninja",
+                                         "gn-bootstrap", "gn-gen", "ninja-plan", "torque", "evidence-before", "ninja",
                                          "evidence-after", "package", "verify-bundle"])
         evidence = self.work / "upstream-reuse"
         baseline = evidence / "baseline.json"
@@ -1142,7 +1166,7 @@ function Invoke-FixtureNinja {
         first = self.run_prep()
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
         self.assertEqual(self.phases(), ["verify", "verify", "inspect", "ninja-guard", "finish", "gn-gen", "ninja-plan",
-                                         "evidence-before", "ninja", "evidence-after", "package", "verify-bundle"])
+                                         "torque", "evidence-before", "ninja", "evidence-after", "package", "verify-bundle"])
         self.assertEqual((self.out / "obj/retained.obj").stat().st_mtime_ns, before)
         self.assertFalse((self.out / "obj/sdk.obj").exists())
         self.assertEqual(self.report()["dependencies"]["external_dependency_outputs"], 1)

@@ -3,7 +3,7 @@
 
   Prerequisites:
     - Visual Studio 2022 Desktop C++ workload (ARM64 tools for -Arch arm64)
-    - Windows 11 SDK 10.0.26100 with Debugging Tools
+    - Windows 11 SDK 10.0.28000.0 with Debugging Tools (10.0.26100.0 for Chromium 152)
     - Python 3, Git, and 7-Zip
 #>
 [CmdletBinding()]
@@ -27,7 +27,11 @@ $WindowsTooling = Join-Path $WorkDir "tooling\ungoogled-chromium-windows"
 
 Write-Host "==> Chromix Windows $Arch build | Chromium $($Revisions.ChromiumVersion) | $WorkDir"
 & "$PSScriptRoot\assert-target-arch.ps1" -WorkDir $WorkDir -Arch $Arch -Initialize:($Arch -eq "arm64")
-if ($Arch -eq "arm64") { & "$PSScriptRoot\assert-arm64-toolchain.ps1" }
+if ($Arch -eq "arm64") {
+  & "$PSScriptRoot\assert-arm64-toolchain.ps1" -ChromiumVersion $Revisions.ChromiumVersion
+} else {
+  & "$PSScriptRoot\ensure-windows-sdk.ps1" -Arch $Arch -ChromiumVersion $Revisions.ChromiumVersion
+}
 if ($Resume -and -not (Test-Path (Join-Path $Src ".chromix-source-ready"))) {
   throw "-Resume requested but $Src is not prepared"
 }

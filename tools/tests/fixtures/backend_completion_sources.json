@@ -1,35 +1,35 @@
 {
-  "chromium_version": "152.0.7977.82",
+  "chromium_version": "153.0.8010.36",
   "core_commit": "e71b91c6e336d0f25cfc6b9ef09298a9d2506e24",
   "core_inputs": [
     {
       "path": "patches/extra/bromite/fingerprinting-flags-client-rects-and-measuretext.patch",
       "patch_sha256": "f8afff23b1afe2e0f04a3972282b9be5e9beebb86ce1693141b5df71f20ab857",
       "target": "content/browser/renderer_host/render_process_host_impl.cc",
-      "target_fragment": "--- a/content/browser/renderer_host/render_process_host_impl.cc\n+++ b/content/browser/renderer_host/render_process_host_impl.cc\n@@ -84,6 +84,7 @@\n #include \"components/services/storage/public/cpp/quota_error_or.h\"\n #include \"components/services/storage/public/mojom/cache_storage_control.mojom.h\"\n #include \"components/tracing/common/tracing_switches.h\"\n+#include \"components/ungoogled/ungoogled_switches.h\"\n #include \"components/viz/common/switches.h\"\n #include \"components/viz/host/gpu_client.h\"\n #include \"components/viz/host/host_frame_sink_manager.h\"\n@@ -3892,6 +3893,8 @@ void RenderProcessHostImpl::PropagateBro\n       switches::kEnableWebGLDraftExtensions,\n       switches::kEnableWebGPUDeveloperFeatures,\n       switches::kFileUrlPathAlias,\n+      switches::kFingerprintingClientRectsNoise,\n+      switches::kFingerprintingCanvasMeasureTextNoise,\n       switches::kForceDeviceScaleFactor,\n       switches::kForceDisplayColorProfile,\n       switches::kForceHighContrast,\n"
+      "target_fragment": "--- a/content/browser/renderer_host/render_process_host_impl.cc\n+++ b/content/browser/renderer_host/render_process_host_impl.cc\n@@ -84,6 +84,7 @@\n #include \"components/services/storage/public/cpp/quota_error_or.h\"\n #include \"components/services/storage/public/mojom/cache_storage_control.mojom.h\"\n #include \"components/tracing/common/tracing_switches.h\"\n+#include \"components/ungoogled/ungoogled_switches.h\"\n #include \"components/viz/common/switches.h\"\n #include \"components/viz/host/gpu_client.h\"\n #include \"components/viz/host/host_frame_sink_manager.h\"\n@@ -3891,6 +3892,8 @@ void RenderProcessHostImpl::PropagateBro\n       switches::kEnableWebGLDraftExtensions,\n       switches::kEnableWebGPUDeveloperFeatures,\n       switches::kFileUrlPathAlias,\n+      switches::kFingerprintingClientRectsNoise,\n+      switches::kFingerprintingCanvasMeasureTextNoise,\n       switches::kForceDeviceScaleFactor,\n       switches::kForceDisplayColorProfile,\n       switches::kForceHighContrast,\n"
     },
     {
       "path": "patches/extra/bromite/flag-fingerprinting-canvas-image-data-noise.patch",
       "patch_sha256": "6e3dce40e54244e4ca146fdf364f9211ac96c0cf732cec4c28dfa45753136ae5",
       "target": "content/browser/renderer_host/render_process_host_impl.cc",
-      "target_fragment": "--- a/content/browser/renderer_host/render_process_host_impl.cc\n+++ b/content/browser/renderer_host/render_process_host_impl.cc\n@@ -3895,6 +3895,7 @@ void RenderProcessHostImpl::PropagateBro\n       switches::kFileUrlPathAlias,\n       switches::kFingerprintingClientRectsNoise,\n       switches::kFingerprintingCanvasMeasureTextNoise,\n+      switches::kFingerprintingCanvasImageDataNoise,\n       switches::kForceDeviceScaleFactor,\n       switches::kForceDisplayColorProfile,\n       switches::kForceHighContrast,\n"
+      "target_fragment": "--- a/content/browser/renderer_host/render_process_host_impl.cc\n+++ b/content/browser/renderer_host/render_process_host_impl.cc\n@@ -3894,6 +3894,7 @@ void RenderProcessHostImpl::PropagateBro\n       switches::kFileUrlPathAlias,\n       switches::kFingerprintingClientRectsNoise,\n       switches::kFingerprintingCanvasMeasureTextNoise,\n+      switches::kFingerprintingCanvasImageDataNoise,\n       switches::kForceDeviceScaleFactor,\n       switches::kForceDisplayColorProfile,\n       switches::kForceHighContrast,\n"
     },
     {
       "path": "patches/extra/ungoogled-chromium/add-flag-for-disabling-jit.patch",
       "patch_sha256": "724f8d4fea671eb9ecc56bce391eb3d653790586bbc1080f06279c953b7e08f7",
       "target": "content/browser/renderer_host/render_process_host_impl.cc",
-      "target_fragment": "--- a/content/browser/renderer_host/render_process_host_impl.cc\n+++ b/content/browser/renderer_host/render_process_host_impl.cc\n@@ -3657,7 +3657,10 @@ bool RenderProcessHostImpl::ShouldSendGp\n }\n \n bool RenderProcessHostImpl::IsJitDisabled() {\n-  return !!(flags_ & RenderProcessFlags::kJitDisabled);\n+  return !!(flags_ & RenderProcessFlags::kJitDisabled) ||\n+         (base::CommandLine::ForCurrentProcess()->HasSwitch(\n+              \"disabling-javascript-optimization-disables-jit\") &&\n+          RenderProcessHostImpl::AreV8OptimizationsDisabled());\n }\n \n bool RenderProcessHostImpl::AreV8OptimizationsDisabled() {\n@@ -3785,6 +3788,9 @@ void RenderProcessHostImpl::AppendRender\n   if (IsJitDisabled()) {\n     AppendToCommaSeparatedSwitch(\n         command_line, blink::switches::kJavaScriptFlags, \"--jitless\");\n+\n+    AppendToCommaSeparatedSwitch(\n+        command_line, blink::switches::kJavaScriptFlags, \"--wasm_jitless\");\n   } else if (AreV8OptimizationsDisabled()) {\n     AppendToCommaSeparatedSwitch(command_line,\n                                  blink::switches::kJavaScriptFlags,\n"
+      "target_fragment": "--- a/content/browser/renderer_host/render_process_host_impl.cc\n+++ b/content/browser/renderer_host/render_process_host_impl.cc\n@@ -3655,7 +3655,10 @@ bool RenderProcessHostImpl::ShouldSendGp\n }\n \n bool RenderProcessHostImpl::IsJitDisabled() {\n-  return !!(flags_ & RenderProcessFlags::kJitDisabled);\n+  return !!(flags_ & RenderProcessFlags::kJitDisabled) ||\n+         (base::CommandLine::ForCurrentProcess()->HasSwitch(\n+              \"disabling-javascript-optimization-disables-jit\") &&\n+          RenderProcessHostImpl::AreV8OptimizationsDisabled());\n }\n \n bool RenderProcessHostImpl::AreV8OptimizationsDisabled() {\n@@ -3783,6 +3786,9 @@ void RenderProcessHostImpl::AppendRender\n   if (IsJitDisabled()) {\n     AppendToCommaSeparatedSwitch(\n         command_line, blink::switches::kJavaScriptFlags, \"--jitless\");\n+\n+    AppendToCommaSeparatedSwitch(\n+        command_line, blink::switches::kJavaScriptFlags, \"--wasm_jitless\");\n   } else if (AreV8OptimizationsDisabled()) {\n     AppendToCommaSeparatedSwitch(command_line,\n                                  blink::switches::kJavaScriptFlags,\n"
     }
   ],
   "qualification": "independent source and extracted C++ with dependency shims; not a Chromium build",
   "sources": {
     "chrome/app/chrome_main.cc": {
       "target": "chrome/app/chrome_main.cc",
-      "upstream_sha256": "7de66ddc2fed0c51d4cc87796555b1c3a887ade67282f889a525352e3719f829"
+      "upstream_sha256": "9bca15fa0892300b0696f4fab3d4d6559bd62abaab746be00512a674fc2a1d43"
     },
     "content/browser/renderer_host/render_process_host_impl.cc": {
       "target": "content/browser/renderer_host/render_process_host_impl.cc",
-      "upstream_sha256": "8c4ff5af3f6d063703fb2b1e7df8f112ea28ea2162be259bf7ad6eed08ddbcc9"
+      "upstream_sha256": "ac3608bc00a47b6028ac7bb6dcf9c87f1b84c180b272d6bb407a2d8b7696f073"
     },
     "gin/v8_platform.cc": {
       "target": "gin/v8_platform.cc",
@@ -37,7 +37,7 @@
     },
     "media/base/supported_types.cc": {
       "target": "media/base/supported_types.cc",
-      "upstream_sha256": "4a6443023099df664b7d6195fb968e9a44e1b6fa7e7789761cce6ff83e5a06e3"
+      "upstream_sha256": "5977e7a088795b5fc1040c8fa65d88ddfe6f7395e5ebcdfa384a3446113fc4c1"
     },
     "media/base/supported_types.h": {
       "target": "media/base/supported_types.h",
@@ -53,7 +53,7 @@
     },
     "third_party/blink/renderer/core/exported/web_view_impl.cc": {
       "target": "third_party/blink/renderer/core/exported/web_view_impl.cc",
-      "upstream_sha256": "6006b32fb1ea7cac1a6c8f410ab4bfd8926ba7edb3d151343e160a2c64f07361"
+      "upstream_sha256": "251f73e0c15b65b3754fb80457541ac097380d2a1011594d4efd4ad773f7b275"
     },
     "third_party/blink/renderer/core/timing/time_clamper.cc": {
       "target": "third_party/blink/renderer/core/timing/time_clamper.cc",
@@ -65,7 +65,7 @@
     },
     "third_party/blink/renderer/modules/font_access/font_access.cc": {
       "target": "third_party/blink/renderer/modules/font_access/font_access.cc",
-      "upstream_sha256": "3c6584864d3074a97e6b9064be4bd45d3ae5b1b698d19fe73d7de110209abd5d"
+      "upstream_sha256": "203279ea03fcdbed64d51e221c101dc423d640fbb92b3eb7f767b80117b16bb8"
     },
     "third_party/blink/renderer/modules/keyboard/keyboard_layout.cc": {
       "target": "third_party/blink/renderer/modules/keyboard/keyboard_layout.cc",
@@ -97,11 +97,11 @@
     },
     "third_party/blink/renderer/modules/webcodecs/video_encoder.cc": {
       "target": "third_party/blink/renderer/modules/webcodecs/video_encoder.cc",
-      "upstream_sha256": "d727cfb025e2675a13dc31024a194286d78bd345a8349646ceb7eea0f2c658a4"
+      "upstream_sha256": "9e2d80ab0133cb8caa2499284b8fe92862e1be08112a4a9a01dcd03b1e33d530"
     },
     "third_party/blink/renderer/platform/fonts/font_cache.cc": {
       "target": "third_party/blink/renderer/platform/fonts/font_cache.cc",
-      "upstream_sha256": "284a124db458ff38620ee4a2d85bbdd90713475c07f7344d0035de0b64c05cca"
+      "upstream_sha256": "fab6828d3a624ea5e3af5b8fd241c9e97bba662aa6d2ede857431184f7ead653"
     },
     "third_party/blink/renderer/platform/fonts/font_cache.h": {
       "target": "third_party/blink/renderer/platform/fonts/font_cache.h",
@@ -175,9 +175,9 @@
     },
     "0170": {
       "target": "third_party/blink/renderer/core/exported/web_view_impl.cc",
-      "patch_sha256": "f7a548be97058082aabb4f1c03a405276798487a1d3faf37012bb30d9a272572",
-      "preimage_sha256": "6006b32fb1ea7cac1a6c8f410ab4bfd8926ba7edb3d151343e160a2c64f07361",
-      "output_sha256": "962281d4e6ec4f45c242b78be49b35777cbb4add38579158ebfa4ac90c600df0",
+      "patch_sha256": "7b53c265b61e3f1fe741cc735c96d4a35829c7e110a9bf420c822e6ad326c9e8",
+      "preimage_sha256": "251f73e0c15b65b3754fb80457541ac097380d2a1011594d4efd4ad773f7b275",
+      "output_sha256": "05228f5103abded7f39a6d848e52d2b96f566233cf9509151b3a5f656265c353",
       "sections": [
         {
           "line": 39,
@@ -188,7 +188,7 @@
           "text": "\nnamespace {\n\nclass EmptyEventListener final : public NativeEventListener {\n public:\n  void Invoke(ExecutionContext* execution_context, Event*) override {}\n"
         },
         {
-          "line": 3898,
+          "line": 3903,
           "text": "void WebViewImpl::UpdateWebPreferences(\n    const blink::web_pref::WebPreferences& preferences) {\n  web_preferences_ = preferences;\n\n  if (IsFencedFrameRoot()) {\n    // The main frame of a fenced frame should not behave like a top level\n"
         }
       ]
@@ -327,24 +327,24 @@
     },
     "0176": {
       "target": "chrome/app/chrome_main.cc",
-      "patch_sha256": "106cfe814177fcbafdf20279f68e81cf934abb954fb574c8c675b1862b844fdb",
-      "preimage_sha256": "5fc20db77a1f49b92d4d8ddf61757b9b839f6baa321a351d989feb88967e1287",
-      "output_sha256": "a16b17fa91e13302563f65c3da01877f8189679aa6852aa07771920684ef1f0f",
+      "patch_sha256": "bc7bdae3ea6f594ce926fdf4ef081213b0a0c15171ac2bb9e23e0d53ebb91585",
+      "preimage_sha256": "16ee532a5c3c4b040f5d41fff2d6835b9ce6698c2e9820f9295b15c468687e2e",
+      "output_sha256": "54137eb0625a96300d1a404f977b4d2c40325d92ebd5dda2bea952e566fd8ee9",
       "sections": [
         {
-          "line": 209,
+          "line": 177,
           "text": "  if (!command_line->HasSwitch(switches::kProcessType)) {\n    // Canonicalize public booleans identically for direct and SDK launches.\n    for (const char* key : {\"fingerprint-noise\", \"fingerprint-sapi-voices\",\n                            \"fingerprint-allow-3p-cookies\", \"fingerprint-windows-font-metrics\"}) {\n      if (!command_line->HasSwitch(key))\n        continue;\n      const std::string value = base::ToLowerASCII(command_line->GetSwitchValueASCII(key));\n"
         },
         {
-          "line": 223,
+          "line": 191,
           "text": "\n    struct Alias { const char* fp; const char* uxr; };\n    static constexpr Alias kAliases[] = {\n      {\"fingerprint-gpu-vendor\",          \"uxr-webgl-vendor\"},\n      {\"fingerprint-gpu-renderer\",         \"uxr-webgl-renderer\"},\n      {\"disable-gpu-fingerprint\",           \"uxr-disable-gpu-fingerprint\"},\n"
         },
         {
-          "line": 252,
+          "line": 220,
           "text": "    for (const auto& a : kAliases) {\n      if (command_line->HasSwitch(a.fp) &&\n          !command_line->HasSwitch(a.uxr)) {\n        command_line->AppendSwitchASCII(\n            a.uxr, command_line->GetSwitchValueASCII(a.fp));\n      }\n    }\n\n"
         },
         {
-          "line": 535,
+          "line": 503,
           "text": "      disabled += \"ForceThirdPartyCookieBlocking\";\n      command_line->AppendSwitchASCII(kDisableFeatures, disabled);\n    }\n  }\n\n  // Capture the unpolluted command line snapshot in the browser process.\n"
         }
       ]
@@ -383,28 +383,28 @@
     },
     "0179": {
       "target": "media/base/supported_types.cc",
-      "patch_sha256": "c7129a9746f65faf72220e8525431c0728be6d898fb316bd0c9affad3bd44f9c",
-      "preimage_sha256": "4a6443023099df664b7d6195fb968e9a44e1b6fa7e7789761cce6ff83e5a06e3",
-      "output_sha256": "6ead04f604f15c8cf0cb3adafadec4960956c88c794c20ed3fe91fb8c9b9180c",
+      "patch_sha256": "17c323a92e97fed8f023e70e8dd6f81ea3e69d73807a426b6e911933b27819ec",
+      "preimage_sha256": "5977e7a088795b5fc1040c8fa65d88ddfe6f7395e5ebcdfa384a3446113fc4c1",
+      "output_sha256": "e56c1369e79a814aae6606408b507d489b720018de387ce9bf394388c6258c7c",
       "sections": [
         {
           "line": 3,
           "text": "// found in the LICENSE file.\n\n#include \"media/base/supported_types.h\"\n\n#include \"base/command_line.h\"\n#include \"base/feature_list.h\"\n"
         },
         {
-          "line": 420,
+          "line": 412,
           "text": "\n}  // namespace\n\nbool IsDecoderSupportedAudioType(const AudioType& type) {\n  if (auto* media_client = GetMediaClient())\n    return media_client->IsDecoderSupportedAudioType(type);\n"
         },
         {
-          "line": 427,
+          "line": 419,
           "text": "}\n\nbool IsDecoderSupportedVideoType(const VideoType& type) {\n  if (auto* media_client = GetMediaClient())\n    return media_client->IsDecoderSupportedVideoType(type);\n  return IsDefaultDecoderSupportedVideoType(type);\n}\n\nbool IsEncoderSupportedVideoType(const VideoType& type) {\n  if (auto* media_client = GetMediaClient()) {\n    return media_client->IsEncoderSupportedVideoType(type);\n  }\n"
         },
         {
-          "line": 442,
+          "line": 434,
           "text": "// TODO(chcunningham): Add platform specific logic for Android (move from\n// MimeUtilInternal).\nbool IsDefaultDecoderSupportedVideoType(const VideoType& type) {\n  if (!IsDecoderSupportedHdrMetadata(type)) {\n    return false;\n  }\n"
         },
         {
-          "line": 521,
+          "line": 513,
           "text": "}\n\nbool IsDefaultEncoderSupportedVideoType(const VideoType& type) {\n#if !BUILDFLAG(USE_PROPRIETARY_CODECS)\n  if (IsVideoCodecProprietary(type.codec)) {\n    return false;\n"
         }
       ]
@@ -427,16 +427,16 @@
     },
     "0181": {
       "target": "third_party/blink/renderer/modules/webcodecs/video_encoder.cc",
-      "patch_sha256": "8fd8e69ad79ec5de871dfd0f8b2b1fd98ceee6819eb4e3d3d34dfc134bfa17ed",
-      "preimage_sha256": "d727cfb025e2675a13dc31024a194286d78bd345a8349646ceb7eea0f2c658a4",
-      "output_sha256": "2fa6cfa0353b168b9682e5faef2ee10503ade0ff383957b2ab9938c35a8a7ca5",
+      "patch_sha256": "b4d2072cd94e91e75bd6bc76a351102599636393e385badbb82cc2e9c5598cbc",
+      "preimage_sha256": "9e2d80ab0133cb8caa2499284b8fe92862e1be08112a4a9a01dcd03b1e33d530",
+      "output_sha256": "e94e0782b67f3c23bc62ee90e2a63b54a82587ff5f2aa0166cbd4e4fc55d36ee",
       "sections": [
         {
           "line": 3,
           "text": "// found in the LICENSE file.\n\n#include \"third_party/blink/renderer/modules/webcodecs/video_encoder.h\"\n\n#include <algorithm>\n#include <string>\n"
         },
         {
-          "line": 436,
+          "line": 444,
           "text": "\nbool VerifyCodecSupportStatic(VideoEncoderTraits::ParsedConfig* config,\n                              String* js_error_message) {\n  if (config->not_supported_error_message) {\n    *js_error_message = *config->not_supported_error_message;\n    return false;\n"
         }
       ]
@@ -540,8 +540,8 @@
     "0187": {
       "target": "third_party/blink/renderer/platform/fonts/font_cache.cc",
       "patch_sha256": "8fae05587064190809186a89b0fc9b57d71705ee7b145e84dca5c9d260f79f03",
-      "preimage_sha256": "eced1b62b9c1e8ba54c7c06ed747318b6d5fd369c0a7ebd7d0afd420b41bcaac",
-      "output_sha256": "416ceb8d4c8388eef2accba37eb922a4e1fd17fcc9cf764c26eddd02d044de30",
+      "preimage_sha256": "3939d3cbd839039d884e0406a0ec48cb13dcee27612518b3bbc4a62d5a352ea9",
+      "output_sha256": "06ec89ef44ec6dfdecf3f97550d13413616af27569353c374882274561f78ccf",
       "sections": [
         {
           "line": 100,
@@ -587,28 +587,28 @@
     },
     "0190": {
       "target": "third_party/blink/renderer/modules/font_access/font_access.cc",
-      "patch_sha256": "2556715e75b2bfa54c3c323e9bf9138c3d068d564d19690cd2b297651612653c",
-      "preimage_sha256": "3c6584864d3074a97e6b9064be4bd45d3ae5b1b698d19fe73d7de110209abd5d",
-      "output_sha256": "0ec4c9cce9d11dee7f2ca015655d033595b7e9ff11cdc951e5177eb6d48ae83a",
+      "patch_sha256": "0d1d72ebc003643c0bdcab0dbae7f8ca3d9dd3cbda7e202c4d34ef476ee4dfa6",
+      "preimage_sha256": "203279ea03fcdbed64d51e221c101dc423d640fbb92b3eb7f767b80117b16bb8",
+      "output_sha256": "18226ae72daae6ea9f59b453f84761112f1184701a714650b6f50edb64c64a29",
       "sections": [
         {
           "line": 3,
           "text": "// found in the LICENSE file.\n\n#include \"third_party/blink/renderer/modules/font_access/font_access.h\"\n\n#include <algorithm>\n\n"
         },
         {
-          "line": 154,
-          "text": "  table.ParseFromArray(mapped_mem.data(),\n                       base::checked_cast<int>(mapped_mem.size()));\n  for (const auto& element : table.fonts()) {\n    // If the optional postscript name filter is set in QueryOptions,\n    // only allow items that match.\n    if (hasPostscriptNameFilter &&\n"
+          "line": 152,
+          "text": "  table.ParseFromString(base::as_string_view(mapped_mem));\n\n  HeapVector<Member<FontMetadata>> entries;\n  for (const auto& element : table.fonts()) {\n    // If the optional postscript name filter is set in QueryOptions,\n    // only allow items that match.\n    if (has_postscript_name_filter &&\n"
         }
       ]
     },
     "0191": {
       "target": "content/browser/renderer_host/render_process_host_impl.cc",
-      "patch_sha256": "328c93bbd4cc1fc10ec0dbdb64a6e6ba5b8e2018fc15972d87ca81c8b85be957",
-      "preimage_sha256": "e457c8640b580deb457598d81e67cb910a4d14b96c59e02ab8511ad2f66219b5",
-      "output_sha256": "ea45ec957dff0d388d0e40416b557cc6a36916126c9c0bd168327a9855a6eda5",
+      "patch_sha256": "5135e40905d1044778c139fff67158587d99491aed697dc9562e11baf2ae58d7",
+      "preimage_sha256": "7a92b34b85cf65ff733f4ac2da73f2e6c62b1d274025c942d425663faad42bde",
+      "output_sha256": "000837cb12d9c25bda54e564dc423b86af8f56978113437133d860983b863057",
       "sections": [
         {
-          "line": 2064,
+          "line": 2055,
           "text": "         base::CommandLine::ForCurrentProcess()->GetSwitches()) {\n      if (sw.first.compare(0, 4, \"uxr-\") == 0) {\n        uxr_cfg[sw.first] =\n            base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(sw.first);\n      }\n    }\n    // Snapshot construction is browser-owned and launch-scoped. Even an empty\n"
         }
       ]
@@ -735,5 +735,7 @@
       "target": "third_party/blink/renderer/modules/mediarecorder/video_track_recorder.cc",
       "text": "constexpr MediaTrackContainerType kVp8Types[] = {\n    MediaTrackContainerType::kVideoMatroska,\n    MediaTrackContainerType::kVideoWebM};\nconstexpr MediaTrackContainerType kVp9Types[] = {\n    MediaTrackContainerType::kVideoMatroska,\n    MediaTrackContainerType::kVideoWebM, MediaTrackContainerType::kVideoMp4};\n#if BUILDFLAG(USE_PROPRIETARY_CODECS)\nconstexpr MediaTrackContainerType kH264Types[] = {\n    MediaTrackContainerType::kVideoMatroska,\n    MediaTrackContainerType::kVideoMp4};\n#endif\nconstexpr MediaTrackContainerType kAv1Types[] = {\n    MediaTrackContainerType::kVideoWebM,\n    MediaTrackContainerType::kVideoMatroska,\n    MediaTrackContainerType::kVideoMp4};\n#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)\nconstexpr MediaTrackContainerType kH265Types[] = {\n    MediaTrackContainerType::kVideoMatroska,\n    MediaTrackContainerType::kVideoMp4};\n#endif\n\nconstexpr struct {\n  media::VideoCodec codec;\n  media::VideoCodecProfile min_profile;\n  media::VideoCodecProfile max_profile;\n  base::raw_span<const MediaTrackContainerType> supported_container_types;\n} kPreferredCodecAndVEAProfiles[] = {\n    {media::VideoCodec::kVP8, media::VP8PROFILE_ANY, media::VP8PROFILE_ANY,\n     base::span{kVp8Types}},\n    {media::VideoCodec::kVP9, media::VP9PROFILE_PROFILE0,\n     media::VP9PROFILE_PROFILE0, base::span{kVp9Types}},\n#if BUILDFLAG(USE_PROPRIETARY_CODECS)\n    {media::VideoCodec::kH264, media::H264PROFILE_BASELINE,\n     media::H264PROFILE_HIGH, base::span{kH264Types}},\n#endif\n    {media::VideoCodec::kAV1, media::AV1PROFILE_PROFILE_MAIN,\n     media::AV1PROFILE_PROFILE_MAIN, base::span{kAv1Types}},\n#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)\n    {media::VideoCodec::kHEVC, media::HEVCPROFILE_MAIN, media::HEVCPROFILE_MAIN,\n     base::span{kH265Types}},\n#endif\n};\n\n"
     }
-  }
+  },
+  "source": "https://chromium.googlesource.com/chromium/src/+/refs/tags/153.0.8010.36",
+  "chromium_revision": "507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c"
 }

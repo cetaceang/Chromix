@@ -475,8 +475,94 @@ def test_real_series_parses_without_donor_execution():
         transformed, entries = arp.transform_patch(raw, set(), [])
         assert transformed == raw
         assert entries
-    assert len(names) == 191
-    assert [Path(name).name[:4] for name in names] == [f"{i:04d}" for i in range(1, 192)]
+    assert len(names) == 213
+    assert [Path(name).name[:4] for name in names] == [f"{i:04d}" for i in range(1, 214)]
+    assert all(Path(name).name[5:].startswith("display-") for name in names[191:])
+
+
+@pytest.mark.parametrize("version", ["152", "153"])
+def test_merged_chrome_main_launch_alias_chain_roundtrips(tmp_path, version):
+    import test_chrome_main_patch_context as context
+
+    original = context.source_fixture(version)
+    target = tmp_path / context.TARGET
+    target.parent.mkdir(parents=True)
+    target.write_bytes(original)
+    patches = [context.PATCH, context.REPO / "patches/0176-launch-input-clock-aliases.patch"]
+    for patch in patches:
+        result = context.run_patch(tmp_path, patch)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert b"fuzz" not in (result.stdout + result.stderr).lower()
+    merged = target.read_text()
+    for feature in ('"fingerprint-platform"', '"fingerprint-timer-resolution"',
+                    '"fingerprint-font-policy"', '"fingerprint-keyboard-layout"',
+                    '"fingerprint-audio-render"', '"fingerprint-gpu-backend"',
+                    '"disable_non_proxied_udp"', 'command_line->AppendSwitchNative('):
+        assert feature in merged
+    for patch in reversed(patches):
+        result = context.run_patch(tmp_path, patch, reverse=True)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert b"fuzz" not in (result.stdout + result.stderr).lower()
+    assert target.read_bytes() == original
+
+
+@pytest.mark.parametrize("version", ["152", "153"])
+def test_merged_font_enumeration_context_roundtrips(tmp_path, version):
+    import test_chrome_main_patch_context as context
+
+    target_name = "third_party/blink/renderer/modules/font_access/font_access.cc"
+    sections = [{"line": 3, "text": '''// found in the LICENSE file.
+
+#include "third_party/blink/renderer/modules/font_access/font_access.h"
+
+#include <algorithm>
+
+'''}, {"line": 154, "text": '''  table.ParseFromArray(mapped_mem.data(),
+                       base::checked_cast<int>(mapped_mem.size()));
+  for (const auto& element : table.fonts()) {
+    // If the optional postscript name filter is set in QueryOptions,
+    // only allow items that match.
+    if (hasPostscriptNameFilter &&
+'''}]
+    if version == "153":
+        # Chromium 153 commit 507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c.
+        sections = [sections[0], {"line": 150, "text": '''  base::span<const uint8_t> mapped_mem(mapping);
+  FontEnumerationTable table;
+  table.ParseFromString(base::as_string_view(mapped_mem));
+
+  HeapVector<Member<FontMetadata>> entries;
+  for (const auto& element : table.fonts()) {
+    // If the optional postscript name filter is set in QueryOptions,
+    // only allow items that match.
+    if (has_postscript_name_filter &&
+'''}]
+    lines = []
+    for section in sections:
+        lines.extend("// unrelated source line\n" for _ in range(section["line"] - 1 - len(lines)))
+        lines.extend(section["text"].splitlines(keepends=True))
+    original = "".join(lines) + "// trailing source\n"
+    target = tmp_path / target_name
+    target.parent.mkdir(parents=True)
+    target.write_text(original)
+    patch = context.REPO / "patches/0190-restricted-local-font-enumeration.patch"
+    expected = original.replace('#include "third_party/blink/renderer/modules/font_access/font_access.h"\n',
+                                '#include "third_party/blink/renderer/modules/font_access/font_access.h"\n\n'
+                                '#include "third_party/blink/renderer/platform/fonts/font_cache.h"\n', 1)
+    expected = expected.replace('  for (const auto& element : table.fonts()) {\n',
+                                '  for (const auto& element : table.fonts()) {\n'
+                                '    if (!FontCache::IsUxrFontFamilyAllowed(String::FromUtf8(element.family())))\n'
+                                '      continue;\n', 1)
+    for reverse, dry_run, before, after in [
+        (False, True, original, original), (False, False, original, expected),
+        (True, True, expected, expected), (True, False, expected, original),
+    ]:
+        assert target.read_text() == before
+        result = context.run_patch(tmp_path, patch, reverse=reverse, dry_run=dry_run)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert b"fuzz" not in (result.stdout + result.stderr).lower()
+        if version == "153":
+            assert b"offset" not in (result.stdout + result.stderr).lower()
+        assert target.read_text() == after
 
 
 def patch_stub(root, name, *, compatible):

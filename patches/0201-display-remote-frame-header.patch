@@ -1,0 +1,15 @@
+diff --git a/third_party/blink/renderer/core/frame/remote_frame.h b/third_party/blink/renderer/core/frame/remote_frame.h
+--- a/third_party/blink/renderer/core/frame/remote_frame.h
++++ b/third_party/blink/renderer/core/frame/remote_frame.h
+@@ -140,7 +140,10 @@
+   void UpdateCompositedLayerBounds();
+ 
+   // Called when the local root's screen infos change.
+-  void DidChangeScreenInfos(const display::ScreenInfos& screen_info);
++  void DidChangeScreenInfos(
++      const display::ScreenInfos& screen_infos,
++      const std::optional<display::ScreenInfos>& emulated_screen_infos =
++          std::nullopt);
+   // Called when the main frame's zoom level is changed and should be propagated
+   // to the remote's associated view.
+   void ZoomFactorChanged(double zoom_factor);

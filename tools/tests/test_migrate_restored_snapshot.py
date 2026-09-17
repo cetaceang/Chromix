@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -16,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import apply_restored_patches as arp  # noqa: E402
 import migrate_restored_snapshot as migration  # noqa: E402
 import restore_upstream_cache as restore  # noqa: E402
+from platform_pins import load_shared_pins  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 PATCH_BIN = shutil.which("gpatch") or shutil.which("patch")
@@ -80,7 +82,7 @@ def commit(root):
 class Fixture:
     platform = "macos"
 
-    def __init__(self, root, arch="x64"):
+    def __init__(self, root, arch="x64", *, legacy=False):
         self.previous, self.repo, self.work = (root / name for name in ("previous", "current", "work"))
         self.src = self.work / "src"
         self.core = self.work / "tooling/ungoogled-chromium"
@@ -101,20 +103,49 @@ class Fixture:
         platform_commit = git(self.tooling, "rev-parse", "HEAD").decode().strip()
         for repo in (self.previous, self.repo):
             for name in (*migration.PIN_FILES, *migration.SCRIPT_FILES):
-                put(repo, name, (ROOT / name).read_bytes())
+                if (ROOT / name).is_file():
+                    put(repo, name, (ROOT / name).read_bytes())
+            if legacy:
+                values = load_shared_pins(repo)
+                for field in ("ChromiumVersion", "UngoogledVersion", "UngoogledCommit"):
+                    values["Windows" + field] = values[field]
+                    values[field] = values["MacOS" + field]
+                    values.pop("Linux" + field)
+                values["UngoogledLinuxVersion"] = values["UngoogledVersion"]
+                put(repo, "CHROMIUM_VERSION", values["ChromiumVersion"] + "\n")
+                put(repo, "CHROMIUM_WINDOWS_VERSION", values["WindowsChromiumVersion"] + "\n")
+                put(repo, migration.PIN_FILES[1],
+                    "@{\n" + "".join(f'  {key} = "{value}"\n' for key, value in values.items()) + "}\n")
+                manifest = json.loads((repo / migration.PIN_FILES[2]).read_bytes())
+                manifest.update(chromium_version=values["ChromiumVersion"], ungoogled_commit=values["UngoogledCommit"])
+                put(repo, migration.PIN_FILES[2], json.dumps(manifest))
+                (repo / "CHROMIUM_LINUX_VERSION").unlink(missing_ok=True)
             pins = (repo / migration.PIN_FILES[1]).read_text()
-            pins = pins.replace("e71b91c6e336d0f25cfc6b9ef09298a9d2506e24", core_commit)
-            old_platform_commit = ("038db2b41f7aeb00bbceb2f5a56912b26eb5b284" if self.platform == "macos"
-                                   else "02c59ed68d1963a647bb478064823d114e466ffb")
-            pins = pins.replace(old_platform_commit, platform_commit)
+            prefix = migration.OVERRIDES[self.platform][0][2]
+            core_field = prefix if prefix in pins else "UngoogledCommit"
+            platform_field = migration.PLATFORM_TOOLING[self.platform][1]
+            for field, value in ((core_field, core_commit), (platform_field, platform_commit)):
+                pins = re.sub(r'(?m)^(\s*' + field + r'\s*=\s*)"[^"\n]+"',
+                              lambda match: match[1] + '"' + value + '"', pins)
             put(repo, migration.PIN_FILES[1], pins)
             manifest = json.loads((repo / migration.PIN_FILES[2]).read_bytes())
-            manifest["ungoogled_commit"] = core_commit
-            manifest["sources"][self.platform]["head_sha"] = platform_commit
+            target = manifest["sources"][self.platform]
+            if legacy:
+                linux = manifest["sources"]["linux"]
+                for field in ("chromium_version", "ungoogled_commit"):
+                    linux.pop(field, None)
+                linux["head_branch"] = manifest["chromium_version"] + "-1"
+            if core_field != "UngoogledCommit":
+                target["ungoogled_commit"] = core_commit
+            else:
+                manifest["ungoogled_commit"] = core_commit
+                if "ungoogled_commit" in target:
+                    target["ungoogled_commit"] = core_commit
+            target["head_sha"] = platform_commit
             put(repo, migration.PIN_FILES[2], json.dumps(manifest))
             series(repo, patch())
         put(self.src, "listed.txt", "base blocked.test\n")
-        version = (self.repo / "CHROMIUM_VERSION").read_text().strip()
+        version = migration.load_pins(self.repo, self.platform)["ChromiumVersion"]
         put(self.src, "chrome/VERSION", "".join(f"{key}={value}\n" for key, value in
             zip(("MAJOR", "MINOR", "BUILD", "PATCH"), version.split("."))))
         put(self.src, "BUILD.gn", 'group("fixture") {}\n')
@@ -149,6 +180,361 @@ class Fixture:
             self.repo, self.platform, self.arch)
         assert not (self.src / migration.TRANSACTION).exists()
         assert not (self.src / arp.IN_PROGRESS).exists()
+
+
+def move_work(fx, destination):
+    core = fx.core.relative_to(fx.work)
+    tooling = fx.tooling.relative_to(fx.work)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fx.work.rename(destination)
+    fx.work, fx.src = destination, destination / "src"
+    fx.core, fx.tooling = destination / core, destination / tooling
+
+
+def prepare_relocated(fx, root):
+    old = root / "home/runner/work/_temp/chromix-build"
+    move_work(fx, old)
+    fx.prepare()
+    marker = (fx.src / arp.MARKER).read_bytes()
+    move_work(fx, root / "root/.grok/linux/x64-stage2/restored-checkpoint")
+    assert (fx.src / arp.MARKER).read_bytes() == marker
+    return old
+
+
+@pytest.mark.parametrize("arch", ["x64", "arm64"])
+def test_cross_host_relocation_checks_old_identity_without_rewriting_it(tmp_path, arch):
+    fx = Fixture(tmp_path, arch)
+    series(fx.previous, patch(), create("obsolete.txt"), delete("removed.txt"))
+    series(fx.repo, patch(new="current example.com"), create("new.txt"))
+    put(fx.src, "removed.txt", "base\n")
+    old = prepare_relocated(fx, tmp_path)
+    before = snapshot(fx.src)
+    identity, patches, lite = arp._load(fx.previous, fx.core, fx.tooling, fx.platform)
+    names = migration._names(patches, lite)
+    with pytest.raises(arp.ApplyError, match="identities"):
+        arp._completed(fx.src, identity, names)
+    saved = json.loads(migration._previous_completed(fx.src, identity, names))
+    assert saved["identity"]["regex"]["path"].startswith(str(old))
+    assert saved["identity_sha256"] == arp._sha(arp._json(saved["identity"]))
+    assert snapshot(fx.src) == before
+    result = fx.run()
+    assert result["changed_files"] == ["listed.txt", "new.txt", "obsolete.txt", "removed.txt"]
+    assert (fx.src / "listed.txt").read_bytes() == b"current blocked.test\n"
+    after = snapshot(fx.src)
+    for name, value in before.items():
+        if name.startswith("out/") or name == restore.MARKER:
+            assert after[name] == value
+    fx.check()
+
+
+@pytest.mark.parametrize("change", [
+    "hash", "missing-hash", "schema-type", "identity-type", "platform", "series", "series-path",
+    "lite", "regex", "list", "extra", "field-extra", "relative", "traversal", "double-slash",
+    "dot", "backslash", "wrong-suffix", "wrong-tooling", "split-root", "old-symlink",
+    "current-symlink", "tooling-bytes", "tooling-mode", "outputs", "extra-output", "deleted-output",
+    "source", "ready", "receipt",
+])
+def test_relocation_tamper_fails_before_any_write(tmp_path, change):
+    fx = Fixture(tmp_path)
+    series(fx.previous, patch(), delete("removed.txt"))
+    put(fx.src, "removed.txt", "base\n")
+    old = prepare_relocated(fx, tmp_path)
+    saved = json.loads((fx.src / arp.MARKER).read_bytes())
+    identity = saved["identity"]
+    if change == "hash":
+        saved["identity_sha256"] = "0" * 64
+    elif change == "missing-hash":
+        del saved["identity_sha256"]
+    elif change == "schema-type":
+        saved["schema_version"] = True
+    elif change == "identity-type":
+        identity["schema_version"] = True
+    elif change == "platform":
+        identity["platform"] = "windows"
+    elif change in ("series", "lite", "regex", "list"):
+        identity[change]["sha256"] = "0" * 64
+    elif change == "series-path":
+        identity["series"]["path"] = "other/series"
+    elif change == "extra":
+        identity["unrecognized"] = "value"
+    elif change == "field-extra":
+        identity["regex"]["unrecognized"] = "value"
+    elif change == "relative":
+        identity["regex"]["path"] = identity["regex"]["path"].lstrip("/")
+    elif change in ("traversal", "double-slash", "dot", "backslash"):
+        part = {"traversal": "/sub/../tooling/", "double-slash": "//tooling/",
+                "dot": "/./tooling/", "backslash": "/sub\\dir/tooling/"}[change]
+        identity["regex"]["path"] = identity["regex"]["path"].replace("/tooling/", part)
+    elif change == "wrong-suffix":
+        identity["regex"]["path"] = str(old / "tooling/ungoogled-chromium/other.list")
+    elif change == "wrong-tooling":
+        for field in ("regex", "list"):
+            identity[field]["path"] = identity[field]["path"].replace("/tooling/", "/not-tooling/")
+    elif change == "split-root":
+        identity["list"]["path"] = str(old / "another/tooling/ungoogled-chromium/domain_substitution.list")
+    elif change == "old-symlink":
+        old.symlink_to(fx.work, target_is_directory=True)
+    elif change == "current-symlink":
+        path = fx.core / "domain_regex.list"
+        outside = put(tmp_path, "regex.list", path.read_bytes())
+        path.unlink()
+        path.symlink_to(outside)
+    elif change == "tooling-bytes":
+        put(fx.core, "domain_regex.list", "example#tampered\n")
+    elif change == "tooling-mode":
+        (fx.core / "domain_substitution.list").chmod(0o755)
+    elif change == "outputs":
+        del saved["outputs"]["listed.txt"]
+    elif change == "extra-output":
+        saved["outputs"]["unowned.txt"] = None
+    elif change == "deleted-output":
+        put(fx.src, "removed.txt", "unowned\n")
+    elif change == "source":
+        put(fx.src, "listed.txt", "tampered\n")
+    elif change == "ready":
+        put(fx.src, migration.READY, "tampered\n")
+    elif change == "receipt":
+        put(fx.src, restore.MARKER, "{}\n")
+    if change not in ("hash", "missing-hash"):
+        saved["identity_sha256"] = arp._sha(arp._json(identity))
+    put(fx.src, arp.MARKER, arp._json(saved))
+    before = snapshot(fx.src)
+    with pytest.raises((arp.ApplyError, restore.Miss)):
+        fx.run()
+    assert snapshot(fx.src) == before
+    assert not (fx.src / migration.TRANSACTION).exists()
+    assert not (fx.src / arp.IN_PROGRESS).exists()
+
+
+def test_relocation_real_patch_conflict_keeps_original_receipts_and_outputs(tmp_path):
+    fx = Fixture(tmp_path)
+    prepare_relocated(fx, tmp_path)
+    series(fx.repo, patch(old="wrong base", new="current example.com"))
+    before = snapshot(fx.src)
+    with pytest.raises(arp.ApplyError, match="patch failed"):
+        fx.run()
+    after = snapshot(fx.src)
+    for name, value in before.items():
+        assert after[name] == value
+    assert set(after) - set(before) == {migration.TRANSACTION, arp.IN_PROGRESS}
+    with pytest.raises(arp.ApplyError, match="in-progress"):
+        fx.run()
+
+
+def test_relocation_marker_race_before_snapshot_is_rejected(tmp_path, monkeypatch):
+    fx = Fixture(tmp_path)
+    prepare_relocated(fx, tmp_path)
+    take_snapshot = arp._snapshot
+
+    def race(src, names):
+        if src == fx.src:
+            saved = json.loads((src / arp.MARKER).read_bytes())
+            for field in ("regex", "list"):
+                saved["identity"][field]["path"] = saved["identity"][field]["path"].replace(
+                    "/chromix-build/", "/another-build/")
+            saved["identity_sha256"] = arp._sha(arp._json(saved["identity"]))
+            put(src, arp.MARKER, arp._json(saved))
+        return take_snapshot(src, names)
+
+    monkeypatch.setattr(arp, "_snapshot", race)
+    with pytest.raises(arp.ApplyError, match="changed during validation"):
+        fx.run()
+    assert not (fx.src / migration.TRANSACTION).exists()
+    assert not (fx.src / arp.IN_PROGRESS).exists()
+
+
+@pytest.mark.parametrize("change", ["marker", "old-symlink", "tooling-mode", "ready", "receipt", "pins"])
+def test_relocation_revalidates_before_publication(tmp_path, monkeypatch, change):
+    fx = Fixture(tmp_path)
+    old = prepare_relocated(fx, tmp_path)
+    before = snapshot(fx.src)
+    series(fx.repo, patch(new="current example.com"))
+    apply = arp.run_apply
+
+    def race(src, *args, **kwargs):
+        result = apply(src, *args, **kwargs)
+        if src != fx.src and kwargs.get("check"):
+            if change == "marker":
+                put(fx.src, arp.MARKER, (fx.src / arp.MARKER).read_bytes() + b"\n")
+            elif change == "old-symlink":
+                old.symlink_to(fx.work, target_is_directory=True)
+            elif change == "tooling-mode":
+                (fx.core / "domain_regex.list").chmod(0o755)
+            elif change == "ready":
+                put(fx.src, migration.READY, "concurrent\n")
+            elif change == "receipt":
+                put(fx.src, restore.MARKER, "{}\n")
+            else:
+                put(fx.repo, "CHROMIUM_VERSION", "0.0.0.0\n")
+        return result
+
+    monkeypatch.setattr(arp, "run_apply", race)
+    with pytest.raises((arp.ApplyError, restore.Miss)):
+        fx.run()
+    after = snapshot(fx.src)
+    for name, value in before.items():
+        if name not in (arp.MARKER, migration.READY, restore.MARKER):
+            assert after[name] == value
+    assert (fx.src / migration.TRANSACTION).is_file()
+    assert (fx.src / arp.IN_PROGRESS).is_file()
+
+
+def test_untracked_regex_list_are_not_pinned_tooling(tmp_path):
+    fx = Fixture(tmp_path)
+    old_core = git(fx.core, "rev-parse", "HEAD").decode().strip()
+    old_platform = git(fx.tooling, "rev-parse", "HEAD").decode().strip()
+    git(fx.core, "rm", "--cached", "domain_regex.list")
+    git(fx.core, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+        "-c", "core.hooksPath=" + os.devnull, "commit", "-qm", "untrack regex")
+    new_core = git(fx.core, "rev-parse", "HEAD").decode().strip()
+    git(fx.tooling, "update-index", "--cacheinfo", f"160000,{new_core},ungoogled-chromium")
+    git(fx.tooling, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+        "-c", "core.hooksPath=" + os.devnull, "commit", "-qm", "pin new core")
+    new_platform = git(fx.tooling, "rev-parse", "HEAD").decode().strip()
+    for root in (fx.previous, fx.repo):
+        for name in ("build/ungoogled-revisions.psd1", "build/upstream-cache.json"):
+            put(root, name, (root / name).read_text().replace(old_core, new_core).replace(old_platform, new_platform))
+    fx.receipt()
+    prepare_relocated(fx, tmp_path)
+    before = snapshot(fx.src)
+    with pytest.raises(arp.ApplyError, match="missing from pinned tooling"):
+        fx.run()
+    assert snapshot(fx.src) == before
+
+
+@pytest.mark.parametrize("tamper", [False, True])
+def test_independent_trusted_runner_uses_copied_sources_without_monkeypatch(tmp_path, tamper):
+    fx = Fixture(tmp_path)
+    prepare_relocated(fx, tmp_path)
+    series(fx.repo, patch(new="current example.com"))
+    runner = tmp_path / "trusted-runner"
+    modules = ("migrate_restored_snapshot", "apply_restored_patches", "restore_upstream_cache",
+               "fetch_upstream_cache", "import_upstream_cache", "upstream_object_cache",
+               "upstream_script_identity", "platform_pins")
+    files = {*("tools/" + name + ".py" for name in modules), *migration.SCRIPT_FILES}
+    origins = {}
+    for name in sorted(files):
+        raw = (ROOT / name).read_bytes()
+        put(runner, name, raw)
+        origins[name] = {"source": str(ROOT / name), "sha256": arp._sha(raw)}
+        assert arp._sha((runner / name).read_bytes()) == origins[name]["sha256"]
+    if tamper:
+        put(runner, "build/prepare-ungoogled.sh", "different trusted script\n")
+    before = snapshot(fx.src)
+    candidate = snapshot(fx.repo)
+    result = subprocess.run([
+        sys.executable, "-E", "-s", "-B", str(runner / "tools/migrate_restored_snapshot.py"),
+        "--workdir", str(fx.work), "--previous-repo", str(fx.previous), "--repo", str(fx.repo),
+        "--platform", fx.platform, "--arch", fx.arch, "--patch-bin", PATCH_BIN,
+    ], cwd=runner, text=True, capture_output=True, check=False)
+    assert snapshot(fx.repo) == candidate
+    if tamper:
+        assert result.returncode == 1
+        assert "running trusted checkout" in result.stderr
+        assert snapshot(fx.src) == before
+    else:
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout)["changed_files"] == ["listed.txt"]
+        fx.check()
+
+
+def test_linux_version_file_is_a_platform_specific_migration_input(tmp_path):
+    fx = Fixture(tmp_path, legacy=True)
+    fx.prepare()
+    before = snapshot(fx.src)
+    put(fx.repo, "CHROMIUM_LINUX_VERSION", "153.0.8010.36\n")
+    if fx.platform == "linux":
+        with pytest.raises(arp.ApplyError, match="CHROMIUM_LINUX_VERSION"):
+            fx.run()
+        assert snapshot(fx.src) == before
+    else:
+        migration._same_inputs(fx.previous, fx.repo, "macos")
+        # The complete manifest still rejects an incomplete Linux pin set.
+        with pytest.raises(restore.importer.Miss, match="pin_mismatch"):
+            fx.run()
+        assert snapshot(fx.src) == before
+        fx.check()
+
+
+@pytest.mark.parametrize("change", ["different", "missing", "symlink"])
+def test_linux_version_file_change_or_missing_side_fails_closed(tmp_path, change):
+    fx = Fixture(tmp_path)
+    name = "CHROMIUM_LINUX_VERSION"
+    for root in (fx.previous, fx.repo):
+        put(root, name, "153.0.8010.36\n")
+    if change == "different":
+        put(fx.repo, name, "154.0.0.0\n")
+    else:
+        (fx.repo / name).unlink()
+        if change == "symlink":
+            (fx.repo / name).symlink_to(fx.previous / name)
+    with pytest.raises(arp.ApplyError):
+        migration._same_inputs(fx.previous, fx.repo, "linux")
+    migration._same_inputs(fx.previous, fx.repo, "macos")
+
+
+@pytest.mark.parametrize("change", ["different", "missing", "symlink"])
+def test_macos_version_file_is_a_platform_specific_migration_input(tmp_path, change):
+    fx = Fixture(tmp_path)
+    name = "CHROMIUM_MACOS_VERSION"
+    if change == "different":
+        put(fx.repo, name, "153.0.8010.36\n")
+    else:
+        (fx.repo / name).unlink()
+        if change == "symlink":
+            (fx.repo / name).symlink_to(fx.previous / name)
+    with pytest.raises(arp.ApplyError):
+        migration._same_inputs(fx.previous, fx.repo, "macos")
+    migration._same_inputs(fx.previous, fx.repo, "linux")
+
+
+def test_absent_linux_version_file_on_both_sides_keeps_legacy_comparison(tmp_path):
+    fx = Fixture(tmp_path, legacy=True)
+    migration._same_inputs(fx.previous, fx.repo, fx.platform)
+    fx.prepare()
+    assert fx.run()["changed_files"] == []
+    fx.check()
+
+
+def test_linux_effective_core_is_used_for_key_and_tooling_verification(tmp_path, monkeypatch):
+    monkeypatch.setattr(Fixture, "platform", "linux")
+    fx = Fixture(tmp_path)
+    current = migration.load_pins(fx.repo, "linux")
+    for root in (fx.previous, fx.repo):
+        values = load_shared_pins(root)
+        values.update(LinuxChromiumVersion="153.0.8010.36",
+                      LinuxUngoogledVersion="153.0.8010.36-1",
+                      LinuxUngoogledCommit=current["UngoogledCommit"],
+                      UngoogledLinuxVersion="153.0.8010.36-1",
+                      UngoogledCommit="a" * 40)
+        put(root, "build/ungoogled-revisions.psd1",
+            "@{\n" + "".join(f'  {key} = "{value}"\n' for key, value in values.items()) + "}\n")
+        put(root, "CHROMIUM_LINUX_VERSION", "153.0.8010.36\n")
+        manifest = json.loads((root / "build/upstream-cache.json").read_bytes())
+        manifest["ungoogled_commit"] = "a" * 40
+        manifest["sources"]["windows"]["ungoogled_commit"] = "a" * 40
+        manifest["sources"]["linux"].update(
+            chromium_version="153.0.8010.36", ungoogled_commit=current["UngoogledCommit"],
+            head_branch="153.0.8010.36-1")
+        put(root, "build/upstream-cache.json", json.dumps(manifest))
+    put(fx.src, "chrome/VERSION", "MAJOR=153\nMINOR=0\nBUILD=8010\nPATCH=36\n")
+    fx.receipt()
+    fx.prepare()
+    assert migration.source_ready_key(fx.repo, "linux", fx.arch).split("|")[2:4] == [
+        "153.0.8010.36", current["UngoogledCommit"]]
+    assert fx.run()["changed_files"] == []
+    fx.check()
+
+
+def test_migration_never_upgrades_a_152_donor_to_153(tmp_path, monkeypatch):
+    monkeypatch.setattr(Fixture, "platform", "linux")
+    fx = Fixture(tmp_path, legacy=True)
+    fx.prepare()
+    before = snapshot(fx.src)
+    put(fx.repo, "CHROMIUM_LINUX_VERSION", "153.0.8010.36\n")
+    with pytest.raises(arp.ApplyError, match="identical pins"):
+        fx.run()
+    assert snapshot(fx.src) == before
 
 
 @pytest.mark.parametrize("arch", ["x64", "arm64"])
@@ -345,7 +731,7 @@ def test_key_matches_shell_hash_recipe_without_executing_previous_scripts(tmp_pa
             digest.update(str(path.relative_to(fx.previous)).encode())
             digest.update(path.read_bytes())
     assert migration.source_ready_key(fx.previous, fx.platform, fx.arch) == "|".join((
-        fx.platform, fx.arch, (fx.previous / "CHROMIUM_VERSION").read_text().strip(),
+        fx.platform, fx.arch, migration.load_pins(fx.previous, fx.platform)["ChromiumVersion"],
         git(fx.core, "rev-parse", "HEAD").decode().strip(),
         git(fx.tooling, "rev-parse", "HEAD").decode().strip(), digest.hexdigest()))
 

@@ -179,6 +179,7 @@ path.chmod(0o755)
                    "SELECTED_NINJA": str(selected_ninja), "TARGET_ARCH": arch}
             env.pop("CHROMIX_UPSTREAM_CACHE_DIR", None)
             env.pop("CHROMIX_BUILD_PROFILE", None)
+            env.pop("GITHUB_OUTPUT", None)
             if build_profile is not None:
                 env["CHROMIX_BUILD_PROFILE"] = build_profile
             rejected = platform == "linux" and (
@@ -410,39 +411,117 @@ path.chmod(0o755)
                 self.assertEqual(commands, [])
                 self.assertIn("cold cross builds are unsupported" if not restored else "native", result.stderr)
 
+    def run_restored_target(self, *, before_rc=0, ninja_rc=0, after_rc=0, platform="linux",
+                            arch="x64", targets=("chrome",), chrome="created", github_output=True,
+                            bash=None):
+        with tempfile.TemporaryDirectory(prefix="reuse shell ") as directory:
+            root = Path(directory)
+            src = root / "work/src"
+            out = src / "out/Default"
+            out.mkdir(parents=True)
+            (src / ".chromix-upstream-restored.json").touch()
+            (root / "tools").mkdir()
+            calls, output = root / "calls", root / "github output"
+            observations = root / "observations"
+            observations.mkdir()
+            if chrome in ("executable", "nonexecutable", "other-output"):
+                binary = (src / "out/Chromix" if chrome == "other-output" else out) / "chrome"
+                binary.parent.mkdir(parents=True, exist_ok=True)
+                binary.write_text('#!/bin/sh\nexit 99\n')
+                binary.chmod(0o644 if chrome == "nonexecutable" else 0o755)
+            (root / "tools/restored_reuse_evidence.py").write_text('''import os, sys
+from pathlib import Path
+args = sys.argv[1:]
+phase = args[args.index('--phase') + 1]
+output = Path(os.environ['OUTPUT_PATH'])
+(Path(os.environ['OBSERVATIONS']) / phase).write_text(output.read_text() if output.exists() else '')
+with open(os.environ['CALLS'], 'a') as stream:
+    stream.write(phase + (' ' + args[args.index('--exit-code') + 1] if phase == 'after' else '') + '\\n')
+sys.exit(int(os.environ['BEFORE_RC' if phase == 'before' else 'AFTER_RC']))
+''')
+            ninja = root / "selected ninja"
+            ninja.write_text('''#!/bin/sh
+printf "ninja\\n" >> "$CALLS"
+if [ "$NINJA_RC" -eq 0 ] && [ "$CHROME_STATE" = created ]; then
+  printf '#!/bin/sh\\nexit 99\\n' > "$OUT/chrome"
+  chmod +x "$OUT/chrome"
+fi
+exit "$NINJA_RC"
+''')
+            ninja.chmod(0o755)
+            env = {**os.environ, "REPO": str(root), "WORK": str(src.parent), "SRC": str(src),
+                   "OUT": str(out), "ARCH": arch, "CHROMIX_NINJA": str(ninja),
+                   "CALLS": str(calls), "BEFORE_RC": str(before_rc), "AFTER_RC": str(after_rc),
+                   "NINJA_RC": str(ninja_rc), "CHROME_STATE": chrome,
+                   "OUTPUT_PATH": str(output), "OBSERVATIONS": str(observations)}
+            env.pop("GITHUB_OUTPUT", None)
+            if github_output:
+                env["GITHUB_OUTPUT"] = str(output)
+            elif github_output == "":
+                env["GITHUB_OUTPUT"] = ""
+            result = subprocess.run(
+                [str(bash or (BASH32 if BASH32.exists() else shutil.which("bash"))),
+                 "-euo", "pipefail", "-c",
+                 'source "$1"; shift; chromix_build_restored_target "$@"', "fixture",
+                 str(REPO / "build/posix/upstream-cache.sh"), platform, "2", *targets],
+                env=env, capture_output=True, text=True, timeout=15)
+            return (result, calls.read_text().splitlines(), output.read_text() if output.exists() else "",
+                    {path.name: path.read_text() for path in observations.iterdir()})
+
     def test_actual_build_evidence_gates_and_preserves_ninja_failure(self):
         for before_rc, ninja_rc, after_rc, expected in ((0, 0, 0, 0), (7, 0, 0, 1),
-                                                       (0, 13, 0, 13), (0, 0, 8, 8), (0, 13, 8, 13)):
-            with self.subTest(before=before_rc, ninja=ninja_rc, after=after_rc), \
-                    tempfile.TemporaryDirectory(prefix="reuse shell ") as directory:
-                root = Path(directory)
-                src = root / "work/src"
-                src.mkdir(parents=True)
-                (src / ".chromix-upstream-restored.json").touch()
-                (root / "tools").mkdir()
-                calls = root / "calls"
-                (root / "tools/restored_reuse_evidence.py").write_text('''import os, sys
-args=sys.argv[1:]
-phase=args[args.index('--phase')+1]
-with open(os.environ['CALLS'], 'a') as stream:
-    stream.write(phase + (' ' + args[args.index('--exit-code')+1] if phase=='after' else '') + '\\n')
-sys.exit(int(os.environ['BEFORE_RC' if phase=='before' else 'AFTER_RC']))
-''')
-                ninja = root / "selected ninja"
-                ninja.write_text('#!/bin/sh\nprintf "ninja\\n" >> "$CALLS"\nexit "$NINJA_RC"\n')
-                ninja.chmod(0o755)
-                env = {**os.environ, "REPO": str(root), "WORK": str(src.parent), "SRC": str(src),
-                       "OUT": str(src / "out/Default"), "ARCH": "x64", "CHROMIX_NINJA": str(ninja),
-                       "CALLS": str(calls), "BEFORE_RC": str(before_rc), "AFTER_RC": str(after_rc),
-                       "NINJA_RC": str(ninja_rc)}
-                result = subprocess.run([str(BASH32 if BASH32.exists() else shutil.which("bash")),
-                                         "-euo", "pipefail", "-c",
-                                         'source "$1"; chromix_build_restored_target linux 2 chrome', "fixture",
-                                         str(REPO / "build/posix/upstream-cache.sh")],
-                                        env=env, capture_output=True, text=True, timeout=15)
-                self.assertEqual(result.returncode, expected, result.stderr)
-                self.assertEqual(calls.read_text().splitlines(), ["before"] if before_rc else
+                                                       (0, 1, 0, 1), (0, 13, 0, 13),
+                                                       (0, 0, 1, 1), (0, 0, 8, 8), (0, 13, 8, 13)):
+            with self.subTest(before=before_rc, ninja=ninja_rc, after=after_rc):
+                result, calls, output, observed = self.run_restored_target(
+                    before_rc=before_rc, ninja_rc=ninja_rc, after_rc=after_rc, chrome="executable")
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                self.assertEqual(calls, ["before"] if before_rc else
                                  ["before", "ninja", f"after {ninja_rc}"])
+                compiled = "compiled_ready=true\n" if not before_rc and not ninja_rc else ""
+                self.assertEqual(output, compiled)
+                self.assertEqual(observed, {"before": ""} if before_rc else {"before": "", "after": compiled})
+
+    def test_successful_linux_compile_is_reported_before_failed_evidence(self):
+        shells = [shutil.which("bash")]
+        if BASH32.exists():
+            shells.append(BASH32)
+        for bash in shells:
+            for arch in ("x64", "arm64"):
+                with self.subTest(bash=bash, arch=arch):
+                    result, calls, output, observed = self.run_restored_target(
+                        after_rc=1, arch=arch, targets=("chrome_crashpad_handler", "chrome", "chrome_sandbox"),
+                        bash=bash)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertEqual(calls, ["before", "ninja", "after 0"])
+                    self.assertEqual(output, "compiled_ready=true\n")
+                    self.assertEqual(observed, {"before": "", "after": output})
+                    for claim in ("finished", "package_ready", "runtime_verified"):
+                        self.assertNotIn(claim, output)
+
+    def test_compiled_progress_requires_linux_chrome_target_and_current_executable(self):
+        for kwargs in ({"platform": "macos", "chrome": "executable"},
+                       {"targets": ("chrome_sandbox",), "chrome": "executable"},
+                       {"targets": ("chrome_crashpad_handler",), "chrome": "executable"},
+                       {"targets": (), "chrome": "executable"},
+                       {"chrome": "missing"}, {"chrome": "nonexecutable"}, {"chrome": "other-output"}):
+            with self.subTest(**kwargs):
+                result, calls, output, observed = self.run_restored_target(after_rc=1, **kwargs)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual(calls, ["before", "ninja", "after 0"])
+                self.assertEqual(output, "")
+                self.assertEqual(observed, {"before": "", "after": ""})
+
+    def test_local_compile_without_github_output_keeps_evidence_result(self):
+        for github_output in (False, ""):
+            for after_rc in (0, 1):
+                with self.subTest(github_output=github_output, after=after_rc):
+                    result, calls, output, observed = self.run_restored_target(
+                        after_rc=after_rc, github_output=github_output)
+                    self.assertEqual(result.returncode, after_rc, result.stdout + result.stderr)
+                    self.assertEqual(calls, ["before", "ninja", "after 0"])
+                    self.assertEqual(output, "")
+                    self.assertEqual(observed, {"before": "", "after": ""})
 
     def run_helper(self, bash, enabled):
         with tempfile.TemporaryDirectory(prefix="cache shell ") as directory:

@@ -31,7 +31,7 @@ class LinuxNativeVerificationJobTest(unittest.TestCase):
             verifier.parent.mkdir()
             verifier.write_text('import os, pathlib, sys\n'
                                 'assert sys.argv[1] == "--bundle-dir"\n'
-                                'assert sys.argv[3:] == ["--arch", "arm64", "--runtime"]\n'
+                                'assert sys.argv[3:] == ["--arch", "arm64", "--runtime", "--chromium-version", "153.0.8010.36"]\n'
                                 'assert os.access(pathlib.Path(sys.argv[2]) / "chrome", os.X_OK)\n'
                                 'with open(os.environ["CALL_LOG"], "a") as stream: stream.write("runtime\\n")\n'
                                 f'sys.exit({runtime_exit})\n')
@@ -54,7 +54,8 @@ class LinuxNativeVerificationJobTest(unittest.TestCase):
             steps = workflow["jobs"]["verify-linux-arm64"]["steps"]
             command = next(step["run"] for step in steps if step.get("name") == "Verify checksum and native launcher")
             log = root / "calls"
-            env = dict(os.environ, RUNNER_TEMP=str(temp), GITHUB_WORKSPACE=str(workspace), CALL_LOG=str(log))
+            env = dict(os.environ, RUNNER_TEMP=str(temp), GITHUB_WORKSPACE=str(workspace), CALL_LOG=str(log),
+                       CHROMIUM_VERSION="153.0.8010.36")
             result = subprocess.run(["bash", "-c", command], env=env, text=True, capture_output=True, timeout=15)
             calls = log.read_text().splitlines() if log.exists() else []
             extracted = (temp / "chromix-native-smoke/chromix/chrome").exists()

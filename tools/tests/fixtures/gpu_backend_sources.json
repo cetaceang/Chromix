@@ -1,10 +1,10 @@
 {
   "notice": "Pinned source excerpts and dependency-shim inputs, not native browser/hardware acceptance.",
-  "chromium_version": "152.0.7977.82",
+  "chromium_version": "153.0.8010.36",
   "sources": {
     "third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc": {
       "target": "third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc",
-      "upstream_sha256": "e0911a8cf677349caf60be8e281e80279fb7e2b8001e1760eb40831d193728ce"
+      "upstream_sha256": "495a58a63af1a9b32b458b8953320bd0afe7920cfd054e25136e5a0720bf6fdb"
     },
     "third_party/blink/renderer/platform/graphics/image_data_buffer.cc": {
       "target": "third_party/blink/renderer/platform/graphics/image_data_buffer.cc",
@@ -12,7 +12,7 @@
     },
     "third_party/blink/renderer/modules/webgpu/gpu_adapter.cc": {
       "target": "third_party/blink/renderer/modules/webgpu/gpu_adapter.cc",
-      "upstream_sha256": "40b2f1fdbc89c1909b7e73419b8fc69dbd54bd0b2baf8e5bbb3f3ce51bfee95a"
+      "upstream_sha256": "adce5605571613435cfe5c3ebe7f27271f0f8feb443138b72a934d13b687b6bf"
     },
     "third_party/blink/renderer/modules/webgpu/gpu_buffer.cc": {
       "target": "third_party/blink/renderer/modules/webgpu/gpu_buffer.cc",
@@ -64,8 +64,8 @@
     },
     "0160": {
       "target": "third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc",
-      "patch_sha256": "3909ae18a3d19b3f414092aa290de0eeccaf1f08417c2c3e5318808ec12f71ec",
-      "preimage_sha256": "b17a954b7385f3996685c93094023b800739ef405dff15c60aad5582e659e86f",
+      "patch_sha256": "fed44ff89761f06b260d2b62f72886d26ba7029b7fe972cd5f55c9b60243ef69",
+      "preimage_sha256": "aa96b9971c117bfe00d421681f5b88e3f6205167c023e111d72e8d064ea40e6a",
       "sections": [
         {
           "line": 691,
@@ -76,24 +76,28 @@
           "text": "  const auto& ph_config = base::UxrConfig::GetInstance();\n  const auto ph_seed_text = ph_config.Get(\"uxr-canvas-seed\");\n  uint64_t ph_seed64 = 0u;\n  if (!ph_config.Has(\"uxr-disable-fingerprint-noise\") && !ph_seed_text.empty() &&\n      ph_config.Get(\"uxr-synthetic-device-tests\") == \"true\" &&\n      ph_seed_text.find_first_not_of(\"0123456789\") == std::string::npos &&\n      base::StringToUint64(ph_seed_text, &ph_seed64) && ph_seed64 != 0u) {\n    // SplitMix64's finalizer folds high bits without changing legacy 32-bit seeds.\n"
         },
         {
-          "line": 1480,
+          "line": 1469,
           "text": "  }\n\n  // Scale text metrics if enabled\n  if (!base::UxrConfig::GetInstance().Has(\"uxr-disable-fingerprint-noise\") &&\n      RuntimeEnabledFeatures::FingerprintingCanvasMeasureTextNoiseEnabled()) {\n    if (HostAsOffscreenCanvas()) {\n      if (auto* window = DynamicTo<LocalDOMWindow>(GetTopExecutionContext())) {\n"
         }
       ],
-      "output_sha256": "429e86586f07755fcb036ce33e0bb7c0c5a9ecd4b6d5a5c96d1788e1630533d5",
+      "output_sha256": "ce8ddbcb52eca32b85cdfd716bda0edbc0422d8336ce9b7572628d32c5195fe2",
       "created_by_series": false
     },
     "0161": {
       "target": "third_party/blink/renderer/platform/graphics/image_data_buffer.cc",
-      "patch_sha256": "b581c054fcbef76f5973ec32cadee3d6660382a05a37aeda4eb79d748ba058df",
+      "patch_sha256": "1f64ea6811755af65df6f88a9d3a553940e05d21d49d7820d60aa7f3171d4bde",
       "preimage_sha256": "c5fc2d3bb10c70621e6cb5c5157893496b5480f7423c7fe37709bb6859079c29",
       "sections": [
         {
           "line": 58,
           "text": "  uint64_t seed64 = 0u;\n  const SkColorType ct = pm.colorType();\n  const bool apply_noise =\n      config.Get(\"uxr-synthetic-device-tests\") == \"true\" &&\n      !config.Has(\"uxr-disable-fingerprint-noise\") && !seed_text.empty() &&\n      seed_text.find_first_not_of(\"0123456789\") == std::string::npos &&\n      base::StringToUint64(seed_text, &seed64) && seed64 != 0u &&\n      (ct == kRGBA_8888_SkColorType || ct == kBGRA_8888_SkColorType);\n"
+        },
+        {
+          "line": 152,
+          "text": "      colorType = kN32_SkColorType;  // Work around for bug with JPEG encoder\n    const SkImageInfo info =\n        SkImageInfo::Make(paint_image_info.width(), paint_image_info.height(),\n                          paint_image_info.colorType(), kUnpremul_SkAlphaType,\n                          paint_image_info.refColorSpace());\n    const size_t rowBytes = info.minRowBytes();\n    size_t size = info.computeByteSize(rowBytes);\n"
         }
       ],
-      "output_sha256": "551c4c4a485c6c559549f2e76bf73fe63e30cc4354d96552c7e3b3255d4085b3",
+      "output_sha256": "7a878ce5790ddcf1ec78a375ef065f62731eb8bda658caff217e7ab2d1dda755",
       "created_by_series": false
     },
     "0162": {
@@ -124,21 +128,21 @@
     },
     "0164": {
       "target": "third_party/blink/renderer/modules/webgpu/gpu_adapter.cc",
-      "patch_sha256": "3a8e30d895b73a90648f1773acec0503bffe7bff2fc22349d6a402ac8d3045d9",
-      "preimage_sha256": "b87027ecba7fbacf1ffe67512a58ba5574d95480d442178c39a91a213a4bd768",
+      "patch_sha256": "e9a48705903f8b26c9a9c6deb4ad4fd40e2a6e59e65b0c28c5cf61be070883c7",
+      "preimage_sha256": "2c43aee5bebdaa5dc21da42c5e0b846b724d1665b2bb6bd80269fefc999f5cc6",
       "sections": [
         {
-          "line": 42,
+          "line": 43,
           "text": "\n  // An explicit empty allowlist exposes no features; unset preserves Dawn's set.\n  const base::UxrConfig& config = base::UxrConfig::GetInstance();\n  const bool ph_filter = config.Has(\"uxr-webgpu-features\");\n  std::set<std::string> ph_allowed;\n  if (ph_filter) {\n    const std::string ph_allow_raw = config.Get(\"uxr-webgpu-features\");\n"
         }
       ],
-      "output_sha256": "6100500be6802af9802d8420c0efd51a5ed0dd6731f10840cfad6f48bf3aff5e",
+      "output_sha256": "4b741c532f066b985e097476ade7d671aad49f917b1519c360d15b656da1c782",
       "created_by_series": false
     },
     "0165": {
       "target": "third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc",
       "patch_sha256": "0abe15824152def979db3bb71d61d03fbbdbeb072a77318f8f47773b990baaa8",
-      "preimage_sha256": "429e86586f07755fcb036ce33e0bb7c0c5a9ecd4b6d5a5c96d1788e1630533d5",
+      "preimage_sha256": "ce8ddbcb52eca32b85cdfd716bda0edbc0422d8336ce9b7572628d32c5195fe2",
       "sections": [
         {
           "line": 7,
@@ -153,7 +157,7 @@
           "text": "                                   validate_and_create_params, exception_state);\n  if (!image_data)\n    return nullptr;\n\n  if (auto* bridge = canvas_bridge::CanvasBridgeClient::Get();\n      bridge && bridge->Connected()) {\n"
         }
       ],
-      "output_sha256": "c525ae5ebc90bf7203b1e192fa6adde2945fd2e2a9e3e9eadf05c8b6ac6ed277",
+      "output_sha256": "eaf92efcdb1b8876bb9c2f5f3c15b4797f726163bb93874990d059b7b8387f8b",
       "created_by_series": false
     }
   },
@@ -163,7 +167,7 @@
     {
       "path": "patches/extra/bromite/fingerprinting-flags-client-rects-and-measuretext.patch",
       "sha256": "f8afff23b1afe2e0f04a3972282b9be5e9beebb86ce1693141b5df71f20ab857",
-      "target_fragment": "diff --git a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc\n--- a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc\n+++ b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc\n@@ -110,6 +110,9 @@\n // https://github.com/include-what-you-use/include-what-you-use/issues/1122\n // IWYU pragma: no_include \"base/numerics/clamped_math.h\"\n \n+#include \"third_party/blink/renderer/core/offscreencanvas/offscreen_canvas.h\"\n+#include \"third_party/blink/renderer/core/frame/local_dom_window.h\"\n+\n namespace blink {\n \n class MemoryManagedPaintCanvas;\n@@ -1200,9 +1203,22 @@ TextMetrics* BaseRenderingContext2D::mea\n   TextDirection direction =\n       ToTextDirection(state.GetDirection(), host, computed_style);\n \n-  return MakeGarbageCollected<TextMetrics>(\n+  TextMetrics* text_metrics = MakeGarbageCollected<TextMetrics>(\n       font, direction, state.GetTextBaseline(), state.GetTextAlign(), text,\n       host->GetPlainTextPainter());\n+\n+  // Scale text metrics if enabled\n+  if (RuntimeEnabledFeatures::FingerprintingCanvasMeasureTextNoiseEnabled()) {\n+    if (HostAsOffscreenCanvas()) {\n+      if (auto* window = DynamicTo<LocalDOMWindow>(GetTopExecutionContext())) {\n+        if (window->GetFrame() && window->GetFrame()->GetDocument())\n+          text_metrics->Shuffle(window->GetFrame()->GetDocument()->GetNoiseFactorX());\n+      }\n+    } else if (canvas) {\n+      text_metrics->Shuffle(canvas->GetDocument().GetNoiseFactorX());\n+    }\n+  }\n+  return text_metrics;\n }\n \n String BaseRenderingContext2D::lang() const {\n"
+      "target_fragment": "diff --git a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc\n--- a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc\n+++ b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc\n@@ -110,6 +110,9 @@\n // https://github.com/include-what-you-use/include-what-you-use/issues/1122\n // IWYU pragma: no_include \"base/numerics/clamped_math.h\"\n \n+#include \"third_party/blink/renderer/core/offscreencanvas/offscreen_canvas.h\"\n+#include \"third_party/blink/renderer/core/frame/local_dom_window.h\"\n+\n namespace blink {\n \n class MemoryManagedPaintCanvas;\n@@ -1189,9 +1192,22 @@ TextMetrics* BaseRenderingContext2D::mea\n   TextDirection direction =\n       ToTextDirection(state.GetDirection(), host, computed_style);\n \n-  return MakeGarbageCollected<TextMetrics>(\n+  TextMetrics* text_metrics = MakeGarbageCollected<TextMetrics>(\n       font, direction, state.GetTextBaseline(), state.GetTextAlign(), text,\n       host->GetPlainTextPainter());\n+\n+  // Scale text metrics if enabled\n+  if (RuntimeEnabledFeatures::FingerprintingCanvasMeasureTextNoiseEnabled()) {\n+    if (HostAsOffscreenCanvas()) {\n+      if (auto* window = DynamicTo<LocalDOMWindow>(GetTopExecutionContext())) {\n+        if (window->GetFrame() && window->GetFrame()->GetDocument())\n+          text_metrics->Shuffle(window->GetFrame()->GetDocument()->GetNoiseFactorX());\n+      }\n+    } else if (canvas) {\n+      text_metrics->Shuffle(canvas->GetDocument().GetNoiseFactorX());\n+    }\n+  }\n+  return text_metrics;\n }\n \n String BaseRenderingContext2D::lang() const {\n"
     },
     {
       "path": "patches/extra/bromite/flag-fingerprinting-canvas-image-data-noise.patch",
@@ -175,5 +179,7 @@
       "sha256": "f8afff23b1afe2e0f04a3972282b9be5e9beebb86ce1693141b5df71f20ab857",
       "target_fragment": "diff --git a/third_party/blink/renderer/platform/graphics/image_data_buffer.cc b/third_party/blink/renderer/platform/graphics/image_data_buffer.cc\n--- a/third_party/blink/renderer/platform/graphics/image_data_buffer.cc\n+++ b/third_party/blink/renderer/platform/graphics/image_data_buffer.cc\n@@ -35,6 +35,7 @@\n #include \"base/compiler_specific.h\"\n #include \"base/memory/ptr_util.h\"\n #include \"third_party/blink/renderer/platform/image-encoders/image_encoder_utils.h\"\n+#include \"third_party/blink/renderer/platform/runtime_enabled_features.h\"\n #include \"third_party/blink/renderer/platform/wtf/text/base64.h\"\n #include \"third_party/blink/renderer/platform/wtf/text/strcat.h\"\n #include \"third_party/skia/include/core/SkImage.h\"\n"
     }
-  ]
+  ],
+  "source": "https://chromium.googlesource.com/chromium/src/+/refs/tags/153.0.8010.36",
+  "chromium_revision": "507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c"
 }

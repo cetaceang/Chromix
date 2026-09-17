@@ -11,7 +11,7 @@ index 90e3bdabfed9454a848cb325a12bb8b4fcc0881f..a2c424ae95386ea6a3dc76eafcc74d48
  
  #include "base/command_line.h"
  #include "base/feature_list.h"
-@@ -420,6 +422,36 @@
+@@ -412,6 +414,36 @@
  
  }  // namespace
  
@@ -48,7 +48,7 @@ index 90e3bdabfed9454a848cb325a12bb8b4fcc0881f..a2c424ae95386ea6a3dc76eafcc74d48
  bool IsDecoderSupportedAudioType(const AudioType& type) {
    if (auto* media_client = GetMediaClient())
      return media_client->IsDecoderSupportedAudioType(type);
-@@ -427,12 +459,16 @@
+@@ -419,12 +451,16 @@
  }
  
  bool IsDecoderSupportedVideoType(const VideoType& type) {
@@ -65,7 +65,7 @@ index 90e3bdabfed9454a848cb325a12bb8b4fcc0881f..a2c424ae95386ea6a3dc76eafcc74d48
    if (auto* media_client = GetMediaClient()) {
      return media_client->IsEncoderSupportedVideoType(type);
    }
-@@ -442,6 +478,8 @@
+@@ -434,6 +470,8 @@
  // TODO(chcunningham): Add platform specific logic for Android (move from
  // MimeUtilInternal).
  bool IsDefaultDecoderSupportedVideoType(const VideoType& type) {
@@ -74,7 +74,7 @@ index 90e3bdabfed9454a848cb325a12bb8b4fcc0881f..a2c424ae95386ea6a3dc76eafcc74d48
    if (!IsDecoderSupportedHdrMetadata(type)) {
      return false;
    }
-@@ -521,6 +559,8 @@
+@@ -513,6 +551,8 @@
  }
  
  bool IsDefaultEncoderSupportedVideoType(const VideoType& type) {

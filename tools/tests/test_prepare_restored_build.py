@@ -14,6 +14,7 @@ from unittest import mock
 
 from tools import prepare_restored_build as prepare
 from tools import restore_upstream_cache as restore
+from tools.tests.test_fetch_upstream_cache import synthetic_windows_source
 
 
 class PrepareRestoredBuildTest(unittest.TestCase):
@@ -51,7 +52,20 @@ class PrepareRestoredBuildTest(unittest.TestCase):
         path.chmod(0o755)
 
     def fixture(self, platform="macos", arch="arm64", donor_arch=None, *, host_arch=None):
-        identity, _, manifest = restore.identities(prepare.ROOT, platform, arch)
+        repo = prepare.ROOT
+        if platform == "windows":
+            repo = self.work / "fixture-repo"
+            for relative in ("CHROMIUM_VERSION", "CHROMIUM_LINUX_VERSION", "CHROMIUM_MACOS_VERSION", "CHROMIUM_WINDOWS_VERSION",
+                             "build/ungoogled-revisions.psd1", "build/upstream-cache.json"):
+                source = prepare.ROOT / relative
+                if source.is_file():
+                    self.write(repo / relative, source.read_bytes())
+            path = repo / "build/upstream-cache.json"
+            manifest = json.loads(path.read_text())
+            manifest["sources"]["windows"] = synthetic_windows_source(repo)
+            self.write(path, json.dumps(manifest))
+        self.fixture_repo = repo
+        identity, _, manifest = restore.identities(repo, platform, arch)
         version = "\n".join(f"{key}={value}" for key, value in zip(
             ("MAJOR", "MINOR", "BUILD", "PATCH"), identity["chromium_version"].split(".")))
         self.write(self.src / "chrome/VERSION", version)
@@ -77,6 +91,9 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                 path.rename(destination)
                 path.symlink_to(Path("..") / name / "bin" / name)
             self.write(rust / "version", "1.91.0-nightly (2026-06-16)")
+        if platform == "linux":
+            from tools.tests.test_linux_typescript import install_typescript_fixture
+            install_typescript_fixture(self.src)
         return receipt
 
     def deps(self, records):
@@ -96,14 +113,40 @@ class PrepareRestoredBuildTest(unittest.TestCase):
     def native_context(self, platform="macos", arch="arm64"):
         stack = ExitStack()
         stack.enter_context(mock.patch.object(prepare, "host_identity", return_value=(platform, arch)))
-        stack.enter_context(mock.patch.object(prepare.subprocess, "run", return_value=mock.Mock(
-            returncode=0, stdout="thirdparty LLVM 23 / rustc nightly")))
+        stack.enter_context(mock.patch.object(prepare.subprocess, "run", side_effect=lambda command, **kwargs: mock.Mock(
+            returncode=0, stdout="Version 6.0.2" if str(command[1]).endswith("/lib/tsc.js")
+            else "thirdparty LLVM 23 / rustc nightly")))
         stack.enter_context(mock.patch.object(prepare, "environment_identity", return_value={
             "host": [platform, arch], "release": "fixture", "version": "fixture",
             "environment": {"ImageOS": "macos15", "ImageVersion": "1"},
             "sdks": [], "sysroots": {},
         }))
         return stack
+
+    def test_tooling_verification_selects_effective_linux_core(self):
+        from tools.platform_pins import load_shared_pins
+        values = load_shared_pins(prepare.ROOT)
+        values.update(LinuxChromiumVersion="153.0.8010.36",
+                      LinuxUngoogledVersion="153.0.8010.36-1", LinuxUngoogledCommit="e" * 40,
+                      UngoogledLinuxVersion="153.0.8010.36-1", UngoogledLinuxCommit="f" * 40)
+        repo = self.work / "repo"
+        self.write(repo / "CHROMIUM_VERSION", values["ChromiumVersion"])
+        self.write(repo / "CHROMIUM_LINUX_VERSION", "153.0.8010.36")
+        if "WindowsChromiumVersion" in values:
+            self.write(repo / "CHROMIUM_WINDOWS_VERSION", values["WindowsChromiumVersion"])
+        self.write(repo / "build/ungoogled-revisions.psd1",
+                   "@{\n" + "".join(f'  {key} = "{value}"\n' for key, value in values.items()) + "}\n")
+        windows_core = prepare.load_pins(repo, "windows")["UngoogledCommit"]
+        for platform, expected in (("linux", "e" * 40), ("windows", windows_core)):
+            with self.subTest(platform=platform):
+                result = mock.Mock(stdout=expected + "\n")
+                with mock.patch.object(prepare.subprocess, "run", return_value=result) as run:
+                    prepare.verify_tooling(self.work, platform, repo)
+                self.assertEqual(run.call_count, 2)
+        with mock.patch.object(prepare.subprocess, "run", return_value=mock.Mock(
+                stdout=values["UngoogledCommit"] + "\n")):
+            with self.assertRaisesRegex(ValueError, "does not match repository pins"):
+                prepare.verify_tooling(self.work, "linux", repo)
 
     def test_internal_dependencies_keep_object_and_mtime(self):
         output = self.object("a.o")
@@ -555,7 +598,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
         with mock.patch.object(prepare, "host_identity", return_value=("linux", "x64")), \
                 mock.patch.object(prepare.subprocess, "run") as run:
             with self.assertRaisesRegex(ValueError, "native windows x64"):
-                prepare.prepare(self.work, "windows", "x64", phase="inspect")
+                prepare.prepare(self.work, "windows", "x64", phase="inspect", repo=self.fixture_repo)
         run.assert_not_called()
         report = json.loads((self.work / "upstream-cache-preparation.json").read_text())
         self.assertFalse(report["ready_for_gn"])
@@ -581,7 +624,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
     def test_windows_native_probe_uses_only_mocked_version_commands(self):
         self.fixture("windows", "x64")
         with self.native_context("windows", "x64"):
-            result = prepare.prepare(self.work, "windows", "x64")
+            result = prepare.prepare(self.work, "windows", "x64", repo=self.fixture_repo)
         self.assertTrue(result["native_tools"])
 
     def test_host_tool_failure_is_not_claimed_compatible(self):
@@ -999,6 +1042,211 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                     self.assertEqual(report["counters"]["toolchain_invalidated_outputs"], 0)
                 self.assertEqual(obj.stat().st_mtime_ns, before)
 
+    def test_linux_sysroot_relocation_keeps_objects_and_rechecks_external_dependencies(self):
+        root = self.work
+        environment_identity = prepare.environment_identity
+        for arch, host in (("x64", "x64"), ("arm64", "arm64"), ("arm64", "x64")):
+            with self.subTest(arch=arch, host=host):
+                self.work = root / f"{arch}-{host}" / "donor"
+                self.src = self.work / "src"
+                self.out = self.src / "out/Default"
+                self.fixture("linux", arch, host_arch=host)
+                stamps = [self.sysroot(cpu) for cpu in ("amd64", "arm64")]
+                for stamp in stamps:
+                    self.write(stamp.parent / ".fixture_is_first_class_gcs", "first class")
+                with self.native_context("linux", host), \
+                        mock.patch.object(prepare, "environment_identity", side_effect=environment_identity):
+                    previous = prepare.prepare(self.work, "linux", arch)
+                    retained = [self.object(name) for name in ("host.o", "target.o", "archive.rlib")]
+                    self.object("external.o")
+                    self.object("missing.o")
+                    external = self.write(self.work.parent / "external.h", "external header")
+                    self.deps({"obj/host.o": ["../../build/linux/debian_bullseye_amd64-sysroot/usr/include/fixture.h"],
+                               "obj/target.o": ["../../build/linux/debian_bullseye_arm64-sysroot/usr/include/fixture.h"],
+                               "obj/external.o": [str(external)], "obj/missing.o": ["../../missing.h"]})
+                    preserved = {path.relative_to(self.src): (path.read_bytes(), path.stat().st_mtime_ns)
+                                 for path in (*retained, *stamps, *(self.out / name for name in prepare.METADATA))}
+                    destination = self.work.parent / "restored"
+                    self.work.rename(destination)
+                    self.work = destination
+                    self.src = self.work / "src"
+                    self.out = self.src / "out/Default"
+                    current = prepare.linux_sysroot_identity(self.src, arch, host_arch=host)
+                    self.assertFalse(prepare._sysroots_changed(previous, current))
+                    pending = prepare.prepare(self.work, "linux", arch, phase="inspect")
+                    self.assertFalse(pending["sysroots_changed"])
+                    result = prepare.prepare(self.work, "linux", arch)
+                self.assertEqual(result["counters"]["sysroot_invalidations"], 0)
+                self.assertEqual(result["counters"]["toolchain_invalidated_outputs"], 0)
+                self.assertEqual(result["counters"]["environment_rechecks"], 1)
+                self.assertEqual(result["dependencies"]["external_dependency_outputs"], 1)
+                self.assertEqual(result["dependencies"]["missing_dependency_outputs"], 1)
+                self.assertFalse((self.out / "obj/external.o").exists())
+                self.assertFalse((self.out / "obj/missing.o").exists())
+                for relative, identity in preserved.items():
+                    path = self.src / relative
+                    self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), identity)
+
+    def relocated_sysroot_marker(self):
+        for cpu in ("amd64", "arm64"):
+            stamp = self.sysroot(cpu)
+            self.write(stamp.parent / ".fixture_is_first_class_gcs", "first class")
+        current = prepare.linux_sysroot_identity(self.src, "arm64", host_arch="x64")
+        donor = self.work / "donor/src"
+        previous = {"schema_version": prepare.SCHEMA, "platform": "linux", "arch": "arm64",
+                    "host": {"platform": "linux", "arch": "x64"},
+                    "sysroot_identity": json.loads(json.dumps(current).replace(str(self.src), str(donor)))}
+        return previous, current
+
+    def test_linux_sysroot_relocation_rejects_incomplete_or_confused_identity(self):
+        previous, current = self.relocated_sysroot_marker()
+        self.assertFalse(prepare._sysroots_changed(previous, current))
+        key = "build/linux/debian_bullseye_amd64-sysroot/.stamp"
+        marker = ".fixture_is_first_class_gcs"
+        removed = object()
+        changes = [
+            ((key,), removed),
+            (("build/linux/debian_bullseye_x64-sysroot/.stamp",), current[key]),
+            ((key, "root"), removed), ((key, "stamp"), removed), ((key, "first_class"), removed),
+            ((key, "extra"), True), ((key, "root", "extra"), True),
+            ((key, "root", "mode"), True), ((key, "root", "mode"), -1),
+            ((key, "root", "mode"), 0o100755), ((key, "root", "mode"), 0o700),
+            ((key, "root", "mtime_ns"), removed), ((key, "root", "mtime_ns"), True),
+            ((key, "root", "mtime_ns"), -1), ((key, "root", "mtime_ns"), 1),
+            ((key, "stamp", "sha256"), removed), ((key, "stamp", "sha256"), "g" * 64),
+            ((key, "stamp", "sha256"), "0" * 64), ((key, "stamp", "size"), True),
+            ((key, "stamp", "size"), -1), ((key, "stamp", "size"), 4097),
+            ((key, "stamp", "mtime_ns"), "1"), ((key, "stamp", "missing"), True),
+            ((key, "first_class"), {}), ((key, "first_class", marker, "sha256"), "0" * 64),
+            ((key, "first_class", marker, "mtime_ns"), True),
+            ((key, "first_class", "../escape_is_first_class_gcs"), current[key]["first_class"][marker]),
+        ]
+        for side in ("previous", "current"):
+            for fields, value in changes:
+                with self.subTest(side=side, fields=fields, value=value):
+                    before, after = json.loads(json.dumps(previous)), json.loads(json.dumps(current))
+                    target = before["sysroot_identity"] if side == "previous" else after
+                    for field in fields[:-1]:
+                        target = target[field]
+                    if value is removed:
+                        target.pop(fields[-1])
+                    else:
+                        target[fields[-1]] = value
+                    self.assertTrue(prepare._sysroots_changed(before, after))
+        for fields, value in [(('schema_version',), removed), (('schema_version',), True),
+                              (('schema_version',), 3), (('schema_version',), "2"),
+                              (('platform',), "macos"), (('arch',), "x64"),
+                              (('host',), removed), (('host', 'platform'), "macos"),
+                              (('host', 'arch'), "arm64")]:
+            with self.subTest(fields=fields, value=value):
+                before = json.loads(json.dumps(previous))
+                target = before
+                for field in fields[:-1]:
+                    target = target[field]
+                if value is removed:
+                    target.pop(fields[-1])
+                else:
+                    target[fields[-1]] = value
+                self.assertTrue(prepare._sysroots_changed(before, current))
+        for fields, value in changes:
+            with self.subTest(both_sides=fields, value=value):
+                before, after = json.loads(json.dumps(previous)), json.loads(json.dumps(current))
+                for target in (before["sysroot_identity"], after):
+                    for field in fields[:-1]:
+                        target = target[field]
+                    if value is removed:
+                        target.pop(fields[-1])
+                    else:
+                        target[fields[-1]] = value
+                if fields in ((key, "first_class"), (key, "stamp", "sha256"),
+                              (key, "first_class", marker, "sha256")) and value in ({}, "0" * 64):
+                    continue
+                if type(value) is int and value in (0o700, 1):
+                    continue
+                self.assertTrue(prepare._sysroots_changed(before, after))
+        legacy = {"environment": {"sysroots": {
+            name: {field: value for field, value in entry["stamp"].items() if field != "sha256"}
+            for name, entry in previous["sysroot_identity"].items()}}}
+        self.assertTrue(prepare._sysroots_changed(legacy, current))
+
+    def test_linux_sysroot_relocation_rejects_noncanonical_paths_and_links(self):
+        previous, current = self.relocated_sysroot_marker()
+        key = "build/linux/debian_bullseye_amd64-sysroot/.stamp"
+        suffix = key.rsplit("/", 1)[0]
+        for side in ("previous", "current"):
+            for value in (f"/donor/not-src/{suffix}", f"relative/src/{suffix}",
+                          f"/donor/../src/{suffix}", f"/donor/./src/{suffix}",
+                          f"/donor//src/{suffix}", f"//donor/src/{suffix}",
+                          f"/donor/src/{suffix}/", f"C:/donor/src/{suffix}",
+                          f"/donor\\src/{suffix}", f"/donor/\0/src/{suffix}",
+                          f"/donor/src/{suffix.replace('amd64', 'arm64')}",
+                          f"/different/src/{suffix}"):
+                with self.subTest(side=side, path=value):
+                    before, after = json.loads(json.dumps(previous)), json.loads(json.dumps(current))
+                    target = before["sysroot_identity"] if side == "previous" else after
+                    target[key]["root"]["path"] = value
+                    self.assertTrue(prepare._sysroots_changed(before, after))
+            for change in ("mixed-source-root", "swapped-host-target"):
+                with self.subTest(side=side, change=change):
+                    before, after = json.loads(json.dumps(previous)), json.loads(json.dumps(current))
+                    target = before["sysroot_identity"] if side == "previous" else after
+                    if change == "mixed-source-root":
+                        source = str(Path(target[key]["root"]["path"]).parents[2])
+                        target[key] = json.loads(json.dumps(target[key]).replace(source, "/different/src"))
+                    else:
+                        other = key.replace("amd64", "arm64")
+                        target[key], target[other] = target[other], target[key]
+                    self.assertTrue(prepare._sysroots_changed(before, after))
+            before, after = json.loads(json.dumps(previous)), json.loads(json.dumps(current))
+            target = before["sysroot_identity"] if side == "previous" else after
+            target[key]["stamp"]["path"] = target[key]["stamp"]["path"].replace("/.stamp", "/.other")
+            self.assertTrue(prepare._sysroots_changed(before, after))
+        donor = self.work / "donor/src"
+        donor.parent.mkdir()
+        for target in (self.src, self.work / "missing"):
+            with self.subTest(link_target=target):
+                donor.symlink_to(target, target_is_directory=True)
+                self.assertTrue(prepare._sysroots_changed(previous, current))
+                donor.unlink()
+
+    def test_linux_sysroot_relocation_does_not_hide_stamp_or_first_class_changes(self):
+        root = self.work
+        for cpu in ("amd64", "arm64"):
+            for change in ("stamp", "first-class-added", "first-class-changed"):
+                with self.subTest(cpu=cpu, change=change):
+                    self.work = root / f"{cpu}-{change}" / "donor"
+                    self.src = self.work / "src"
+                    self.out = self.src / "out/Default"
+                    self.fixture("linux", "arm64", host_arch="x64")
+                    stamps = {name: self.sysroot(name) for name in ("amd64", "arm64")}
+                    marker = stamps[cpu].parent / ".fixture_is_first_class_gcs"
+                    if change == "first-class-changed":
+                        self.write(marker, "one")
+                    with self.native_context("linux", "x64"):
+                        prepare.prepare(self.work, "linux", "arm64")
+                        self.object("internal.o")
+                        self.object("archive.rlib")
+                        self.deps({"obj/internal.o": []})
+                        destination = self.work.parent / "restored"
+                        self.work.rename(destination)
+                        self.work = destination
+                        self.src = self.work / "src"
+                        self.out = self.src / "out/Default"
+                        stamp = self.src / f"build/linux/debian_bullseye_{cpu}-sysroot/.stamp"
+                        marker = stamp.parent / marker.name
+                        root_info = stamp.parent.stat()
+                        changed = stamp if change == "stamp" else marker
+                        info = changed.stat() if changed.exists() else None
+                        self.write(changed, changed.read_bytes().replace(b"one", b"two") if info else "first class")
+                        if info:
+                            os.utime(changed, ns=(info.st_atime_ns, info.st_mtime_ns))
+                            self.assertEqual(changed.stat().st_size, info.st_size)
+                        os.utime(stamp.parent, ns=(root_info.st_atime_ns, root_info.st_mtime_ns))
+                        result = prepare.prepare(self.work, "linux", "arm64")
+                    self.assertEqual(result["counters"]["sysroot_invalidations"], 1)
+                    self.assertFalse((self.out / "obj/internal.o").exists())
+                    self.assertFalse((self.out / "obj/archive.rlib").exists())
+
     def test_linux_legacy_environment_stamps_support_unchanged_and_changed_resume(self):
         root = self.work
         environment_identity = prepare.environment_identity
@@ -1171,8 +1419,8 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                 self.out = self.src / "out/Default"
                 self.fixture(platform, arch)
                 with self.native_context(platform, arch), mock.patch.object(prepare, "linux_sysroot_identity") as identity:
-                    prepare.prepare(self.work, platform, arch, phase="inspect")
-                    result = prepare.prepare(self.work, platform, arch)
+                    prepare.prepare(self.work, platform, arch, phase="inspect", repo=self.fixture_repo)
+                    result = prepare.prepare(self.work, platform, arch, repo=self.fixture_repo)
                 identity.assert_not_called()
                 self.assertNotIn("sysroot_identity", result)
                 self.assertNotIn("sysroot_invalidations", result["counters"])

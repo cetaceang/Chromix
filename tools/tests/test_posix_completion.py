@@ -45,6 +45,8 @@ class PosixCompletionTest(unittest.TestCase):
             elif args == ["-", str(repo), str(work / "dist" / os.environ["TEST_ASSET"]),
                           str(work / "smoke")]:
                 kind = "extract"
+            elif args[:1] == [str(repo / "tools/platform_pins.py")]:
+                kind = "pins"
             elif args[:1] == [str(repo / "tools/verify_linux_bundle.py")]:
                 kind = "static"
             else:
@@ -88,6 +90,7 @@ class PosixCompletionTest(unittest.TestCase):
             path.chmod(0o755)
         tools = repo / "tools"
         tools.mkdir(exist_ok=True)
+        shutil.copy2(REPO / "tools/platform_pins.py", tools / "platform_pins.py")
         shutil.copy2(REPO / "tools/fingerprint-requirements.txt",
                      tools / "fingerprint-requirements.txt")
         (tools / "fingerprint_acceptance.py").write_text(textwrap.dedent('''\
@@ -113,7 +116,8 @@ class PosixCompletionTest(unittest.TestCase):
             assert browser.is_file() and os.access(browser, os.X_OK)
             digest = hashlib.sha256(browser.read_bytes()).hexdigest()
             assert args.expected_sha256 == digest
-            version = (repo / "CHROMIUM_VERSION").read_text().strip()
+            from platform_pins import load_pins
+            version = load_pins(repo, os.environ["TEST_PLATFORM"])["ChromiumVersion"]
             assert args.expected_version == version
             identified = subprocess.run([str(browser), "--version"], check=True,
                                         capture_output=True, text=True, timeout=1)
@@ -145,7 +149,8 @@ class PosixCompletionTest(unittest.TestCase):
 
     def complete_fixture(self, platform, corrupt, *, arch="x64", host_arch="x64",
                          verifier_failure=False, unsafe_member=None, smoke_failure=None,
-                         gate_failure=None, launcher_failure=None):
+                         gate_failure=None, launcher_failure=None, build_failure=None,
+                         package_failure=None, extract_failure=False):
         temp = tempfile.TemporaryDirectory(prefix="chromix completion ")
         self.addCleanup(temp.cleanup)
         root = Path(temp.name)
@@ -162,8 +167,20 @@ class PosixCompletionTest(unittest.TestCase):
         extractor = repo / "sdk/python/chromix/_binary.py"
         extractor.parent.mkdir(parents=True)
         shutil.copy2(REPO / "sdk/python/chromix/_binary.py", extractor)
-        version = (REPO / "CHROMIUM_VERSION").read_text().strip()
-        (repo / "CHROMIUM_VERSION").write_text(version + "\n")
+        version = "153.0.8010.36" if platform == "linux" else "152.0.7977.82"
+        (repo / "CHROMIUM_VERSION").write_text("152.0.7977.82\n")
+        (repo / "CHROMIUM_LINUX_VERSION").write_text("153.0.8010.36\n")
+        (repo / "build/ungoogled-revisions.psd1").write_text(
+            '@{\n  ChromiumVersion = "152.0.7977.82"\n'
+            '  UngoogledVersion = "152.0.7977.82-1"\n'
+            f'  UngoogledCommit = "{"a" * 40}"\n'
+            '  LinuxChromiumVersion = "153.0.8010.36"\n'
+            '  LinuxUngoogledVersion = "153.0.8010.36-1"\n'
+            f'  LinuxUngoogledCommit = "{"b" * 40}"\n'
+            '  UngoogledLinuxVersion = "153.0.8010.36-1"\n'
+            f'  UngoogledLinuxCommit = "{"c" * 40}"\n'
+            '  UngoogledMacOSVersion = "152.0.7977.82-1.1"\n'
+            f'  UngoogledMacOSCommit = "{"d" * 40}"\n}}\n')
         source_report = work / "fingerprint-diagnostics/source-final.json"
         source_report.parent.mkdir()
         source_receipt = {"fixture": "verified", "source_root": str(work / "src")}
@@ -180,15 +197,19 @@ class PosixCompletionTest(unittest.TestCase):
             package = repo / "build/macos/package-macos.sh"
             asset = f"chromix-mac-{arch}.zip"
         build.parent.mkdir(parents=True, exist_ok=True)
-        build.write_text("#!/bin/sh\nexit 0\n")
+        build.write_text(f"#!/bin/sh\nexit {7 if build_failure == 'nonzero' else 0}\n")
+        if build_failure == "missing":
+            (out / "chrome").unlink()
         build.chmod(0o755)
         seed = root / "seed"
         seed.mkdir()
         launch_log = root / "launcher-log"
         marker = "<p>missing</p>" if smoke_failure == "marker" else "<p>chromix-smoke-ok</p>"
         exit_code = 7 if smoke_failure == "nonzero" else 0
+        launch_version = "0.0.0.0" if smoke_failure == "version_mismatch" else version
+        version_exit = 9 if smoke_failure == "version_nonzero" else 0
         launcher = ('#!/bin/sh\nprintf "%s\\n" "$*" >> "$LAUNCH_TEST_LOG"\n'
-                    f'case "$1" in --version) printf "Chromix {version}\\n";; '
+                    f'case "$1" in --version) printf "Chromix {launch_version}\\n"; exit {version_exit};; '
                     f'*) printf "{marker}\\n"; printf "diagnostic\\n" >&2; exit {exit_code};; esac\n')
         native_relative = ("chromix/chrome" if platform == "linux" else
                            "chromix/Chromium.app/Contents/MacOS/Chromium")
@@ -206,22 +227,39 @@ class PosixCompletionTest(unittest.TestCase):
                 archive.writestr(info, payload)
             if unsafe_member:
                 archive.writestr(unsafe_member, "rejected")
+        if extract_failure:
+            (seed / asset).write_bytes(b"not a ZIP archive")
         checksum = hashlib.sha256((seed / asset).read_bytes()).hexdigest()
         if corrupt:
             checksum = "0" * 64
         (seed / "SHA256SUMS").write_text(f"{checksum}  {asset}\n")
         package.parent.mkdir(parents=True, exist_ok=True)
-        package.write_text('#!/bin/sh\ncp "$TEST_SEED"/* "$2/"\n')
+        package_script = '#!/bin/sh\ncp "$TEST_SEED"/* "$2/"\n'
+        package_script += {
+            "nonzero": "exit 13\n",
+            "missing": 'rm "$2/' + asset + '"\n',
+            "empty": ': > "$2/' + asset + '"\n',
+            "checksum_missing": 'rm "$2/SHA256SUMS"\n',
+            "checksum_entry": 'printf "invalid\\n" > "$2/SHA256SUMS"\n',
+            "checksum_duplicate": 'cat "$TEST_SEED/SHA256SUMS" >> "$2/SHA256SUMS"\n',
+            "checksum_malformed": 'printf "invalid\\n" >> "$2/SHA256SUMS"\n',
+            "checksum_wrong_name": ('mv "$2/' + asset + '" "$2/' + asset.replace('.zip', 'Xzip') + '"\n'
+                                    'sed -i "s/\\.zip/Xzip/" "$2/SHA256SUMS"\n'
+                                    'cp "$TEST_SEED/' + asset + '" "$2/"\n'),
+        }.get(package_failure, "")
+        package.write_text(package_script)
         package.chmod(0o755)
         if platform == "linux":
             (repo / "build/linux/prepare-ci-sandbox.sh").write_text(
-                '#!/bin/sh\nprintf "sandbox-preflight\\n" >> "$LAUNCH_TEST_LOG"\n')
+                '#!/bin/sh\nprintf "sandbox-preflight\\n" >> "$LAUNCH_TEST_LOG"\n'
+                f'exit {11 if smoke_failure == "sandbox" else 0}\n')
         github_output = root / "github_output"
         env = {key: value for key, value in os.environ.items() if not key.startswith("CHROMIX_")}
         env.update({"TEST_SEED": str(seed), "LAUNCH_TEST_LOG": str(launch_log),
                     "GITHUB_OUTPUT": str(github_output), "TEST_GATE_FAILURE": gate_failure or "",
                     "TEST_REAL_TIMEOUT": shutil.which("timeout"), "TEST_ASSET": asset,
-                    "TEST_BROWSER_RELATIVE": native_relative, "PYTHONDONTWRITEBYTECODE": "1",
+                    "TEST_BROWSER_RELATIVE": native_relative, "TEST_PLATFORM": platform,
+                    "PYTHONDONTWRITEBYTECODE": "1",
                     "PYTHONOPTIMIZE": "0", "PIP_NO_INDEX": "1", "PIP_CONFIG_FILE": os.devnull})
         bindir = root / "bin"
         bindir.mkdir()
@@ -246,13 +284,34 @@ class PosixCompletionTest(unittest.TestCase):
         runtime_calls = [json.loads(line) for line in
                          (root / "runtime-calls.jsonl").read_text().splitlines()]
         expected_calls = ["timeout"]
+        initial_outputs = ["status=running", "finished=false"]
+        compiled_outputs = initial_outputs + (["compiled_ready=true", "runtime_verified=false"]
+                                             if platform == "linux" else [])
+        ready_outputs = compiled_outputs + ["package_ready=true"]
+        if platform == "macos":
+            ready_outputs.append("runtime_verified=false")
+        if build_failure or package_failure:
+            self.assertNotEqual(result.returncode, 0, diagnostic)
+            self.assertEqual(output_lines, initial_outputs if build_failure else compiled_outputs)
+            self.assertEqual([call["kind"] for call in runtime_calls], expected_calls)
+            self.assertFalse(launch_log.exists())
+            self.assertFalse((work / "smoke").exists())
+            self.assertFalse(list(work.glob(".snapshot-stage-*")))
+            self.assertTrue((work / "src/.chromix-source-ready").is_file())
+            return
         if not corrupt:
             expected_calls.append("extract")
-            if not (unsafe_member or launcher_failure):
+            if not (unsafe_member or launcher_failure or extract_failure):
                 if cross:
                     expected_calls.append("static")
                 else:
-                    expected_calls.extend(["smoke"] if platform == "macos" else ["timeout", "timeout"])
+                    expected_calls.append("pins")
+                    if platform == "macos":
+                        expected_calls.append("smoke")
+                    elif smoke_failure != "sandbox":
+                        expected_calls.append("timeout")
+                        if smoke_failure not in ("version_nonzero", "version_mismatch"):
+                            expected_calls.append("timeout")
                     if not smoke_failure:
                         expected_calls.extend(["timeout", "pip"])
                         if gate_failure != "dependencies":
@@ -294,6 +353,7 @@ class PosixCompletionTest(unittest.TestCase):
                 "browser_version": version, "ci_gate_passed": gate_failure is None,
                 "status": {"nonzero": "failed", "timeout": "running"}.get(gate_failure, "passed"),
             })
+            self.assertEqual(gate_calls[0]["outputs"], ready_outputs)
             self.assertIn("fixture fingerprint: inputs verified", result.stdout)
             if gate_failure:
                 self.assertNotIn("fixture fingerprint: passed", diagnostic)
@@ -303,7 +363,7 @@ class PosixCompletionTest(unittest.TestCase):
             self.assertEqual(receipts, [])
             self.assertNotIn("fixture fingerprint:", diagnostic)
 
-        if platform == "macos" and not (corrupt or unsafe_member or launcher_failure):
+        if platform == "macos" and not (corrupt or unsafe_member or launcher_failure or extract_failure):
             evidence = work / "runtime-smoke-stage-1"
             report = json.loads((evidence / "report.json").read_text())
             self.assertEqual(report["passed"], smoke_failure is None)
@@ -330,18 +390,17 @@ class PosixCompletionTest(unittest.TestCase):
             self.assertEqual(output["finished"], "false")
             self.assertFalse(launch_log.exists())
             self.assertFalse((work / "smoke").exists())
-        elif unsafe_member or launcher_failure:
+        elif unsafe_member or launcher_failure or extract_failure:
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("Unsafe ZIP path" if unsafe_member else "extracted bundle launcher is missing",
+            self.assertIn("File is not a zip file" if extract_failure else
+                          "Unsafe ZIP path" if unsafe_member else "extracted bundle launcher is missing",
                           result.stderr)
             self.assertEqual(output["finished"], "false")
             self.assertFalse(launch_log.exists())
             self.assertFalse((work / "smoke/chromix/chromix").exists())
-            if platform == "macos":
-                self.assertEqual(output_lines, ["status=running", "finished=false", "package_ready=true",
-                                                "runtime_verified=false", "runtime_failed=true"])
-                self.assertFalse((work / "smoke").exists())
-                self.assertNotIn("fingerprint regression gate", diagnostic)
+            self.assertEqual(output_lines, ready_outputs + ["runtime_failed=true"])
+            self.assertFalse((work / "smoke").exists())
+            self.assertNotIn("fingerprint regression gate", diagnostic)
         elif verifier_failure:
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("cross-built bundle architecture verification failed", result.stderr)
@@ -350,10 +409,18 @@ class PosixCompletionTest(unittest.TestCase):
             self.assertTrue((work / "smoke/chromix/static-verified").is_file())
         elif smoke_failure or gate_failure:
             self.assertEqual(result.returncode, 1, diagnostic)
-            self.assertEqual(output_lines, ["status=running", "finished=false", "package_ready=true",
-                                            "runtime_verified=false", "runtime_failed=true"])
+            self.assertEqual(output_lines, ready_outputs + ["runtime_failed=true"])
             if smoke_failure:
-                code, message = 1, "extracted macOS runtime smoke test failed; see runtime-smoke-stage-1"
+                if platform == "macos":
+                    code, message = 1, "extracted macOS runtime smoke test failed; see runtime-smoke-stage-1"
+                else:
+                    code, message = {
+                        "nonzero": (7, "extracted headless smoke test failed"),
+                        "marker": (1, "smoke page marker missing from dumped DOM"),
+                        "version_nonzero": (9, "extracted launcher --version check failed"),
+                        "version_mismatch": (1, "extracted browser version does not match the pinned Chromium version"),
+                        "sandbox": (11, "Linux sandbox preparation failed"),
+                    }[smoke_failure]
             else:
                 code, message = {
                     "nonzero": (17, "fingerprint regression gate failed; see the separate diagnostic artifact"),
@@ -388,14 +455,49 @@ class PosixCompletionTest(unittest.TestCase):
             if platform == "macos":
                 self.assertEqual(output["package_ready"], "true")
             self.assertFalse((work / "smoke").exists())
-        if not (corrupt or unsafe_member or launcher_failure or verifier_failure or cross):
+        if not (corrupt or unsafe_member or launcher_failure or extract_failure or verifier_failure or cross):
             calls = launch_log.read_text()
-            if platform == "linux":
-                self.assertLess(calls.index("sandbox-preflight"), calls.index("--version"))
-            self.assertIn("--version", calls)
-            self.assertIn("--headless", calls)
-        if corrupt or verifier_failure or (unsafe_member or launcher_failure) and platform == "linux":
-            self.assertEqual(output_lines, ["status=running", "finished=false"])
+            if smoke_failure == "sandbox":
+                self.assertEqual(calls, "sandbox-preflight\n")
+            else:
+                if platform == "linux":
+                    self.assertLess(calls.index("sandbox-preflight"), calls.index("--version"))
+                self.assertIn("--version", calls)
+                if smoke_failure in ("version_nonzero", "version_mismatch"):
+                    self.assertNotIn("--headless", calls)
+                else:
+                    self.assertIn("--headless", calls)
+        if corrupt:
+            self.assertEqual(output_lines, compiled_outputs)
+        elif verifier_failure:
+            self.assertEqual(output_lines, ready_outputs)
+
+    def test_linux_fingerprint_failures_preserve_checked_bundle_without_finishing(self):
+        for failure in ("nonzero", "timeout", "dependencies", "hash"):
+            with self.subTest(failure=failure):
+                self.complete_fixture("linux", False, gate_failure=failure)
+
+    def test_linux_smoke_failures_preserve_checked_bundle_without_finishing(self):
+        for failure in ("nonzero", "marker", "version_nonzero", "version_mismatch", "sandbox"):
+            with self.subTest(failure=failure):
+                self.complete_fixture("linux", False, smoke_failure=failure)
+
+    def test_linux_hash_checked_archive_extraction_failure_is_diagnostic_only(self):
+        self.complete_fixture("linux", False, extract_failure=True)
+
+    def test_linux_launcher_failures_preserve_checked_bundle(self):
+        for failure in ("missing", "not_executable"):
+            with self.subTest(failure=failure):
+                self.complete_fixture("linux", False, launcher_failure=failure)
+
+    def test_linux_compile_and_package_failures_never_claim_package_ready(self):
+        for failure in ("nonzero", "missing"):
+            with self.subTest(build_failure=failure):
+                self.complete_fixture("linux", False, build_failure=failure)
+        for failure in ("nonzero", "missing", "empty", "checksum_missing", "checksum_entry",
+                        "checksum_duplicate", "checksum_malformed", "checksum_wrong_name"):
+            with self.subTest(package_failure=failure):
+                self.complete_fixture("linux", False, package_failure=failure)
 
     def test_cross_built_arm64_bundle_defers_runtime_but_requires_static_verification(self):
         self.complete_fixture("linux", False, arch="arm64")

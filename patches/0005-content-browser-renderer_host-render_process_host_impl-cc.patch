@@ -10,7 +10,7 @@ index b15a2e90b1..79c9568633 100644
  #include "base/containers/map_util.h"
  #include "base/debug/alias.h"
  #include "base/debug/crash_logging.h"
-@@ -2013,6 +2014,24 @@
+@@ -2004,6 +2005,24 @@
    uint64_t trace_id = base::Token::CreateRandom().high();
    TRACE_EVENT("navigation", "RenderProcessHostImpl::Init",
                perfetto::Flow::Global(trace_id));

@@ -1,6 +1,6 @@
 {
-  "chromium_version": "152.0.7977.82",
-  "source": "https://chromium.googlesource.com/chromium/src/+/refs/tags/152.0.7977.82",
+  "chromium_version": "153.0.8010.36",
+  "source": "https://chromium.googlesource.com/chromium/src/+/refs/tags/153.0.8010.36",
   "sources": {
     "0151": {
       "target": "third_party/blink/renderer/core/inspector/inspector_css_agent.h",
@@ -18,7 +18,7 @@
     },
     "0152": {
       "target": "third_party/blink/renderer/core/inspector/inspector_css_agent.cc",
-      "upstream_sha256": "50eb7664d1e9e1fdb5fe783cdcaf3a8a61947aa15d1283a3fd71fa7fe3fab360",
+      "upstream_sha256": "74d1b35bc7981621edd8651c7704f0fe27b8a60460eec607e6befae5b5a5886d",
       "sections": [
         {
           "line": 25,
@@ -33,15 +33,15 @@
           "text": "    if (postscript_name.IsNull()) {\n      postscript_name = \"\";\n    }\n    auto font_key = std::make_pair(simple_font_data->IsCustomFont() ? 1 : 0,\n                                   postscript_name);\n    auto font_stats_it = font_stats->find(font_key);\n    if (font_stats_it == font_stats->end()) {\n      font_stats->insert(\n          font_key, std::make_pair(run_font_data.glyph_count_, family_name));\n    } else {\n      font_stats_it->value.first += run_font_data.glyph_count_;\n    }\n  }\n}\n"
         },
         {
-          "line": 2752,
+          "line": 2755,
           "text": "\nvoid InspectorCSSAgent::CollectPlatformFontsForLayoutObject(\n    LayoutObject* layout_object,\n    HashMap<std::pair<int, String>, std::pair<int, String>>* font_stats,\n    unsigned descendants_depth) {\n  if (!layout_object->IsText()) {\n    if (!descendants_depth)\n"
         },
         {
-          "line": 2804,
+          "line": 2807,
           "text": "  if (!response.IsSuccess())\n    return response;\n\n  // Key: {isCustomFont, postscript_name}\n  // Value: {glyph_count (which accumulates), family_name}\n  HashMap<std::pair<int, String>, std::pair<int, String>> font_stats;\n  LayoutObject* root = node->GetLayoutObject();\n  if (root) {\n    // Iterate upto two layers deep.\n"
         },
         {
-          "line": 2816,
+          "line": 2819,
           "text": "  *platform_fonts =\n      std::make_unique<protocol::Array<protocol::CSS::PlatformFontUsage>>();\n  for (auto& font : font_stats) {\n    std::pair<int, String>& font_description = font.key;\n    std::pair<int, String>& font_value = font.value;\n    bool is_custom_font = font_description.first == 1;\n    (*platform_fonts)\n        ->emplace_back(protocol::CSS::PlatformFontUsage::create()\n                           .setFamilyName(font_value.second)\n                           .setPostScriptName(font_description.second)\n                           .setIsCustomFont(is_custom_font)\n                           .setGlyphCount(font_value.first)\n                           .build());\n  }\n  return protocol::Response::Success();\n}\n"
         }
       ]
@@ -136,5 +136,6 @@
         }
       ]
     }
-  }
+  },
+  "chromium_revision": "507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c"
 }

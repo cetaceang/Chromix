@@ -1,0 +1,938 @@
+{
+  "schema_version": 1,
+  "status": "verified",
+  "method": "reverse-forward-in-scratch",
+  "qualification": "current patch hunks/new files, not full upstream attestation",
+  "domain_substituted": true,
+  "patch_count": 187,
+  "identity": {
+    "schema_version": 1,
+    "platform": "linux",
+    "series": {
+      "path": "patches/series",
+      "sha256": "e8063741e4dcdc4573d269b1ddf55e3ccf9e7e49b503cad90155eda6215f83b9",
+      "patches": [
+        {
+          "path": "patches/0001-base-BUILD-gn.patch",
+          "sha256": "ece0c2c9de957f62dc51fed105894ff8cbeec3515c196a8fe4f42bbaad9c507d"
+        },
+        {
+          "path": "patches/0002-base-uxr_config-cc.patch",
+          "sha256": "3af589d8f9bd04215730a8001c01175a6ebda29c7b133aad40850df2c80c5e2d"
+        },
+        {
+          "path": "patches/0003-base-uxr_config-h.patch",
+          "sha256": "b0e4423aa3c65947e74718e293e0fd98f4a3c2625c7e48ff393998fdf9d745d1"
+        },
+        {
+          "path": "patches/0004-components-embedder_support-user_agent_utils-cc.patch",
+          "sha256": "ceae3ac82abf8806d681ba219f2c414ff2a594fdebd5739ddc3f8478eac318c3"
+        },
+        {
+          "path": "patches/0005-content-browser-renderer_host-render_process_host_impl-cc.patch",
+          "sha256": "28dcc6718a785dfe694c837c153340d88d1274e56053b8c6060fb6069f62b192"
+        },
+        {
+          "path": "patches/0006-content-common-renderer-mojom.patch",
+          "sha256": "07d1b5c3df614582cfdfc04ca2115c7da90dad8e0359d187cdfc4922a50a5208"
+        },
+        {
+          "path": "patches/0007-content-renderer-render_thread_impl-cc.patch",
+          "sha256": "ed7424df86074d5be5ace0821b9cc974e4eb2bbc8f925250ff04a16b595b4d09"
+        },
+        {
+          "path": "patches/0008-content-renderer-render_thread_impl-h.patch",
+          "sha256": "9f25b219091353b04db38e9363ba62045a8f1cb812adf62cb5fe2b5b9250c82f"
+        },
+        {
+          "path": "patches/0009-content-renderer-renderer_main-cc.patch",
+          "sha256": "182b54e3451cbb4295d1a5493ff49df5ca092d03e376433d33eaab9d53fdcde4"
+        },
+        {
+          "path": "patches/0010-third_party-blink-renderer-core-dom-element-cc.patch",
+          "sha256": "0f1863f1e5cc97049dc660cff8458a675101e48c4cca7f49fa8979725c946037"
+        },
+        {
+          "path": "patches/0011-third_party-blink-renderer-core-execution_context-navigator_base-cc.patch",
+          "sha256": "d4e59a56f4369a2094510c7ef82cfedb2d5a1e76b902fd12b79c63e841500715"
+        },
+        {
+          "path": "patches/0012-third_party-blink-renderer-core-frame-local_dom_window-cc.patch",
+          "sha256": "818bef89830ded6a99bd392c2a51da1ff334fffb62d048cc12bf91ec7181d788"
+        },
+        {
+          "path": "patches/0013-third_party-blink-renderer-core-frame-navigator-cc.patch",
+          "sha256": "04973984764f5bf6c5fcd375e9478c7be4221058516ec34062625cac0d2eff17"
+        },
+        {
+          "path": "patches/0014-third_party-blink-renderer-core-frame-navigator_concurrent_hardware-cc.patch",
+          "sha256": "45b93e386106ce9b3e0cf747a92ac6bd65774c7257e6d385f24da9e9190e4fac"
+        },
+        {
+          "path": "patches/0015-third_party-blink-renderer-core-frame-navigator_device_memory-cc.patch",
+          "sha256": "a84af59674e77e4db806c0de79e06e5b41956d59ca19db7012ad5d1630337bcd"
+        },
+        {
+          "path": "patches/0016-third_party-blink-renderer-core-frame-navigator_id-cc.patch",
+          "sha256": "d1c8de5acaf179cde1befce8a20b4e44552154941e15f96dae9674e607132db6"
+        },
+        {
+          "path": "patches/0017-third_party-blink-renderer-core-frame-navigator_language-cc.patch",
+          "sha256": "6cd7e8791a590e2f2f255e94cb4e416487ee183e808d0260f0b0b5541bd94a54"
+        },
+        {
+          "path": "patches/0018-third_party-blink-renderer-core-frame-screen-cc.patch",
+          "sha256": "3664b50ec355fa9415ed6384f99d9f1107d97c109e494c41adcf322140fef7dc"
+        },
+        {
+          "path": "patches/0019-third_party-blink-renderer-core-timezone-timezone_controller-cc.patch",
+          "sha256": "5ce5bcca5cc6e17625712ee9d3989f705bec2eebd9932d3f3b0976250116586e"
+        },
+        {
+          "path": "patches/0020-third_party-blink-renderer-modules-canvas-canvas2d-base_rendering_context_2d-cc.patch",
+          "sha256": "84f2d3139cb9adfc70d2c073395fb939b5d59c2f22d5c46450e2586ccceba708"
+        },
+        {
+          "path": "patches/0021-third_party-blink-renderer-modules-keyboard-keyboard_layout-cc.patch",
+          "sha256": "cf00bf340f15469788b6918420f6d4d9b25ebdf9d36d8e128759bfda9f3bb91d"
+        },
+        {
+          "path": "patches/0022-third_party-blink-renderer-modules-mediastream-media_devices-cc.patch",
+          "sha256": "600e3daf6cd1e60727cfd564e25a235bee039343b11e8af011633ffa89286517"
+        },
+        {
+          "path": "patches/0023-third_party-blink-renderer-modules-netinfo-network_information-cc.patch",
+          "sha256": "fdc578d700a8c41fe00fca1528f830a46cf0c4f7d60112a1445cec135e69f22e"
+        },
+        {
+          "path": "patches/0024-third_party-blink-renderer-modules-peerconnection-peer_connection_dependency_factory-cc.patch",
+          "sha256": "311671ff1e2a73fd7106cd790c35269e49039301791c818a9a8748946cc2324a"
+        },
+        {
+          "path": "patches/0025-third_party-blink-renderer-modules-speech-speech_synthesis-cc.patch",
+          "sha256": "0c1964ec2960df0add8404f175e9b23333aad6aa1882408d5d107cccfd0f41bb"
+        },
+        {
+          "path": "patches/0026-third_party-blink-renderer-modules-webaudio-audio_buffer-cc.patch",
+          "sha256": "ce1e7e72ffff04bf08773b1d06df40a1f949cdd6f17cd041f830a45c0938306d"
+        },
+        {
+          "path": "patches/0027-third_party-blink-renderer-modules-webaudio-audio_buffer-h.patch",
+          "sha256": "b3f6261cdcb79b5030e68aeaad93f2498eb2826c9d3e671d44fc2e9708c79e52"
+        },
+        {
+          "path": "patches/0028-third_party-blink-renderer-modules-webaudio-realtime_analyser-cc.patch",
+          "sha256": "fa57b8005cb72f1b640e4cca7b374d2d8c2be6bab3a634b7dfab875aa48df895"
+        },
+        {
+          "path": "patches/0029-third_party-blink-renderer-modules-webgl-webgl_rendering_context_base-cc.patch",
+          "sha256": "3a2d7128a50c1462c737df8b8e6b7fe566d20cfd42f2be2f7ad7d5dbc17cf813"
+        },
+        {
+          "path": "patches/0030-third_party-blink-renderer-modules-webgpu-gpu_adapter_info-cc.patch",
+          "sha256": "eb3ed113b6d63f8e835ef49342ef602936d07d4b307a64561128c445df29251c"
+        },
+        {
+          "path": "patches/0031-third_party-blink-renderer-platform-graphics-image_data_buffer-cc.patch",
+          "sha256": "8ef5b5204e953089ea7d4a1d3751378c6c07b03441129c8bf19970f6c2bee946"
+        },
+        {
+          "path": "patches/0032-third_party-blink-renderer-core-input-pointer_event_manager-cc.patch",
+          "sha256": "9ef76388405f1e0fda04a3c1739bd433fae4a0f3e9c0315ae89734fb5ea6c6e9"
+        },
+        {
+          "path": "patches/0033-third_party-blink-renderer-core-html-canvas-text_metrics-cc.patch",
+          "sha256": "dbb6ebe2581de310d90014c9da08f09039a81fb281862c7487ba24602897d1f0"
+        },
+        {
+          "path": "patches/0034-third_party-blink-renderer-modules-quota-storage_manager-cc.patch",
+          "sha256": "31f9b575c57beb2c7b2bcc2c181c6913c271e6df46b52c949ab8c648020dad6e"
+        },
+        {
+          "path": "patches/0035-webgl2-getparameter-version-normalize.patch",
+          "sha256": "2d17f086ae6775659afa5b863dfd3dc9e0199701563a4b72032f43908ed6f072"
+        },
+        {
+          "path": "patches/0036-chrome-app-chrome_main-fingerprint-normalize.patch",
+          "sha256": "6ad3540c3e33af235beee809038e0ce59337ad983312a0b757881a9f1b79201d"
+        },
+        {
+          "path": "patches/0037-third_party-blink-renderer-core-frame-local_dom_window-cc.patch",
+          "sha256": "a035af33d9ee0982a2a4655910242e676df52ad09abee4616f7818a4f6a446fd"
+        },
+        {
+          "path": "patches/0038-third_party-blink-renderer-modules-credentialmanagement-public_key_credential-cc.patch",
+          "sha256": "1a88b224287ff2e02b2b4639fcddbda6f21d245eec9605687f7afaa4776f39b9"
+        },
+        {
+          "path": "patches/0039-third_party-blink-renderer-modules-buckets-storage_bucket-cc.patch",
+          "sha256": "aa03e4e5fb01e93d53d052e83c8142e6e83024e2fbf73048407156b0b73782a9"
+        },
+        {
+          "path": "patches/0040-third_party-blink-renderer-modules-mediarecorder-media_recorder-cc.patch",
+          "sha256": "f10bab3165637b214f86753c49c904806955a8a6760bae29ef6e285365d8fce1"
+        },
+        {
+          "path": "patches/0041-third_party-blink-renderer-modules-webgpu-gpu_adapter-cc.patch",
+          "sha256": "ad929e252a898e3525f561d03291d9eddb8ba04b6540aa2335c4ad307aad7653"
+        },
+        {
+          "path": "patches/0042-third_party-blink-renderer-modules-webgpu-gpu_supported_limits-cc.patch",
+          "sha256": "a32ced20da1a5c58613c0685882bb2c501fb8c739ddcbf12590ce1b4e584d70e"
+        },
+        {
+          "path": "patches/0043-third_party-blink-renderer-platform-peerconnection-rtc_ice_candidate_platform-cc.patch",
+          "sha256": "c04c5000236b4d99d29c392c07b4cb931c217796621f06aa696b4200dbbbda66"
+        },
+        {
+          "path": "patches/0044-third_party-blink-renderer-modules-peerconnection-rtc_peer_connection-cc.patch",
+          "sha256": "7303736192ad27af857315a8cd60e440da23f26b323389bf04c9ceaf3e6ac240"
+        },
+        {
+          "path": "patches/0045-third_party-blink-renderer-core-timing-performance_resource_timing-cc.patch",
+          "sha256": "7d2a2dcee8c8ecc3c3db47dbb7467663434980c11744c6afc15de0a47e000ccc"
+        },
+        {
+          "path": "patches/0046-content-browser-devtools-protocol-input_handler-cc.patch",
+          "sha256": "2c12983938340b735b9f2971cbd33bb496b09acc705b74152c15fae9a5705d87"
+        },
+        {
+          "path": "patches/0047-third_party-blink-renderer-platform-fonts-font_cache-cc.patch",
+          "sha256": "e98e4b20c3829aa570dfa40a1c9c0c9924148673d6e01cc3cf3b750a5c7061a3"
+        },
+        {
+          "path": "patches/0048-chrome-browser-component_updater-widevine_cdm_component_installer-cc.patch",
+          "sha256": "fd4c0727868e7b14a5dfc54422cc762a2e0251525eff0e9c4cb343f809528ce7"
+        },
+        {
+          "path": "patches/0049-third_party-blink-renderer-modules-plugins-dom_plugin_array-cc.patch",
+          "sha256": "4a454a46e7541c1526607206f492ee4b6f7f9db55ea5ba7e9f5899d213b915f3"
+        },
+        {
+          "path": "patches/0050-third_party-blink-renderer-modules-notifications-notification-cc.patch",
+          "sha256": "cbfb56b36e45d148319ac54dba1f78f2e74b52efb52a8125da22d07b106b561f"
+        },
+        {
+          "path": "patches/0051-third_party-blink-renderer-modules-permissions-permissions-cc.patch",
+          "sha256": "458f6067fbcc75d6ddd5f7fd92d01201c16fa5b7e1701f102228e017c782df44"
+        },
+        {
+          "path": "patches/0052-third_party-blink-renderer-core-css-media_values-cc.patch",
+          "sha256": "823b66bb12ceab33b1471e97be3b453fb99727d32a927df02384f8ab692464fa"
+        },
+        {
+          "path": "patches/0053-third_party-blink-renderer-modules-webaudio-base_audio_context-h.patch",
+          "sha256": "30842ae3d4b0d7ca487ae294328bfc55913c3bd84e84c097b0bde664c52542f5"
+        },
+        {
+          "path": "patches/0054-third_party-blink-renderer-core-timing-memory_info-h.patch",
+          "sha256": "df909f9e6f0f49c4067cc6bf83daca23538f6a167bf70c482a4c2050b392a47b"
+        },
+        {
+          "path": "patches/0055-third_party-blink-renderer-modules-screen_orientation-screen_orientation-cc.patch",
+          "sha256": "acb0341eaa73dd11101607c2c3fa70227b6fa5e4ac3a49dca5aec7b8a2ea200a"
+        },
+        {
+          "path": "patches/0056-third_party-blink-renderer-core-frame-screen-cc.patch",
+          "sha256": "53f26a4c0630382010e161a1bf0d33cbe872aaac6bdd6179d601d0392be06a93"
+        },
+        {
+          "path": "patches/0057-content-browser-devtools-protocol-network_handler-cc.patch",
+          "sha256": "4634c05ef2703a40429cd651fc17e407548899198b186c8470e5be32aae964ba"
+        },
+        {
+          "path": "patches/0058-third_party-blink-renderer-modules-screen_details-screen_detailed-cc.patch",
+          "sha256": "12dbcf63b862768c170ba7975d538149f01ff76cf14c09cb74dd02a8e7406649"
+        },
+        {
+          "path": "patches/0059-third_party-blink-renderer-core-geolocation-geolocation-cc.patch",
+          "sha256": "c9598e23180fadb154175475c2518cd4c0e05c4e29313c1a6f4e989074de8eee"
+        },
+        {
+          "path": "patches/0060-third_party-blink-renderer-modules-media_capabilities-media_capabilities-cc.patch",
+          "sha256": "e050effa3a2cc8e84809bf5184b6c18417718cb3f9f09a1aa63dadaaf14514bb"
+        },
+        {
+          "path": "patches/0061-third_party-blink-renderer-modules-media_capabilities-media_capabilities-h.patch",
+          "sha256": "59fe7e3903d37f1ac92bf5deeb7e22af87938494d02f8e6b89f6671340e5bf9c"
+        },
+        {
+          "path": "patches/0062-content-browser-renderer_host-render_process_host_impl-cc.patch",
+          "sha256": "8c6246c716ab266d89680fc75b957f807f0d10c851a4130066d26014b52d2e9c"
+        },
+        {
+          "path": "patches/0063-v8-src-flags-flag-definitions-h.patch",
+          "sha256": "0a3e5631b7b7f5a0fbb17dc50274af331eb3de8e7af1ff09d6c5bc827f20f135"
+        },
+        {
+          "path": "patches/0064-v8-src-inspector-v8-runtime-agent-impl-cc.patch",
+          "sha256": "4705a8b679153787d8a90d49936915d69d837f2c6e3979f2cc4703f3f900b770"
+        },
+        {
+          "path": "patches/0065-v8-src-inspector-v8-runtime-agent-impl-h.patch",
+          "sha256": "c4240bfe54e24b3fd24411e9e4ebc6df2baf837bd8a2b917717914be2ca321f9"
+        },
+        {
+          "path": "patches/0066-content-browser-renderer_host-render_process_host_impl-cc.patch",
+          "sha256": "de1d1aac83365d6ebdcf391b44d8d5f92a61cfbaa350aef880265dd4c51e2522"
+        },
+        {
+          "path": "patches/0067-third_party-blink-renderer-platform-BUILD-gn.patch",
+          "sha256": "26c3cc834f7082c1adb2984d20a638437137603c4ad02d172e4a630ef87073c6"
+        },
+        {
+          "path": "patches/0068-third_party-blink-renderer-platform-canvas_bridge-BUILD-gn.patch",
+          "sha256": "fab6d976320cec89f489cd7693aadaf05d2ddea564705d6455679d276e73ba18"
+        },
+        {
+          "path": "patches/0069-third_party-blink-renderer-platform-canvas_bridge-canvas_bridge_client-cc.patch",
+          "sha256": "1acddccf0a394a5d4be9f614a4080f7678f08086e033b491791b5a685276f10e"
+        },
+        {
+          "path": "patches/0070-third_party-blink-renderer-platform-canvas_bridge-canvas_bridge_client-h.patch",
+          "sha256": "8887cba678dc7ceb26a9d4168865422f172d6bb9c4f5d60e9d8fb35f3af143ce"
+        },
+        {
+          "path": "patches/0071-third_party-blink-renderer-platform-canvas_bridge-canvas_bridge_codec-cc.patch",
+          "sha256": "9f626e2cada0580ba0f279f21474e33f28ed0a09ad350c2db3fb0a0077cf7788"
+        },
+        {
+          "path": "patches/0072-third_party-blink-renderer-platform-canvas_bridge-canvas_bridge_codec-h.patch",
+          "sha256": "e5dae7b196a81ff196edd62fb09b6c287415efb66740ed06dc6fa9cec389782e"
+        },
+        {
+          "path": "patches/0073-third_party-blink-renderer-core-html-canvas-canvas_rendering_context-h.patch",
+          "sha256": "507cfc81932cd5f45aef6ef7096b62e684090165bd615561e3da31118519f6f3"
+        },
+        {
+          "path": "patches/0074-third_party-blink-renderer-core-html-canvas-html_canvas_element-cc.patch",
+          "sha256": "1f027e86221793d79b06e68c91b34011ed3ae51fb63bfd365ffa09a595b519a8"
+        },
+        {
+          "path": "patches/0075-third_party-blink-renderer-core-html-canvas-text_metrics-h.patch",
+          "sha256": "79317bb7adc28fe86bdc871fe75f0692c8ece46f7e4bbe48af2f4630c223a09e"
+        },
+        {
+          "path": "patches/0076-third_party-blink-renderer-modules-canvas-canvas2d-base_rendering_context_2d-cc.patch",
+          "sha256": "f18f6e5e22be6541eef925774ac2055443f2c836627de7ac25b2fdfb7c3d9a3d"
+        },
+        {
+          "path": "patches/0077-third_party-blink-renderer-modules-canvas-canvas2d-base_rendering_context_2d-h.patch",
+          "sha256": "4479b87f37067cecbbe29135af9c80e500bf1e5d068763fec99c5bab033878d5"
+        },
+        {
+          "path": "patches/0078-third_party-blink-renderer-modules-canvas-canvas2d-canvas_2d_recorder_context-cc.patch",
+          "sha256": "6135ae8235cbdf4038fffeed516655a667110cd05a704c94128245da12d8c0a3"
+        },
+        {
+          "path": "patches/0079-third_party-blink-renderer-modules-canvas-canvas2d-canvas_path-cc.patch",
+          "sha256": "9754842c6f6da28520ad17683ff022e334b39e0d98679387fda56141af0e5ad2"
+        },
+        {
+          "path": "patches/0080-third_party-blink-renderer-modules-canvas-canvas2d-canvas_path-h.patch",
+          "sha256": "5782132543076795438b8cbc6cdd08256912384c47cfa8f73b393cb70b7fb1a8"
+        },
+        {
+          "path": "patches/0081-third_party-blink-renderer-modules-webgl-webgl_object-h.patch",
+          "sha256": "6eaa38a54723d0a1fb0c6572ddce2c01ae218e2282704b2cea270a60b296fd08"
+        },
+        {
+          "path": "patches/0082-third_party-blink-renderer-modules-webgl-webgl_rendering_context_base-cc.patch",
+          "sha256": "78da0f157e275f5c219e71b160db13a09c60aad0731b7f857d39c89bc9b0e2a4"
+        },
+        {
+          "path": "patches/0083-third_party-blink-renderer-modules-webgl-webgl_rendering_context_base-h.patch",
+          "sha256": "e78ee0849e9a7c32de3ef3f16251f153a5c2797cf7afa7aaa9a8ca5e5b788e78"
+        },
+        {
+          "path": "patches/0084-third_party-blink-renderer-modules-webgl-webgl_uniform_location-h.patch",
+          "sha256": "dce166ca681b9721b6cad59b30aa9cedb2f309d8afd22a0b71f90074c1d75782"
+        },
+        {
+          "path": "patches/0085-third_party-blink-renderer-modules-peerconnection-peer_connection_dependency_factory-cc.patch",
+          "sha256": "bcac06bcd8546ee4b8f446d6b2844c46d7e1e26cab9b182cf9d3e7a3258eb91a"
+        },
+        {
+          "path": "patches/0086-third_party-webrtc-p2p-base-port-h.patch",
+          "sha256": "b10d30077bdd66f60928e221bed5970ea9aff5d9b8ac514c7b9dc2ba26b76a86"
+        },
+        {
+          "path": "patches/0087-third_party-webrtc-p2p-base-port-cc.patch",
+          "sha256": "1b575038297514b6f102c1cb6b8dd62160ddec9482b1a59caca958b34360c9ad"
+        },
+        {
+          "path": "patches/0088-third_party-webrtc-p2p-base-stun_port-cc.patch",
+          "sha256": "e1506c617ef8b82dd9851502fbacc64189aae9c78a3342e598fca3cecc7d6fbc"
+        },
+        {
+          "path": "patches/0089-tools-metrics-BUILD-gn.patch",
+          "sha256": "b15f667b6786bd05649c4abab1f5380b96ddf93a743c499d8c6fcde5f9e33d74"
+        },
+        {
+          "path": "patches/0090-components-ungoogled-persona-profile.patch",
+          "sha256": "9d9ff5815c11c6859bbdbd3cb1da144b38a46ec9a6d8a3bf6c28b6ab5dee1689"
+        },
+        {
+          "path": "patches/0091-components-ungoogled-persona-profile-h.patch",
+          "sha256": "6ca58082046b8e26205e026817d3c3733436386940699f331186f1322dbcd148"
+        },
+        {
+          "path": "patches/0092-components-ungoogled-persona-profile-cc.patch",
+          "sha256": "682f2e0d01a545284e0a1bf78e96fbd14ae8fcce442c5b7e21f055ee4be9c940"
+        },
+        {
+          "path": "patches/0093-webgl1-persona-complete.patch",
+          "sha256": "05399ca58b7254785566098e1a6594071ca63a2d4963f28a070f722c6a91f086"
+        },
+        {
+          "path": "patches/0094-webgl2-persona-complete.patch",
+          "sha256": "961b0b0834f909a9a1152b1c4e2f93e5b9cfc3069de212330c0fcedfb009e10e"
+        },
+        {
+          "path": "patches/0095-webgl-precision-extensions.patch",
+          "sha256": "148bea69ffc756b0cd6c8c33ca8d89e33950edc0653de09878b0d5757f89dcb4"
+        },
+        {
+          "path": "patches/0096-webgl-bridge-policy-h.patch",
+          "sha256": "b4961afdf9fbe6f96bc378669ed02d9e95251b532e4b0069f6bdd2e92e6dda8e"
+        },
+        {
+          "path": "patches/0097-webgl-bridge-policy-cc.patch",
+          "sha256": "603df17bf57ae1415c946f866ca8477f68c4d5927178cbb32295f4660683cbc1"
+        },
+        {
+          "path": "patches/0098-third_party-blink-renderer-modules-BUILD-gn.patch",
+          "sha256": "eccbede6ea18bc19f86a82fe3c7ea345739c264554071c1b490ae00c2c1f4678"
+        },
+        {
+          "path": "patches/0099-webgl-bridge-lifecycle-cc.patch",
+          "sha256": "c4055bc41b661fca6170a3b1b823c845e84d4f0caeabe267fb862ae285284374"
+        },
+        {
+          "path": "patches/0100-webgl-readback-noise.patch",
+          "sha256": "2ae3c59783f71297c854daca107b8e9eff27dfa619767c83ee86d43518251265"
+        },
+        {
+          "path": "patches/0101-webgl-gpu_fingerprint-cc.patch",
+          "sha256": "03978b671e4f6cda5c6065953029a138fe2b6a139a8272e552322aca304a7022"
+        },
+        {
+          "path": "patches/0102-webgl-gpu_fingerprint-h.patch",
+          "sha256": "46e9350b4aded51bc5b9da18af1badbdf34dc4d02bbc2908d40224aa2f85e8e2"
+        },
+        {
+          "path": "patches/0103-webgl-gpu_info-cc.patch",
+          "sha256": "b68967221071055e4083fdf28a87619721400c582b444e3d9873f6ba46b468b4"
+        },
+        {
+          "path": "patches/0104-webgl-gpu_info-h.patch",
+          "sha256": "55921b3d873bc2384135e5949aed398089d7ea2a45dd08fb4019ff28dcda2f5d"
+        },
+        {
+          "path": "patches/0105-components-ungoogled-farble_seed.patch",
+          "sha256": "8070c6a45ca838d66ced4d7fd7e189583d7ee61acc6393fba4080b981ea88ebb"
+        },
+        {
+          "path": "patches/0106-components-ungoogled-farble_seed.patch",
+          "sha256": "73153a9dfbcacaf1e43d29c5c281271dc6c6486e528625f5b6dd09b2156e39cf"
+        },
+        {
+          "path": "patches/0107-components-ungoogled-fingerprint_data.patch",
+          "sha256": "e98bf1dbf4fb92a2a031d4af85fc0b6fd6453e85c5b4fb57ed5c002194df3acd"
+        },
+        {
+          "path": "patches/0108-webgl-gpu-fingerprint-integration.patch",
+          "sha256": "3aac86fa2225daf8e7e4cb42232782c592168f815f50689eabd73b687e208397"
+        },
+        {
+          "path": "patches/0109-webgl-BUILD-gpu-files.patch",
+          "sha256": "f285134b918a7cc2e83dc255048aac454417f9bfd38ae2e58fe77507e300d34f"
+        },
+        {
+          "path": "patches/0110-webgl-query-hot-path.patch",
+          "sha256": "03bf637afe5bab501b818c670de4e404c46e0a9eb284f331d319c47fba60c33d"
+        },
+        {
+          "path": "patches/0111-global-privacy-control.patch",
+          "sha256": "98af6f9657ebe1c92f2bbd170fa038d97389b6126a2962db50bf16129ab13b79"
+        },
+        {
+          "path": "patches/0112-layout-theme-system-fonts.patch",
+          "sha256": "07bb338e3b50426b9d096b0de06500f4a40bdac4ae0edac8e5e0434d4f962eaa"
+        },
+        {
+          "path": "patches/0113-webgl-translated-source.patch",
+          "sha256": "818a38dcc50c8a14a2e592262925fcf0a4ebc61f07ab8caab921e443660b5304"
+        },
+        {
+          "path": "patches/0114-webgpu-preferred-canvas-format.patch",
+          "sha256": "448bf0f0438ba83279056a4a5db9b5083ac6a7452fca992a333e8755724a01a3"
+        },
+        {
+          "path": "patches/0115-battery-persona.patch",
+          "sha256": "ca7cb1d9ecf0f296e348d243bdf195b89e4214518b8770cfb3e05fe24b2b85b4"
+        },
+        {
+          "path": "patches/0116-audio-persona.patch",
+          "sha256": "1d2934baad0d6d8cb327a0fedae131e9e00402c7750aae0f21c61aff101ac24a"
+        },
+        {
+          "path": "patches/0117-realtime-persona.patch",
+          "sha256": "1a1406a5b1798c5004b554c25136cb65092d158081a5a604c326e0a40b6e28f0"
+        },
+        {
+          "path": "patches/0118-font-fallback-persona.patch",
+          "sha256": "682433dc136855cc1ed3626311494bbcd77d46ecdf7db5c173e41b73263339d0"
+        },
+        {
+          "path": "patches/0119-time-clamper-persona.patch",
+          "sha256": "fb8199dc85e5e4cbe3cb583bdcb186b338f766d4cd3397a16a911d8c5411ebc5"
+        },
+        {
+          "path": "patches/0120-media-devices-persona.patch",
+          "sha256": "6ada9a1ab6ace435d648f6158aae3132602746f665720cc25fb1bc4127c1ea2b"
+        },
+        {
+          "path": "patches/0121-third_party-blink-renderer-platform-graphics-image_data_buffer-h.patch",
+          "sha256": "e265c02eb9135e9510a8c3986325b1e3d49a87ee2c91a4561d4410d79ae897af"
+        },
+        {
+          "path": "patches/0122-third_party-blink-renderer-core-html-canvas-canvas_async_blob_creator-h.patch",
+          "sha256": "38df5f2189bbfcbc8ad2c4aa648c9dbee9e1d98eebc28ec2c25a4f6b3082f35d"
+        },
+        {
+          "path": "patches/0123-third_party-blink-renderer-core-html-canvas-canvas_async_blob_creator-cc.patch",
+          "sha256": "ba0c9e73ac757dfb4e74c3a36779894e885e4de8ca7c4acaf38e6025177c04d2"
+        },
+        {
+          "path": "patches/0124-third_party-blink-renderer-platform-image-encoders-image_encoder-cc.patch",
+          "sha256": "80549956ea96cd315045a2bdda8a6167b51c6a3e681d490604aa740e0bd54513"
+        },
+        {
+          "path": "patches/0125-display-emulation-backend.patch",
+          "sha256": "b94b134b5fd4d83bf33472de9e86dfc63445b9fb4fef898f0e37032da9ce11d4"
+        },
+        {
+          "path": "patches/0126-display-widget-initialization.patch",
+          "sha256": "2e9e71bb24a6c0a1046dc93b9dd7b2a610930d0c059c03f581ca0c79e92c2686"
+        },
+        {
+          "path": "patches/0127-display-widget-state.patch",
+          "sha256": "6d0ef69f69098f29e57c7956eeb30c7917df7d02f0e46558d5d0eccce6b36867"
+        },
+        {
+          "path": "patches/0128-display-oopif-initialization.patch",
+          "sha256": "cf09ba9c4b42a45c355c8031948c0fe0826bd74191698ceb280943ed51af8452"
+        },
+        {
+          "path": "patches/0129-storage-quota-backend.patch",
+          "sha256": "3cc7c291455bc3d520e578a4431c624882c9c116fb60ebea1e67781ddffc83d6"
+        },
+        {
+          "path": "patches/0130-third-party-cookie-opt-in.patch",
+          "sha256": "1e5690ae53f30af8a37dd44698cbc2361f433fa238c36ad55961862caa4e6f56"
+        },
+        {
+          "path": "patches/0131-fake-shadow-root-feature.patch",
+          "sha256": "228aba3a4c2b57d0f88407467180abf3c8a433e3aa6f0630492741cc0ea248cb"
+        },
+        {
+          "path": "patches/0132-fake-shadow-root-bindings.patch",
+          "sha256": "0abff7b0f6af843d9b24f13aa609b5227f013b700e10a4978a3d2f3c5d990395"
+        },
+        {
+          "path": "patches/0133-fake-shadow-root-declaration.patch",
+          "sha256": "b52f8782ceb79e0b98852d3af3aa233f1ad953cd17f6c925d2433a652547d8f4"
+        },
+        {
+          "path": "patches/0134-fake-shadow-root-access.patch",
+          "sha256": "5f5a3316d4a753bc899cedb060d16482bf91bc1accf00a2a36764e47f11957bd"
+        },
+        {
+          "path": "patches/0135-windows-font-metrics-declaration.patch",
+          "sha256": "40f8ca025735cc602aa373ce948241e3d7049f3eeba2c4da3a8bce0fa2cb48e6"
+        },
+        {
+          "path": "patches/0136-windows-font-metrics-tables.patch",
+          "sha256": "255c1ea3f1649293e097003d4e272dd2b113e9aef9ec182ca047ff3088900a4b"
+        },
+        {
+          "path": "patches/0137-windows-font-metrics-rounding.patch",
+          "sha256": "07436e3f5359c622a92b600d52952d029a612c7c81b87873cda76eafa89c45b1"
+        },
+        {
+          "path": "patches/0138-windows-font-metrics-layout.patch",
+          "sha256": "3de1c57d7607b78ccceaee59fbe309c07da07819f720348684f68a7ffad1656e"
+        },
+        {
+          "path": "patches/0139-webrtc-ip-presentation.patch",
+          "sha256": "8464a188b67d4972d4b2c18b7a24f940cb12182f9a2c1b57e15b862eab76cc75"
+        },
+        {
+          "path": "patches/0140-webrtc-ip-stats.patch",
+          "sha256": "b8a7b27673a70cdaeab689b304d22efeee7735dec73b1ca1023c759fa734f82f"
+        },
+        {
+          "path": "patches/0141-webrtc-ip-offer-promises.patch",
+          "sha256": "7e3a5160d0f788c5ca2fcdcad2b323ba592278c0f02bda34096496c455e68f26"
+        },
+        {
+          "path": "patches/0142-webrtc-ip-offer-callbacks.patch",
+          "sha256": "9753eba611a55e2ead0f6e31c7e0014c2a7e9b3a9374281e3800804016832b2f"
+        },
+        {
+          "path": "patches/0143-webrtc-ip-build.patch",
+          "sha256": "752db40a93cd18a5ec3bbccf35dfff9216681008f3afe5de6c60727568987303"
+        },
+        {
+          "path": "patches/0144-webrtc-auto-startup.patch",
+          "sha256": "8b3940c0d87f14d3d9c157b8bb2328e9b00a086a33f99074a8a42f1af795f9cb"
+        },
+        {
+          "path": "patches/0145-webrtc-local-sdp-roundtrip.patch",
+          "sha256": "18174e9b14f896c29d42a3a84e4f022a7a08b0754a51453974e602dfd2ccea9e"
+        },
+        {
+          "path": "patches/0146-canvas-text-noise-policy.patch",
+          "sha256": "690c9e8801a98109c6cd21dedc6ca64fe7555ad4e800c45c449f9e4b3934ae55"
+        },
+        {
+          "path": "patches/0147-webgl-context-backend-identity.patch",
+          "sha256": "2f84b030367feac787ea12cacd11062249774926ec4e4549c435204c1a4199b2"
+        },
+        {
+          "path": "patches/0148-webgpu-native-adapter-identity.patch",
+          "sha256": "053310606ef198883d9251d838f4cfa59a53fd7a5bffafbc5ec29b199c534c9d"
+        },
+        {
+          "path": "patches/0149-canvas-opaque-image-data-upload.patch",
+          "sha256": "c1f76135e662408f5e070bef43e745eaf28af00c74d8c895aee6a16f4e29fec6"
+        },
+        {
+          "path": "patches/0150-canvas-mailbox-readback-geometry.patch",
+          "sha256": "af1568a2b75ff288bde5bb8526c902d60ef9a521c0f636b3a07abfcb942cb913"
+        },
+        {
+          "path": "patches/0151-devtools-font-provenance-declaration.patch",
+          "sha256": "4203eeede191d50b9a06974f9c4ce7d786c5f561b952afa59c205796ed8783e3"
+        },
+        {
+          "path": "patches/0152-devtools-font-provenance-implementation.patch",
+          "sha256": "8972b3a17a79923d5538f65007578c6aca8304f2bd50ae3755735d8bdc01ee9f"
+        },
+        {
+          "path": "patches/0153-devtools-font-provenance-protocol.patch",
+          "sha256": "e628550b98173b0d29174ba99cfa4afe26c522dd50e6452bd243770ec2ad9b6b"
+        },
+        {
+          "path": "patches/0154-socks5-auth-declaration.patch",
+          "sha256": "3d4cb5d7958c654fe59657ebc4a50dde5454c7d4c55b7d95e86ba8ad5e9fb865"
+        },
+        {
+          "path": "patches/0155-socks5-auth-handshake.patch",
+          "sha256": "fc97fd9615ae5a70de6388e2640fb53adc97aacd9a445d8cce0fddce6847d95e"
+        },
+        {
+          "path": "patches/0156-socks5-auth-network-service.patch",
+          "sha256": "30abfb871cfef419bfeec3e6d865bc204c4096f46c71a438f0520234edef3011"
+        },
+        {
+          "path": "patches/0157-socks5-auth-native-tests.patch",
+          "sha256": "1fc93ce730030f387b7881ea2264644371d70c50def9ed0ac307bdf6a185597c"
+        },
+        {
+          "path": "patches/0158-gpu-backend-policy-declaration.patch",
+          "sha256": "32f3481ecfcf62d7c5654e9b408bb94fa69fb55d6ae69ad52ebe7ccc1d765b94"
+        },
+        {
+          "path": "patches/0159-gpu-backend-policy-snapshot.patch",
+          "sha256": "d1446dde51b3afa5f33e092a2c2b82012bada71e7b1d73159ad1449bc0a4f491"
+        },
+        {
+          "path": "patches/0160-canvas-shared-backend-policy.patch",
+          "sha256": "3909ae18a3d19b3f414092aa290de0eeccaf1f08417c2c3e5318808ec12f71ec"
+        },
+        {
+          "path": "patches/0161-canvas-export-backend-policy.patch",
+          "sha256": "1f64ea6811755af65df6f88a9d3a553940e05d21d49d7820d60aa7f3171d4bde"
+        },
+        {
+          "path": "patches/0162-canvas-bridge-backend-policy.patch",
+          "sha256": "964ebe7228bd0304346a3be57aa060bbf433a964678993dfb1020649defd8054"
+        },
+        {
+          "path": "patches/0163-webgl-shared-backend-policy.patch",
+          "sha256": "f2120deab05be58b920b9191bb6c79b2ab96c3bdbd0c8921cedba8a30472a389"
+        },
+        {
+          "path": "patches/0164-webgpu-device-backend-policy.patch",
+          "sha256": "3a8e30d895b73a90648f1773acec0503bffe7bff2fc22349d6a402ac8d3045d9"
+        },
+        {
+          "path": "patches/0165-canvas-lazy-opaque-readback.patch",
+          "sha256": "0abe15824152def979db3bb71d61d03fbbdbeb072a77318f8f47773b990baaa8"
+        },
+        {
+          "path": "patches/0166-display-frame-properties.patch",
+          "sha256": "0343f03c359d4dd332165b9d6f08f73b2cac2d42e88bf6b3172efac1a4da392d"
+        },
+        {
+          "path": "patches/0167-display-frame-mojo.patch",
+          "sha256": "35df3b1c21dcab8dd0d3b5cd421d19e582d38c2a74a1d6ac6b0787e84f5f8e72"
+        },
+        {
+          "path": "patches/0168-display-frame-traits-header.patch",
+          "sha256": "af88ee82e448d6d41e5ab75af29e46f6b7bb3d82e58004f19f429408a287067f"
+        },
+        {
+          "path": "patches/0169-display-frame-traits-read.patch",
+          "sha256": "caddb0b8030a145f829f6b465d9444252eb5adde18fd4d2928c5d087e42ad097"
+        },
+        {
+          "path": "patches/0170-display-widget-properties.patch",
+          "sha256": "2bbaa467e4ad1ec750d2a76e33017a3c0131968bc0059aee816df028e4cf0744"
+        },
+        {
+          "path": "patches/0171-display-widget-mojo.patch",
+          "sha256": "c209138ee8a6325845b90cf6ad7b52aa7975c8af2b18c3948aedf33604e89034"
+        },
+        {
+          "path": "patches/0172-display-widget-traits-header.patch",
+          "sha256": "b722b5e6022f408246a757ae7256b74b48f49816817871facbbe20fda28866b7"
+        },
+        {
+          "path": "patches/0173-display-widget-traits-read.patch",
+          "sha256": "87529a0e6d9726786854132362716e4568ce4c8d8bd0ba6394d9ff8970d32d53"
+        },
+        {
+          "path": "patches/0174-display-widget-properties-equality.patch",
+          "sha256": "a2889bac2f8ae7bf29fbcb3b60afd955871dc16ba26728847941b9df1d1fb0df"
+        },
+        {
+          "path": "patches/0175-display-remote-frame-header.patch",
+          "sha256": "8b71f61a18fe3d3c0523011adfa87cde07fa2e0d19cdcf4d8cc1a735b80657c2"
+        },
+        {
+          "path": "patches/0176-display-remote-frame-propagation.patch",
+          "sha256": "32200d2f82c72d1f2f6bd1c3855c76a61e7ed3337d795a76276c8e156cf149d4"
+        },
+        {
+          "path": "patches/0177-display-browser-widget-header.patch",
+          "sha256": "182c90a6ed9699ce549544f51d3ff7a7214062c2f5a0246e0ef9e8b6a86c0f36"
+        },
+        {
+          "path": "patches/0178-display-browser-widget-propagation.patch",
+          "sha256": "e8230e14eb4342cf469bcba762e338a599c78513b38c3e2121b26e771b340a48"
+        },
+        {
+          "path": "patches/0179-display-frame-connector-propagation.patch",
+          "sha256": "c4c7026ab182b6fa91adc9bed90babed43978af9c00e6f4d1dc006d7ed2802d5"
+        },
+        {
+          "path": "patches/0180-display-widget-emulated-screen-state.patch",
+          "sha256": "5e2cdb9e7838cf98d74400ad280404bdac8a816334f275c46bf27686d0f47ea6"
+        },
+        {
+          "path": "patches/0181-display-widget-native-scale.patch",
+          "sha256": "74916f087c75bb6769bc3cbb4a29582d64f548ce315733f2d4f51183fe24215a"
+        },
+        {
+          "path": "patches/0182-display-remote-initial-screen.patch",
+          "sha256": "a50b52c2b22096c47aaa07f7cd6d142071e70a05f4bbbc17358ad321a2fa1af9"
+        },
+        {
+          "path": "patches/0183-display-native-screen-regressions.patch",
+          "sha256": "fb94be385764e9bc6836033744596be85805d44ac9132a113e770da27c723aa1"
+        },
+        {
+          "path": "patches/0184-display-widget-orientation-dispatch.patch",
+          "sha256": "95e3de540ef71768650b89ec202fec34311c82d4e468c46106d384961e43b54d"
+        },
+        {
+          "path": "patches/0185-display-testing-orientation-refresh.patch",
+          "sha256": "617f74baaf6e151008e55114c608d6df9958a5e4ef5af2a2b368150f39473527"
+        },
+        {
+          "path": "patches/0186-display-orientation-local-root.patch",
+          "sha256": "fe673d77075e499d00af3eebe7305941c5099a20e99061903f441cf3409390b9"
+        },
+        {
+          "path": "patches/0187-display-emulator-reentry.patch",
+          "sha256": "a79fa0dfc43d96d644f471cd1d4ed1f5e0976c599281879522163e866f8a0492"
+        }
+      ]
+    },
+    "lite": {
+      "path": "build/windows/lite-tarball-files",
+      "sha256": "ddf6f7f3eb48e2a6a23a54926eba858279e188c6fb052803c8568d8f25b587dc",
+      "files": [
+        {
+          "path": "v8/test/torque/test-torque.tq",
+          "sha256": "502c92560d745fc94e93ec7b95a1c562a55167f58a2ce79e3d0e4881dfb928c5",
+          "mode": 420
+        }
+      ]
+    },
+    "regex": {
+      "path": "/home/runner/work/_temp/chromix-build/tooling/ungoogled-chromium/domain_regex.list",
+      "sha256": "f59c4316b4ac32f9dfe4f6440c4cf9ad5dab0ab8827769f5dc2587ca07e91f09"
+    },
+    "list": {
+      "path": "/home/runner/work/_temp/chromix-build/tooling/ungoogled-chromium/domain_substitution.list",
+      "sha256": "f0822948fd6093597dd226f3db1f3332be087530dcf6af9e12dadd845f67daad"
+    }
+  },
+  "outputs": {
+    "base/BUILD.gn": "4b393a5031f954897eb9f88642ade32d9eaa1b3656510938d1d8da396899bfbb",
+    "base/uxr_config.cc": "14a22a5ff5d84b4def9690d85bdd113c7ece7ec10622a0c56bab812ab1e6296a",
+    "base/uxr_config.h": "c534e57da6f20271e35c6ae18da4dd4aa201ebe86e4852400db6cb939a6470b5",
+    "chrome/app/chrome_main.cc": "16ee532a5c3c4b040f5d41fff2d6835b9ce6698c2e9820f9295b15c468687e2e",
+    "chrome/browser/chrome_browser_main.cc": "35dd2bec46a53cc09b3e57c03947bcddcf913d076dcfbc1a9c31180a312c9cda",
+    "chrome/browser/component_updater/widevine_cdm_component_installer.cc": "cdc5f651d282aa03a52981afd3b923ef7e1da3b705ef4ad5bd2ec5725506bf9c",
+    "components/content_settings/core/browser/cookie_settings.cc": "a6b7dfa433807fa8154ad708fe7bbd08e226bb5a5f2664d049f38c171ad73e86",
+    "components/embedder_support/user_agent_utils.cc": "c7ca86ec3b5cc776d99cf22587f8acfad6b2f94013d6b27e71167cfa16650acb",
+    "components/ungoogled/BUILD.gn": "0c0bb5fa28b0e302871167bb2ac6f5d8efd6a9459c059ce88d2062f96bea0c3e",
+    "components/ungoogled/farble_seed.cc": "501bb3df649b26ec8894d721b721f32d65a99713c69836ec26b9c54ddda91d21",
+    "components/ungoogled/farble_seed.h": "fdf00efd9473692b3bf0a487f1a1f1b6000f3cea5794c8ad8cb21e274e433cb4",
+    "components/ungoogled/fingerprint_data.h": "c38733e14ffb6b3d41d032b6433b424ed98a67cd6619fd7c3cf27d20b49ced6b",
+    "components/ungoogled/persona_profile.cc": "984d960b4c357228648ce067a494c08bf7c95dccc18937d62864a78ecea91a5f",
+    "components/ungoogled/persona_profile.h": "df6af460fbda52156dfabe61466b2c9c8460048acd193ea3cf5564998e369465",
+    "content/browser/devtools/protocol/input_handler.cc": "9b330afda5aa383c685775b8ce4a2aeae212c1593058c57019322853a88feb34",
+    "content/browser/devtools/protocol/network_handler.cc": "aeeb8a6a4469cc1a21d959b8fe24ddcda2e4f6a3e0506d03ffe82ff81275e72d",
+    "content/browser/renderer_host/cross_process_frame_connector.cc": "81347033ea54f6634d52f28d6e4031560c07822d217a20320c83574b494c8975",
+    "content/browser/renderer_host/render_process_host_impl.cc": "ee747a5c0d65d8668f010b1db19bca048f1d97cb24635d4b76e5b5fa1438c630",
+    "content/browser/renderer_host/render_widget_host_impl.cc": "2eec1ea2b973a27c3bd7b25fd32c78c2c67f2dcc87c0f290d3c97d6420301a87",
+    "content/browser/renderer_host/render_widget_host_impl.h": "76fdf73bae86b42f3538923126b08c352db3f1cd38bec3ed690d78b5542b6cd5",
+    "content/common/renderer.mojom": "4aad4c1797301799fa453d556b438e2e1102248836a66a2433786e1afa817fb1",
+    "content/renderer/render_thread_impl.cc": "3a00aa9d253e33abb424ead9454d69d9c8947289bb95bdcbaff59ad52f06df07",
+    "content/renderer/render_thread_impl.h": "43bdcee9058dfec5ba9773a9ed7ba8b79ce0fa3b058826493da01b61464b0cde",
+    "content/renderer/renderer_main.cc": "c485988eadd3fd270cb3885702b9ccb64b1a14969f280de95ed69ea606186c8e",
+    "net/socket/socks5_client_socket.cc": "d53523b372c824e4b99d84d7a6123f90e9bc1c810752ec5f7acf0e4d579f7929",
+    "net/socket/socks5_client_socket.h": "cb7294d3d8fc1f0100a0af8897271e3086e3ca18aa9d8d74022aa1203b8b05b4",
+    "net/socket/socks5_client_socket_unittest.cc": "37c757fcea0ffd97ca046bb3d98026353d99779cfba34e61992d5ef56338036a",
+    "net/socket/socks_connect_job.cc": "0dbab49b134c447f2d71cbfcfa4864f358ab54aceae6ba17cb06b64550ff9914",
+    "storage/browser/quota/quota_manager_impl.cc": "09c67aaf224da06dbd962555e49214f98cfa34d37cc14fae5e217188f106a211",
+    "third_party/blink/common/frame/frame_visual_properties_mojom_traits.cc": "c7363d6bb9545bacf8be09c25c520ab10800269a213ec281d666f8a0909ac4e1",
+    "third_party/blink/common/widget/visual_properties.cc": "238748107e01ba2be3c62960d3498d323fceac9173af2357247ac67058bdd52a",
+    "third_party/blink/common/widget/visual_properties_mojom_traits.cc": "00a76d37fb8e3afb767584ffdee0e3221b21eb45a6bb9112397ab839802a7ad9",
+    "third_party/blink/public/common/frame/frame_visual_properties.h": "d0d482002354854aa6640e55252e4975fcbb76fd4ea03e6eb03ca8f0a1adbaec",
+    "third_party/blink/public/common/frame/frame_visual_properties_mojom_traits.h": "087ac4578ee08412093f5c840d4af1be992d28ba14378265fdbaab40e19396a4",
+    "third_party/blink/public/common/widget/visual_properties.h": "0e6c0f4fa92d15982a4d55535f008bb2d8d886e5d84354774f863a30a66f0b5e",
+    "third_party/blink/public/common/widget/visual_properties_mojom_traits.h": "2b85d00e820dfb442948a2cd83932ac985c257185a3b3598dd9c48f7d5a691ea",
+    "third_party/blink/public/devtools_protocol/domains/CSS.pdl": "606e69f7da22902d92b2fb41ec089fb6affc8259c858df6bc74019f5e0010298",
+    "third_party/blink/public/mojom/frame/frame_visual_properties.mojom": "d245aec1a45211ba6158280375bfed7854fd3a9b8c76a5ec9d4259564df2ad90",
+    "third_party/blink/public/mojom/widget/visual_properties.mojom": "bcbc9c447b22f5f0a700703d356a928d79eaa172f001a708374c8e29a76834fd",
+    "third_party/blink/renderer/core/css/media_values.cc": "45972084a4af81f0f621d38ce381a95b872fd0bfc77b18e10f6f8a2f52be174d",
+    "third_party/blink/renderer/core/dom/element.cc": "8ab6e2f2196b57032d8a81ad93a85d737f5e650a6cdc96a9bd9750e10bac725e",
+    "third_party/blink/renderer/core/dom/element.h": "729a11fb3ed9217747a0b21dc436302141fa07805defe28132f54654a36cc3f7",
+    "third_party/blink/renderer/core/dom/element.idl": "6882e7f4965dfd0d7cce83c6ed2282f4da3b102a6f271980d89d299dcb6dbd19",
+    "third_party/blink/renderer/core/execution_context/navigator_base.cc": "ff5ce7c3cacb80d2d2ffa144446f5cc8eab45dfaefc0f6e92438633a27e9aaa9",
+    "third_party/blink/renderer/core/exported/web_view_impl.cc": "4248c4a711e2a1dc0ff8b462f3d76b7d290f424fca10e8297a258056fd2f8d57",
+    "third_party/blink/renderer/core/frame/local_dom_window.cc": "9c76dba87486e4405a7eedfe7669faed4982d0b3b79633cf4622120406e21360",
+    "third_party/blink/renderer/core/frame/navigator.cc": "f52b8fce78c71f52d2c663bb3e2fce11e401814d96b1c0df8c29a955b423db23",
+    "third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc": "225e755adfaf6961d979763435795b53d66c6d98c46a28f4864b94cdf7d7e18a",
+    "third_party/blink/renderer/core/frame/navigator_device_memory.cc": "56ff86b39be6b66853c7e871ec23b7128385001b57a8d0d130b3eaec34d21f48",
+    "third_party/blink/renderer/core/frame/navigator_id.cc": "ae82398873fb4c6cc3570cf64ba0ee120f4d1177f8120d9edba709301e76ba3a",
+    "third_party/blink/renderer/core/frame/navigator_language.cc": "8851b1360713c96a701b2a08c01ca2d0debd3c6423a11960c1bf0f7ddfd11ed5",
+    "third_party/blink/renderer/core/frame/remote_frame.cc": "f4c14a5f0c25294df07d3bed53bd9dda279a936561dfe09abc53b8335c2ccf13",
+    "third_party/blink/renderer/core/frame/remote_frame.h": "2b02bd663902eabb483728c3c10a5247f50fa8530d1bca309a4015597e81ef86",
+    "third_party/blink/renderer/core/frame/screen.cc": "55445537dc13365cf0ef8c29597f147f606deb510c5b39c7ebb1ada3af6bfdb1",
+    "third_party/blink/renderer/core/frame/screen_metrics_emulator.cc": "aa10a5c98cfad4c6983044db341f9f5301eb9cf52aceb678d6d5998d7047ec71",
+    "third_party/blink/renderer/core/frame/web_frame_widget_impl.cc": "68d48776457a7e542d9705c8c3ea04c3bbc98a2090dbde11dabf4aae545d90b2",
+    "third_party/blink/renderer/core/frame/web_frame_widget_impl.h": "2cf0a841aba6a2559357a21ddcc67897df454c973d373226e8e88ebd81f5c2ff",
+    "third_party/blink/renderer/core/frame/web_frame_widget_test.cc": "77836b80a7328dbe3ea13b1dfe08a5da136b58109a24dc8b20d6b1be1015d00c",
+    "third_party/blink/renderer/core/frame/web_remote_frame_impl.cc": "6d2e52c3dcf08b40fe310565875e9456321af2780878a5687af1e098c1c84c62",
+    "third_party/blink/renderer/core/geolocation/geolocation.cc": "356dda29fa521f048120187f0f4e46d8cd3f10d84b603b47a0d9943b3f0dc03a",
+    "third_party/blink/renderer/core/html/canvas/canvas_async_blob_creator.cc": "3ff16fc3837b1b390d5461e175e2f2d505705cfd3fd2764e7de684a5683b7ace",
+    "third_party/blink/renderer/core/html/canvas/canvas_async_blob_creator.h": "7d841324a6b929ef9a71fbb4006b23af847f9d4b683098aa95a92eb3a1a5b6f1",
+    "third_party/blink/renderer/core/html/canvas/canvas_rendering_context.h": "de47cd7a6f93244308cf26dfd1e2c79b3e577fe5756b10ae198bf7e25297d51f",
+    "third_party/blink/renderer/core/html/canvas/html_canvas_element.cc": "7a7f5e7f5ea06b903e80e33c124e9f1d5ccb440acc584fbd4cc3a44449978c32",
+    "third_party/blink/renderer/core/html/canvas/text_metrics.cc": "e33e44d24c40ee64e70326f0a51aa437b5deca44cd593364fd7796b0222dbb82",
+    "third_party/blink/renderer/core/html/canvas/text_metrics.h": "d25e94eb8fbadd0a7bd7a062478d0b758f8f8f2cdb8762c3a3ee333a5df8f94e",
+    "third_party/blink/renderer/core/input/pointer_event_manager.cc": "a6acdd5bdd188ee0f2893c6396998c322d2e17d537f59470f43fb062612701bc",
+    "third_party/blink/renderer/core/inspector/inspector_css_agent.cc": "3eb7873fb54dca81954226a123db3244065cf149cdd12a5da89b91ae22a02e4b",
+    "third_party/blink/renderer/core/inspector/inspector_css_agent.h": "b48919039b0ac009b9c6b45b2b34806ebafe319635a8a3ef94d64b20cce9de60",
+    "third_party/blink/renderer/core/layout/layout_theme_font_provider_default.cc": "06d4e778633950fd04de52c1ee900ce86e7553709c41c3aca00fb35ad4f80701",
+    "third_party/blink/renderer/core/timezone/timezone_controller.cc": "fd6f3e033c2f3c0ebc7055ad18aa47f2e8ced2e9c6185bf516313c5bcfe53837",
+    "third_party/blink/renderer/core/timing/memory_info.h": "a88788c89b4b1c432bae0eb369edd1f863003ddbce98f2ae45f57248e945a7a1",
+    "third_party/blink/renderer/core/timing/performance_resource_timing.cc": "0bf4bfee26e9a6e9695bb9d49da8238818fc539ae0cfdcbf8f8c2b9ad8ad9566",
+    "third_party/blink/renderer/core/timing/time_clamper.cc": "a9e3690d37e334b7816578e571a7045b259af4f2b2a3c4b71d695f3870d7fb66",
+    "third_party/blink/renderer/modules/BUILD.gn": "cfbe51b850c940b3f0cc2ad018fb29cc23d990b52ba4924c18066442a2ed7f34",
+    "third_party/blink/renderer/modules/battery/battery_manager.cc": "f5a068d6d8efe1cb2242f2ddf69814598275fcc1d8e0185b7f9668fa9f8f2072",
+    "third_party/blink/renderer/modules/buckets/storage_bucket.cc": "30d1c16501cb5a218a5dc4f496f6cc5dc66e3dcc8f6bef26880004c2f3270030",
+    "third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc": "eaf92efcdb1b8876bb9c2f5f3c15b4797f726163bb93874990d059b7b8387f8b",
+    "third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.h": "37df96368346a2377b5c63885af5b956d6126e3a5d45ade97199bdf595a813b5",
+    "third_party/blink/renderer/modules/canvas/canvas2d/canvas_2d_recorder_context.cc": "f2fd67d172a17262b18fb473615aa8286a17e6a063e72ec3bcdd6541665fd69a",
+    "third_party/blink/renderer/modules/canvas/canvas2d/canvas_path.cc": "a2dd73d136641597cf80ddc9cd8daa63e546ca7c6a2691eae21dfdf08be9eb8b",
+    "third_party/blink/renderer/modules/canvas/canvas2d/canvas_path.h": "d3f07ff8eddec7ab5127178804e605c59b1bcae894643719aa8d19c23a3c0a84",
+    "third_party/blink/renderer/modules/credentialmanagement/public_key_credential.cc": "adacb592bc4205eb474016d39be086e493495b981bb2517b4ec892c5e09fbb6d",
+    "third_party/blink/renderer/modules/global_privacy_control/navigator_global_privacy_control.cc": "b32f7668033a6f7a45efc042cd76ab19a2847b4368c3c8fc7d0994f4b4c0ff50",
+    "third_party/blink/renderer/modules/keyboard/keyboard_layout.cc": "d09cab39df1de70a67f24286327f625853f8000bfa16e1054b1f2edbf55ee815",
+    "third_party/blink/renderer/modules/media_capabilities/media_capabilities.cc": "0b66641379682aedb899e704dbea8725eb2b504fc348f3438dd8beea1be97e94",
+    "third_party/blink/renderer/modules/media_capabilities/media_capabilities.h": "13446c87265650109df90c0abd723eb51fce1963d07ee9fcb43679d4829abe5c",
+    "third_party/blink/renderer/modules/mediarecorder/media_recorder.cc": "1e9039603e0ab3b1c0ffad714ef5ed608845d11d615ce9c79b198f29239ea636",
+    "third_party/blink/renderer/modules/mediastream/media_devices.cc": "34f627a43fbd9b1fe6551e37dc0f91134b9a5c455a717bbe47ab9173d19ba8f8",
+    "third_party/blink/renderer/modules/netinfo/network_information.cc": "eddc58e6d939e7a06df21c5261583b972b3ad64d4f4d678f375f0be009269b3c",
+    "third_party/blink/renderer/modules/notifications/notification.cc": "bb194381cd897e32c0f4d1b0fd82935507a12071fc63812063bbcb605d8f38c8",
+    "third_party/blink/renderer/modules/peerconnection/peer_connection_dependency_factory.cc": "76cf1db9bca864a4cd90099d9692512daf6bd842709a18862eb25b8c3db6a640",
+    "third_party/blink/renderer/modules/peerconnection/rtc_peer_connection.cc": "6a889cb86c39b5c79922b57532a134fdb66a3463d745ffb7ed4ff57052017fe7",
+    "third_party/blink/renderer/modules/peerconnection/rtc_peer_connection.h": "66a55dc2b3b4553db35e473498d5e79638a617c7f354f0040d987ac204d562bf",
+    "third_party/blink/renderer/modules/peerconnection/rtc_session_description_request_impl.cc": "67f333ff54cdc229d395affbc5761ba49fdc93da1cdf10e36de65960d3d5d278",
+    "third_party/blink/renderer/modules/peerconnection/rtc_session_description_request_promise_impl.cc": "30bdfa104bf38c4caa012926441dffb767e5bf4aca6767e52f6fee4cd1ec2b72",
+    "third_party/blink/renderer/modules/peerconnection/rtc_stats_report.cc": "b15f010329edb537fba4af1facc82b3de8d79d89eb43c36bc696b2645d7ecd31",
+    "third_party/blink/renderer/modules/permissions/permissions.cc": "468e92a0708804d94fa314eb134cc34b0ae50306561548d20e51db6109f1ac61",
+    "third_party/blink/renderer/modules/plugins/dom_plugin_array.cc": "6266f47166bba3aa127d0fcf05488180f185ad91c0c4999900e12cac3607c7d6",
+    "third_party/blink/renderer/modules/quota/storage_manager.cc": "8a38b816f44c7bee6b012c4fa87c7c8fa542e1ddb82d8138c521f9ea285bd68f",
+    "third_party/blink/renderer/modules/screen_details/screen_detailed.cc": "c5bf5b1662dc7cb4dd38807fbcb7e6139c2c03eb5318c31f0346fe58023b36df",
+    "third_party/blink/renderer/modules/screen_orientation/screen_orientation.cc": "eaafb41ddb9abccb937c2831b60f495327bd63af5943757944d6b2d7ea62c176",
+    "third_party/blink/renderer/modules/screen_orientation/screen_orientation_controller.cc": "42b0bc3d8566ad26d43d89fccbbd15b085443e4f2d8a023f9d1d516e3cb46645",
+    "third_party/blink/renderer/modules/speech/speech_synthesis.cc": "97e0962840ac9add696d924ed54c575223d1de4385f6bcc7d739dc8f7d927f99",
+    "third_party/blink/renderer/modules/webaudio/audio_buffer.cc": "277d7eafd3cf45548fae4ea975f086d89d370e5238ac79dd66a5dd7b4ed24329",
+    "third_party/blink/renderer/modules/webaudio/audio_buffer.h": "d13fb81a820b08895873c48639f102ac2c51cae5a4359f6550a95306cb490743",
+    "third_party/blink/renderer/modules/webaudio/audio_context.cc": "fef43e2e53f79d948e7b35c311bf190510d9fb811a43798392ded20a14a07260",
+    "third_party/blink/renderer/modules/webaudio/base_audio_context.h": "8339e4a5a12eae250e34d503b28b4b4932f099c1df1ceab927cabbfb18fd7f96",
+    "third_party/blink/renderer/modules/webaudio/realtime_analyser.cc": "e9722b9bd6fe486bafc50674d16a7365ee2ce7cf7df5cbee885618702734dc1a",
+    "third_party/blink/renderer/modules/webaudio/realtime_audio_destination_handler.cc": "a44c66fefb1f483e34fbc850cb54a075ec9785655dfc11111970c6300a4e2879",
+    "third_party/blink/renderer/modules/webgl/BUILD.gn": "06703a73943b132a0f27e7e84fac7b731a738b0d589494ad3ce27361615a2ac5",
+    "third_party/blink/renderer/modules/webgl/gpu_fingerprint.cc": "00fded38e82ed2aedbc4a288e0155d8a72b6edb3882a88b627f7f48778d7446e",
+    "third_party/blink/renderer/modules/webgl/gpu_fingerprint.h": "18e2cc4274ff9eedf01d7182fb706cc69b24298b9eb0fdc8d21247ec8ce502c1",
+    "third_party/blink/renderer/modules/webgl/gpu_info.cc": "22dc23d39a12890f05e08240f80fe88f6d5920cf7f49efcabaf8839c972bbeec",
+    "third_party/blink/renderer/modules/webgl/gpu_info.h": "9d8f94f90d9ae7bacbe33ae3ef799fc89d5186a26eb72f9708a9f62ce3b5dfdb",
+    "third_party/blink/renderer/modules/webgl/webgl2_rendering_context_base.cc": "deb80ae664d7c29af4d9a4fd2e82bec24aa1621d8c1e0f3f8faa8339ec396fc6",
+    "third_party/blink/renderer/modules/webgl/webgl_debug_shaders.cc": "344287c37c024236aff1893b8efffba44ca50db453905c26e191b160a66df945",
+    "third_party/blink/renderer/modules/webgl/webgl_object.h": "eec7abe2655c746521c165c4c5c0fec59a518e5f325802f5a3cb9c4a59bb2f4b",
+    "third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc": "178c940d873a41cab8aa9d991df32f21eace3c16525655dd45924e2ef5865d71",
+    "third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.h": "39daa6efbdb8d9011a4a94a11779d4a25a14c21fd7b7a2d2756cc3a58a11c8fe",
+    "third_party/blink/renderer/modules/webgl/webgl_uniform_location.h": "4a25422968b2b5189987d144ed6c1c06617ccac4ddd183d6bae0e0f6540d02de",
+    "third_party/blink/renderer/modules/webgpu/gpu.cc": "0b1c143f9637ec529fdff0b6f3a431bce8a4b0a92207667ee824b059408ccb4a",
+    "third_party/blink/renderer/modules/webgpu/gpu_adapter.cc": "4b741c532f066b985e097476ade7d671aad49f917b1519c360d15b656da1c782",
+    "third_party/blink/renderer/modules/webgpu/gpu_adapter_info.cc": "6c8aa3fb2acfc70581ea6a178d79f4176cad15b5c067a7309a6accfe5824a954",
+    "third_party/blink/renderer/modules/webgpu/gpu_supported_limits.cc": "cd58b0addbae40bd21528f8782f16f68466269bf21f28b7b5dc981cfebd13374",
+    "third_party/blink/renderer/platform/BUILD.gn": "e6bb1d6e5b435e9ac10310e1c162a1cf373b24c821107e52407738b497f18266",
+    "third_party/blink/renderer/platform/canvas_bridge/BUILD.gn": "d90854995020a38efef8854918fcd2c8fa64e4d19b641d811aebf2c2ed95cc93",
+    "third_party/blink/renderer/platform/canvas_bridge/canvas_bridge_client.cc": "73a93dadc4429a8573854046108067472961c4efea858080b9f2af2daad27020",
+    "third_party/blink/renderer/platform/canvas_bridge/canvas_bridge_client.h": "03c6f4320dac894453785e6c0869624db575709798e9bbdf2a31553cb22259e2",
+    "third_party/blink/renderer/platform/canvas_bridge/canvas_bridge_codec.cc": "a21a51f3c9c8b34e83765a9fc91f4c6ca27f087c72d2c1fd1aec3a88de752581",
+    "third_party/blink/renderer/platform/canvas_bridge/canvas_bridge_codec.h": "c10cf8d50a9e35ebd2f2361fafe0be67c46a70af95f088085a5eacbde544ed65",
+    "third_party/blink/renderer/platform/fonts/font_cache.cc": "3939d3cbd839039d884e0406a0ec48cb13dcee27612518b3bbc4a62d5a352ea9",
+    "third_party/blink/renderer/platform/fonts/font_metrics.cc": "d51869620058080b50b088c0efb6e77691a0ec79c832dfd6e4575d30e253d7f8",
+    "third_party/blink/renderer/platform/fonts/simple_font_data.cc": "cf18acad8c1c8d78e04f1eee2e8c940a57f19686e531e2ef77270da83a46a543",
+    "third_party/blink/renderer/platform/fonts/skia/skia_text_metrics.cc": "6cabf9c4f4a8b8cc1a5951a5f49ac15d8b1d7ae56e48c1e217390b6b1e4f2b72",
+    "third_party/blink/renderer/platform/fonts/skia/skia_text_metrics.h": "711ae0bbd5e9cd0605038e36ee73365718142c1cf8958d60950ab3ea0711e670",
+    "third_party/blink/renderer/platform/graphics/image_data_buffer.cc": "7a878ce5790ddcf1ec78a375ef065f62731eb8bda658caff217e7ab2d1dda755",
+    "third_party/blink/renderer/platform/graphics/image_data_buffer.h": "98b42517d70b7257d6d0883cfcb180dba8d49e4030d0d4ab77aee9555e74cbce",
+    "third_party/blink/renderer/platform/graphics/mailbox_texture_backing.cc": "768255b587060aa8478304a6209c0e2493e12353fc6ba1a523f946c10e0b5326",
+    "third_party/blink/renderer/platform/image-encoders/image_encoder.cc": "3e3e0f7f7b61c762e8661377d04810114a9aca9358a49d52b7474a308eb713db",
+    "third_party/blink/renderer/platform/peerconnection/fingerprint_ip.h": "26ac8fe8d0e0ef95a3068eb2666100c74c11a888783894a94f5c8cde213de697",
+    "third_party/blink/renderer/platform/peerconnection/rtc_ice_candidate_platform.cc": "140a69a18c136ee9741c695bcd184c3b02022cdbb7dbf5f07bff73c40a3025ae",
+    "third_party/blink/renderer/platform/runtime_enabled_features.json5": "6512235222d40c164848aa65c669edf901ab30c3e1fc2b509a90dc5545a42949",
+    "third_party/blink/renderer/platform/widget/widget_base.cc": "147bbc32699b3b7893e1929341ee215b365792bd5b2a886c729bf3da28161f2e",
+    "third_party/webrtc/p2p/base/port.cc": "a47ad7b96484ac66e601995afbccda9e1f38aa092557acdf44c25f6e3d746e20",
+    "third_party/webrtc/p2p/base/port.h": "948f5c4e2f7d28b83364a5d837157e62b1fc62d6c771f167fd1818c21d60f604",
+    "third_party/webrtc/p2p/base/stun_port.cc": "d650fc73fe3c73284cb16a3f3e647dd6cde481107ed896c54585341352686d29",
+    "tools/metrics/BUILD.gn": "06d828b8dba10c855516f142b621290ac9a35f503c4c40cd7cdb9ec18e363abb",
+    "v8/src/flags/flag-definitions.h": "109feb37c112899cb9d5f3c84a392174b499a01a75c056804f464ef3b236847d",
+    "v8/src/inspector/v8-runtime-agent-impl.cc": "977ba6df1e0e49f5b1e00fc140ae7d588bd3dc63a5256bba98e7cef0a807b8f0",
+    "v8/src/inspector/v8-runtime-agent-impl.h": "6bd5cfc6ac3034a90bf895577a6bd8057b5b23b1b1589b0a2b3a118242e75a18"
+  }
+}

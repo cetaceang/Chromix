@@ -107,7 +107,7 @@ index 037dead9eb725c7a5c41c9691657118b501f4bf3..c1f7a22bd8b1c215b03dc73317d76e88
  class EmptyEventListener final : public NativeEventListener {
   public:
    void Invoke(ExecutionContext* execution_context, Event*) override {}
-@@ -3898,6 +3987,7 @@
+@@ -3903,6 +3992,7 @@
  void WebViewImpl::UpdateWebPreferences(
      const blink::web_pref::WebPreferences& preferences) {
    web_preferences_ = preferences;

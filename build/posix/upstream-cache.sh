@@ -70,6 +70,16 @@ chromix_build_restored_target() {
     python3 "$REPO/tools/restored_reuse_evidence.py" --phase before "${evidence_args[@]}" || return 1
   fi
   "$CHROMIX_NINJA" -C "$OUT" -j "$jobs" "$@" || rc=$?
+  if [ "$rc" -eq 0 ] && [ "$platform" = linux ] &&
+      [ -n "${GITHUB_OUTPUT:-}" ] && [ -x "$OUT/chrome" ]; then
+    for target in "$@"; do
+      if [ "$target" = chrome ]; then
+        # Preserve compile progress independently of post-build reuse validation.
+        printf 'compiled_ready=true\n' >> "$GITHUB_OUTPUT"
+        break
+      fi
+    done
+  fi
   if [ -f "$SRC/.chromix-upstream-restored.json" ]; then
     python3 "$REPO/tools/restored_reuse_evidence.py" --phase after "${evidence_args[@]}" \
       --exit-code "$rc" || evidence_rc=$?

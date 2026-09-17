@@ -21,7 +21,7 @@ diff --git a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_c
        ph_seed_text.find_first_not_of("0123456789") == std::string::npos &&
        base::StringToUint64(ph_seed_text, &ph_seed64) && ph_seed64 != 0u) {
      // SplitMix64's finalizer folds high bits without changing legacy 32-bit seeds.
-@@ -1480,7 +1478,7 @@
+@@ -1469,7 +1467,7 @@
    }
  
    // Scale text metrics if enabled

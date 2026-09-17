@@ -12,7 +12,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import stat
 import subprocess
@@ -23,14 +22,17 @@ import time
 try:
     from . import apply_restored_patches as arp
     from . import restore_upstream_cache as restore
+    from .platform_pins import OVERRIDES, load_pins
 except ImportError:
     import apply_restored_patches as arp
     import restore_upstream_cache as restore
+    from platform_pins import OVERRIDES, load_pins
 
 READY = ".chromix-source-ready"
 # Existing preparation entry points recognize both blockers.
 TRANSACTION = ".chromix-domain-substitution-in-progress"
-PIN_FILES = ("CHROMIUM_VERSION", "build/ungoogled-revisions.psd1", "build/upstream-cache.json")
+PIN_FILES = ("CHROMIUM_VERSION", "build/ungoogled-revisions.psd1", "build/upstream-cache.json",
+             *(filename for _, filename in OVERRIDES.values()))
 SCRIPT_FILES = ("build/prepare-ungoogled.sh", "build/apply-patches.sh",
                 "tools/apply_restored_patches.py")
 PLATFORM_TOOLING = {
@@ -39,8 +41,26 @@ PLATFORM_TOOLING = {
 }
 
 
-def _same_inputs(previous: Path, repo: Path) -> None:
+def _pins(repo: Path, platform: str) -> dict:
+    for name in ("build/ungoogled-revisions.psd1", "CHROMIUM_VERSION"):
+        arp._read(repo, name)
+    filename = OVERRIDES[platform][1]
+    path = arp._path(repo, filename)
+    if path.exists():
+        arp._read(repo, filename)
+    return load_pins(repo, platform)
+
+
+def _same_inputs(previous: Path, repo: Path, platform: str = "linux") -> None:
     for name in (*PIN_FILES, *SCRIPT_FILES):
+        if name in {filename for _, filename in OVERRIDES.values()}:
+            if name != OVERRIDES[platform][1]:
+                continue
+            paths = [arp._path(root, name) for root in (previous, repo)]
+            if all(not path.exists() for path in paths):
+                continue
+            if not all(path.is_file() for path in paths):
+                raise arp.ApplyError(f"migration requires identical pins/preparation tooling: {name}")
         if arp._read(previous, name) != arp._read(repo, name):
             raise arp.ApplyError(f"migration requires identical pins/preparation tooling: {name}")
     for name in SCRIPT_FILES:
@@ -50,8 +70,7 @@ def _same_inputs(previous: Path, repo: Path) -> None:
 
 def source_ready_key(repo: Path, platform: str, arch: str) -> str:
     """Match prepare-ungoogled.sh's path-plus-content hash without running it."""
-    pins = dict(re.findall(r'^\s*(\w+) = "([^"\n]+)"',
-                           arp._read(repo, "build/ungoogled-revisions.psd1").decode(), re.M))
+    pins = _pins(repo, platform)
     names = ["build/prepare-ungoogled.sh", "build/apply-patches.sh", "patches/series"]
     names.extend(name for line in arp._read(repo, "patches/series").decode().splitlines()
                  if (name := line.split("#", 1)[0].strip()))
@@ -82,8 +101,7 @@ def _host_program(name: str, roots: tuple[Path, ...]) -> str:
 def _verify_tooling(work: Path, repo: Path, roots: tuple[Path, ...], platform: str) -> None:
     """Hash tracked files against pinned Git objects without invoking worktree filters."""
     git = _host_program("git", roots)
-    pins = dict(re.findall(r'^\s*(\w+) = "([^"\n]+)"',
-                           arp._read(repo, "build/ungoogled-revisions.psd1").decode(), re.M))
+    pins = _pins(repo, platform)
     environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
                        GIT_OPTIONAL_LOCKS="0", GIT_NO_REPLACE_OBJECTS="1", GIT_NO_LAZY_FETCH="1",
@@ -106,6 +124,7 @@ def _verify_tooling(work: Path, repo: Path, roots: tuple[Path, ...], platform: s
 
         if run("rev-parse", "HEAD").decode().strip() != commit:
             raise arp.ApplyError(f"tooling checkout does not match pins: {name}")
+        required = {"domain_regex.list", "domain_substitution.list"} if name == "ungoogled-chromium" else set()
         for entry in run("ls-tree", "-rz", "--full-tree", commit).split(b"\0"):
             if not entry:
                 continue
@@ -122,6 +141,9 @@ def _verify_tooling(work: Path, repo: Path, roots: tuple[Path, ...], platform: s
             executable = bool(arp._path(root, filename).stat().st_mode & 0o111)
             if actual != digest or executable != (mode == "100755"):
                 raise arp.ApplyError(f"pinned tooling content/mode changed: {name}/{filename}")
+            required.discard(filename)
+        if required:
+            raise arp.ApplyError(f"regex/list missing from pinned tooling: {name}: {sorted(required)}")
 
 
 def _names(patches: list, lite: dict) -> set[str]:
@@ -139,6 +161,52 @@ def _ready(src: Path, key: str) -> None:
     path = _marker(src, READY)
     if not path.is_file() or path.read_bytes().rstrip(b"\n") != key.encode():
         raise arp.ApplyError(f"previous source-ready key does not match scripts/pins/arch. {arp.CLEAN}")
+
+
+def _tooling_identity_root(identity: dict) -> Path:
+    roots = []
+    for field, filename in (("regex", "domain_regex.list"), ("list", "domain_substitution.list")):
+        entry = identity.get(field)
+        raw = entry.get("path") if isinstance(entry, dict) else None
+        if not isinstance(raw, str) or not raw.startswith("/"):
+            raise ValueError(f"invalid {field} tooling path")
+        path = Path(raw)
+        if (path.as_posix() != raw or path.parts[-3:] != ("tooling", "ungoogled-chromium", filename)
+                or len(path.parts) < 5):
+            raise ValueError(f"invalid {field} tooling root/suffix")
+        # The old host need not exist here; any existing path components must be safe.
+        arp._path(Path("/"), raw[1:])
+        roots.append(path.parents[2])
+    if roots[0] != roots[1]:
+        raise ValueError("regex/list must share one tooling root")
+    return roots[0]
+
+
+def _previous_completed(src: Path, identity: dict, names: set[str]) -> bytes:
+    """Accept only a relocation of the two POSIX tooling paths, without rewriting receipts."""
+    marker = _marker(src, arp.MARKER)
+    if not marker.exists():
+        raise arp.ApplyError("old restored patch completion manifest is missing")
+    try:
+        saved = json.loads(marker.read_bytes())
+        old = saved.get("identity") if isinstance(saved, dict) else None
+        if (not isinstance(old, dict) or type(saved.get("schema_version")) is not int
+                or saved["schema_version"] != arp.SCHEMA
+                or saved.get("identity_sha256") != arp._sha(arp._json(old))):
+            raise ValueError("invalid saved identity hash/schema")
+        _tooling_identity_root(old)
+        _tooling_identity_root(identity)
+        relocated = dict(old)
+        for field in ("regex", "list"):
+            relocated[field] = dict(old[field], path=identity[field]["path"])
+        if arp._json(relocated) != arp._json(identity):
+            raise ValueError("non-path restored patch identity changed")
+        # Reuse the strict checker for the original identity and every output, including deletions.
+        if not arp._completed(src, old, names):
+            raise ValueError("completion manifest disappeared")
+        return arp._json(saved)
+    except (ValueError, TypeError, OSError) as exc:
+        raise arp.ApplyError(f"invalid previous restored patches: {exc}. {arp.CLEAN}") from exc
 
 
 def _claim(path: Path, payload: bytes) -> None:
@@ -205,7 +273,7 @@ def migrate(workdir: Path | str, previous_repo: Path | str, repo: Path | str,
     for name in (TRANSACTION, arp.IN_PROGRESS):
         if _marker(src, name).exists():
             raise arp.ApplyError(f"in-progress/partial migration detected: {name}. {arp.CLEAN}")
-    _same_inputs(previous, repo)
+    _same_inputs(previous, repo, platform)
     old_receipt = restore.verify_restored(work, platform, arch, repo=previous)
     receipt = restore.verify_restored(work, platform, arch, repo=repo)
     if old_receipt != receipt:
@@ -218,14 +286,16 @@ def migrate(workdir: Path | str, previous_repo: Path | str, repo: Path | str,
     old_names, names = _names(old_patches, old_lite), _names(patches, lite)
     old_key, key = (source_ready_key(root, platform, arch) for root in (previous, repo))
     _ready(src, old_key)
-    if not arp._completed(src, old_identity, old_names):
-        raise arp.ApplyError("old restored patch completion manifest is missing")
+    previous_identity = _previous_completed(src, old_identity, old_names)
     before = arp._snapshot(src, old_names | names)
     markers = {name: (_marker(src, name).read_bytes(), _marker(src, name).stat())
                for name in (READY, arp.MARKER, restore.MARKER)}
     # Revalidate after taking the snapshot, before acquiring persistent blockers.
     _ready(src, old_key)
-    arp._completed(src, old_identity, old_names)
+    if _previous_completed(src, old_identity, old_names) != previous_identity:
+        raise arp.ApplyError("previous completion identity changed during validation")
+    if restore.verify_restored(work, platform, arch, repo=repo) != receipt:
+        raise arp.ApplyError("restore receipt changed during validation")
     _unchanged(src, before | markers)
     temp_root = Path(tempfile.gettempdir()).resolve()
     if any(temp_root.is_relative_to(root) for root in roots):
@@ -255,15 +325,19 @@ def migrate(workdir: Path | str, previous_repo: Path | str, repo: Path | str,
         arp.run_apply(stage, repo, core, tooling, platform, program)
         arp.run_apply(stage, repo, core, tooling, platform, program, check=True)
         after = arp._snapshot(stage, old_names | names)
-        _same_inputs(previous, repo)
+        _same_inputs(previous, repo, platform)
         _verify_tooling(work, repo, roots, platform)
         if (arp._load(previous, core, tooling, platform) != (old_identity, old_patches, old_lite)
                 or arp._load(repo, core, tooling, platform) != (identity, patches, lite)
                 or source_ready_key(previous, platform, arch) != old_key
                 or source_ready_key(repo, platform, arch) != key):
             raise arp.ApplyError("repository/tooling inputs changed during migration")
-        if restore.verify_restored(work, platform, arch, repo=repo) != receipt:
+        if (restore.verify_restored(work, platform, arch, repo=previous) != receipt
+                or restore.verify_restored(work, platform, arch, repo=repo) != receipt):
             raise arp.ApplyError("restore receipt changed during migration")
+        _tooling_identity_root(json.loads(previous_identity)["identity"])
+        _tooling_identity_root(old_identity)
+        _ready(src, old_key)
         _unchanged(src, before | markers)
         changed = [name for name in sorted(before) if before[name][0] != after[name][0]
                    or before[name][1] and after[name][1]
