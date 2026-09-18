@@ -409,8 +409,13 @@ Metadata ReadHints() {
   return metadata;
 }
 void AssertOff(const base::CommandLine& cmd) {
+  assert(cmd.GetSwitchValueASCII("fingerprint") == "off");
+  assert(!cmd.HasSwitch("fingerprint-platform"));
+  assert(cmd.GetSwitchValueASCII("uxr-fingerprint-off") == "true");
   assert(cmd.HasSwitch("uxr-webgl-real"));
+  assert(cmd.GetSwitchValueASCII("uxr-webgl-real").empty());
   assert(cmd.HasSwitch("uxr-disable-fingerprint-noise"));
+  assert(cmd.GetSwitchValueASCII("uxr-disable-fingerprint-noise").empty());
   for (const auto& [key, value] : cmd.values)
     assert(key.compare(0, 4, "uxr-") != 0 || key == "uxr-webgl-real" ||
            key == "uxr-disable-fingerprint-noise" || key == "uxr-fingerprint-off");

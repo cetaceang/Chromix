@@ -466,8 +466,10 @@ def media_control_fixture():
     return control, args, origin
 
 
+@pytest.mark.parametrize("platform", ["native", "linux", "windows"])
 @pytest.mark.parametrize("fault", [None, "crash", "pageerror", "disconnect", "external", "close"])
-def test_persistent_context_without_browser_handle_and_runtime_failures(tmp_path, monkeypatch, fault):
+def test_persistent_context_without_browser_handle_and_runtime_failures(tmp_path, monkeypatch, fault, platform):
+    spec = scenario() if platform == "native" else {**scenario("off"), "platform": platform}
     events, page_events, routes = {}, {}, {}
     network_online, network_events, offline_calls = True, [], []
     permission_calls = []
@@ -500,8 +502,14 @@ def test_persistent_context_without_browser_handle_and_runtime_failures(tmp_path
         raise AssertionError("unexpected probe")
     detached = []
     identity = {"path": "/explicit/chrome", "sha256": "a" * 64, "size": 100}
-    cdp = SimpleNamespace(send=lambda method: {"arguments": [launches[-1]["executable_path"],
-                          *launches[-1]["args"], "--user-data-dir=" + launches[-1]["user_data_dir"]]}
+    def normalized_command(launch_args, profile):
+        command = [identity["path"], *launch_args, "--user-data-dir=" + str(profile)]
+        if platform != "native":
+            command.remove("--fingerprint-platform=" + smoke.PLATFORMS[platform]["platform"])
+            command.extend(["--uxr-fingerprint-off=true", "--uxr-webgl-real", "--uxr-disable-fingerprint-noise"])
+        return command
+    cdp = SimpleNamespace(send=lambda method: {"arguments": normalized_command(
+                          launches[-1]["args"], launches[-1]["user_data_dir"])}
                           if method == "Browser.getBrowserCommandLine" else {"product": "mock"},
                           detach=lambda: detached.append(True))
     def close():
@@ -546,8 +554,8 @@ def test_persistent_context_without_browser_handle_and_runtime_failures(tmp_path
     monkeypatch.setattr(smoke, "collect_page", collect)
     monkeypatch.setattr(smoke, "evaluate", mocked_evaluate)
     profile = tmp_path / "profile"
-    first = smoke.run_scenario(playwright, scenario(), identity, server, options(), profile)
-    second = smoke.run_scenario(playwright, {**scenario(), "name": "sample-restart", "restart": 2},
+    first = smoke.run_scenario(playwright, spec, identity, server, options(), profile)
+    second = smoke.run_scenario(playwright, {**spec, "name": "sample-restart", "restart": 2},
                                 identity, server, options(), profile)
     assert first["status"] == ("passed" if fault is None else "failed"), first["failures"]
     assert second["status"] == first["status"], second["failures"]
@@ -563,10 +571,8 @@ def test_persistent_context_without_browser_handle_and_runtime_failures(tmp_path
         assert control["permissions_cleared"] is True and control["closed"] is (fault != "close")
         assert control["grant_calls"] == 1 and control["granted_permissions"] == ["camera", "microphone"]
         assert control["args"] == [*result["args"], "--use-fake-device-for-media-stream"]
-        assert result["execution"]["command_line"] == [identity["path"], *result["args"],
-                                                     "--user-data-dir=" + str(profile)]
-        assert control["execution"]["command_line"] == [identity["path"], *control["args"],
-                                                      "--user-data-dir=" + media_profiles[index]]
+        assert result["execution"]["command_line"] == normalized_command(result["args"], profile)
+        assert control["execution"]["command_line"] == normalized_command(control["args"], media_profiles[index])
         expected_checks = {"external": {"network.only_local_origin"},
                            "close": {"media.control.closed", "media.control.failures"}}.get(fault, set())
         assert failures(result["checks"]) == expected_checks
@@ -632,6 +638,147 @@ def test_identity_execution_rejects_fake_media(fake_switch):
     command = ["/explicit/chrome", *args, "--user-data-dir=/fixture/identity"]
     assert not smoke.execution_contract_errors({"command_line": command}, "/fixture/identity", args)
     assert smoke.execution_contract_errors({"command_line": [*command, fake_switch]}, "/fixture/identity", args)
+
+
+@pytest.fixture
+def stage10_execution():
+    path = ROOT / "tools/tests/fixtures/stage10_identity_execution.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def stage10_contract(sample, media):
+    spec = sample["scenario"]
+    row = spec["media_control"] if media else spec
+    return smoke.execution_contract_errors(row["execution"], row["profile"], spec["args"],
+                                           spec["profile"] if media else None)
+
+
+@pytest.mark.parametrize("media", [False, True], ids=["identity", "media"])
+def test_stage10_raw_off_execution_accepts_only_platform_removal(stage10_execution, media):
+    sample = stage10_execution
+    before = deepcopy(sample)
+    spec = sample["scenario"]
+    row = spec["media_control"] if media else spec
+    assert spec["args"] == smoke.browser_args(spec, sample["origin"], False)
+    assert [arg for arg in row["args"] if arg not in row["execution"]["command_line"]] == [
+        "--fingerprint-platform=Linux x86_64"]
+    assert sample["execution_check"]["observed"] == [
+        "unexpected, conflicting or duplicated scenario switch: fingerprint-platform",
+        "executed command line omits requested arguments"]
+    assert not stage10_contract(sample, media)
+    assert sample == before
+
+
+def test_stage10_execution_replay_does_not_fabricate_uncollected_probes(stage10_execution):
+    spec = stage10_execution["scenario"]
+    assert spec["status"] == "failed" and spec["observation"] is None
+    control = spec["media_control"]
+    checks = smoke.evaluate_media_control(control, spec["profile"], spec["args"], stage10_execution["origin"])
+    assert "media.control.executed_fake_device" not in failures(checks)
+    assert {"media.control.permission_grants", "media.control.before.camera.live",
+            "media.control.after.microphone.live", "media.control.failures"} <= failures(checks)
+    assert "matrix.all_scenarios_observed" in failures(smoke.evaluate_matrix([spec]))
+
+
+@pytest.mark.parametrize("media", [False, True], ids=["identity", "media"])
+@pytest.mark.parametrize("flag", ["--fingerprint=off", "--uxr-fingerprint-off=true",
+                                 "--uxr-webgl-real", "--uxr-disable-fingerprint-noise"])
+@pytest.mark.parametrize("fault", ["missing", "wrong", "duplicate", "conflict"])
+def test_stage10_off_markers_remain_exact_and_single(stage10_execution, media, flag, fault):
+    row = stage10_execution["scenario"]
+    if media:
+        row = row["media_control"]
+    command = row["execution"]["command_line"]
+    assert command.count(flag) == 1
+    if fault in ("missing", "wrong"):
+        command.remove(flag)
+    if fault in ("wrong", "conflict"):
+        command.append(flag.partition("=")[0] + "=false")
+    elif fault == "duplicate":
+        command.append(flag)
+    assert stage10_contract(stage10_execution, media)
+
+
+@pytest.mark.parametrize("media", [False, True], ids=["identity", "media"])
+@pytest.mark.parametrize("extra", [
+    ["--fingerprint-platform=Linux x86_64"], ["--fingerprint-platform=Win32"],
+    ["--fingerprint-platform=Linux x86_64"] * 2,
+    ["--fingerprint-platform=Linux x86_64", "--fingerprint-platform=Win32"],
+    ["--fingerprint-locale=de-DE"], ["--uxr-synthetic-device-tests=true"],
+    ["--uxr-fingerprint-enabled=true"], ["--uxr-fingerprint-seed=42"],
+    ["--uxr-platform=Linux x86_64"], ["--uxr-languages=de-DE"],
+    ["--use-fake-ui-for-media-stream=false"], ["--use-fake-device-for-media-stream"], ["--"],
+])
+def test_stage10_off_rejects_retained_platform_and_unexpected_switches(stage10_execution, media, extra):
+    row = stage10_execution["scenario"]
+    if media:
+        row = row["media_control"]
+    row["execution"]["command_line"].extend(extra)
+    assert stage10_contract(stage10_execution, media)
+
+
+@pytest.mark.parametrize("media", [False, True], ids=["identity", "media"])
+def test_stage10_off_still_requires_every_other_requested_argument(stage10_execution, media):
+    spec = stage10_execution["scenario"]
+    row = spec["media_control"] if media else spec
+    original = row["execution"]["command_line"]
+    for missing in row["args"]:
+        if missing == "--fingerprint-platform=Linux x86_64":
+            continue
+        row["execution"]["command_line"] = [arg for arg in original if arg != missing]
+        assert stage10_contract(stage10_execution, media), missing
+
+
+@pytest.mark.parametrize("media", [False, True], ids=["identity", "media"])
+@pytest.mark.parametrize("flag", ["--fingerprint=off", "--fingerprint=42",
+                                 "--fingerprint-platform=Linux x86_64", "--fingerprint-platform=Win32"])
+def test_stage10_off_rejects_duplicate_requested_scenario_switches(stage10_execution, media, flag):
+    stage10_execution["scenario"]["args"].append(flag)
+    assert stage10_contract(stage10_execution, media)
+
+
+@pytest.mark.parametrize("media", [False, True], ids=["identity", "media"])
+@pytest.mark.parametrize("platform", ["linux", "windows"])
+def test_off_platform_normalization_applies_to_both_matrix_platforms(stage10_execution, media, platform):
+    spec = stage10_execution["scenario"]
+    spec["platform"] = platform
+    spec["args"] = smoke.browser_args(spec, stage10_execution["origin"], False)
+    assert not stage10_contract(stage10_execution, media)
+
+
+@pytest.mark.parametrize("platform", ["linux", "windows"])
+@pytest.mark.parametrize("key", ["fingerprint", "fingerprint-platform", "fingerprint-locale",
+                                 "uxr-synthetic-device-tests"])
+@pytest.mark.parametrize("fault", ["missing", "wrong", "duplicate"])
+def test_on_switches_cannot_use_off_normalization(stage10_execution, platform, key, fault):
+    spec = {**stage10_execution["scenario"], "mode": "on", "platform": platform, "seed": 42}
+    args = smoke.browser_args(spec, stage10_execution["origin"], False)
+    command = ["chrome", *args, "--user-data-dir=" + spec["profile"]]
+    assert not smoke.execution_contract_errors({"command_line": command}, spec["profile"], args)
+    flag = next(arg for arg in args if arg.startswith("--" + key + "="))
+    if fault in ("missing", "wrong"):
+        command.remove(flag)
+    if fault == "wrong":
+        command.append("--" + key + "=false")
+    elif fault == "duplicate":
+        command.append(flag)
+    command.extend(["--uxr-fingerprint-off=true", "--uxr-webgl-real", "--uxr-disable-fingerprint-noise"])
+    assert smoke.execution_contract_errors({"command_line": command}, spec["profile"], args)
+
+
+@pytest.mark.parametrize("platform", ["", "linux", "Win64", "MacIntel"])
+def test_off_normalization_does_not_hide_wrong_requested_platform(stage10_execution, platform):
+    spec = stage10_execution["scenario"]
+    spec["args"][-1] = "--fingerprint-platform=" + platform
+    assert stage10_contract(stage10_execution, False)
+
+
+def test_native_execution_still_rejects_unrequested_platform(stage10_execution):
+    spec = stage10_execution["scenario"]
+    spec["args"].remove("--fingerprint-platform=Linux x86_64")
+    assert not stage10_contract(stage10_execution, False)
+    spec["execution"]["command_line"].append("--fingerprint-platform=Linux x86_64")
+    assert stage10_contract(stage10_execution, False)
 
 
 def test_execution_contract_error_survives_cdp_cleanup(monkeypatch):

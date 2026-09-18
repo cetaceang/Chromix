@@ -1052,9 +1052,25 @@ def execution_contract_errors(execution, profile, expected_args: list[str], iden
     fake = switches.get("use-fake-device-for-media-stream", [])
     if fake != ([""] if identity_profile is not None else []):
         errors.append("unexpected, missing or duplicated fake capture device switch")
-    expected = {arg[2:].partition("=")[0]: arg[2:].partition("=")[2] for arg in expected_args}
+    expected = {}
+    for arg in expected_args:
+        key, _, value = arg[2:].partition("=")
+        if key in expected and (key.startswith("fingerprint") or key.startswith("uxr-")):
+            errors.append(f"duplicated requested scenario switch: {key}")
+        expected[key] = value
+    required_args = expected_args
+    normalized_off = (expected.get("fingerprint") == "off"
+                      and expected.get("fingerprint-platform") in
+                      {value["platform"] for value in PLATFORMS.values()})
+    if normalized_off:
+        # Patch 0036 removes the off matrix's platform override before CDP reads argv.
+        platform_arg = "--fingerprint-platform=" + expected.pop("fingerprint-platform")
+        required_args = [arg for arg in expected_args if arg != platform_arg]
+        expected.update({"uxr-fingerprint-off": "true", "uxr-webgl-real": "",
+                         "uxr-disable-fingerprint-noise": ""})
     critical = {key for key in switches.keys() | expected.keys()
-                if key.startswith("fingerprint") or key == "uxr-synthetic-device-tests"}
+                if key.startswith("fingerprint") or key == "uxr-synthetic-device-tests"
+                or (normalized_off and key.startswith("uxr-"))}
     for key in sorted(critical):
         if switches.get(key, []) != ([expected[key]] if key in expected else []):
             errors.append(f"unexpected, conflicting or duplicated scenario switch: {key}")
@@ -1062,7 +1078,7 @@ def execution_contract_errors(execution, profile, expected_args: list[str], iden
     for key, values in switches.items():
         if key.startswith("uxr-") and len(set(values)) != 1:
             errors.append(f"conflicting derived scenario switch: {key}")
-    if not all(arg in command for arg in expected_args):
+    if not all(arg in command for arg in required_args):
         errors.append("executed command line omits requested arguments")
     return errors
 
