@@ -1,0 +1,15 @@
+diff --git a/third_party/blink/public/common/widget/visual_properties_mojom_traits.h b/third_party/blink/public/common/widget/visual_properties_mojom_traits.h
+--- a/third_party/blink/public/common/widget/visual_properties_mojom_traits.h
++++ b/third_party/blink/public/common/widget/visual_properties_mojom_traits.h
+@@ -21,6 +21,11 @@
+   static const display::ScreenInfos& screen_infos(
+       const blink::VisualProperties& r) {
+     return r.screen_infos;
++  }
++
++  static const std::optional<display::ScreenInfos>& emulated_screen_infos(
++      const blink::VisualProperties& r) {
++    return r.emulated_screen_infos;
+   }
+ 
+   static bool auto_resize_enabled(const blink::VisualProperties& r) {

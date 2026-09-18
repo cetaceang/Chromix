@@ -155,10 +155,7 @@ def final_normalizer(request, tmp_path_factory):
 [[maybe_unused]] constexpr const char* kProxyPacUrl = "proxy-pac-url";
 [[maybe_unused]] constexpr const char* kProxyAutoDetect = "proxy-auto-detect";
 [[maybe_unused]] constexpr const char* kForceWebRtcIPHandlingPolicy = "force-webrtc-ip-handling-policy";
-''').replace('  void AppendSwitch(const std::string& key)', '''
-  void AppendSwitchNative(const std::string& key,const std::string& value) {AppendSwitchASCII(key,value);}
-  std::string GetSwitchValueNative(const std::string& key) const {return GetSwitchValueASCII(key);}
-  void AppendSwitch(const std::string& key)''')
+''')
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(features, 'added', lambda number: original)
         patch.setattr(features, 'CPP_BASE', support)

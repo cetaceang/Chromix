@@ -102,6 +102,22 @@ class DownloadWindowsSnapshotTest(unittest.TestCase):
         self.assert_redacted(stdout.getvalue() + stderr.getvalue())
         return code, stdout.getvalue(), stderr.getvalue()
 
+    def test_stage9_manifest_preserves_exact_donor_and_artifact_identity(self):
+        self.manifest.update(head_sha='30dbab28692793fa311c82ae639186003f3a67d9',
+                             run_id=35315624638, stage=9, attempt=1, arch='x64')
+        second = zip_bytes([('tree.7z.002', 'file', b'volume-two')])
+        self.set_artifacts([self.data, second])
+        for index, identifier in enumerate((10536907942, 10536997738)):
+            self.manifest['artifacts'][index].update(id=identifier, name=f'tree-s9-attempt-1-part{index + 1}')
+        self.save_manifest()
+        self.queue(Response(self.data), Response(second))
+        self.download()
+        self.assertEqual((self.destination / 'tree.7z.001').read_bytes(), b'volume-one')
+        self.assertEqual((self.destination / 'tree.7z.002').read_bytes(), b'volume-two')
+        self.assertEqual(self.report()['status'], 'success')
+        self.assertIn('10536907942', self.requests[0].full_url)
+        self.assertIn('10536997738', self.requests[1].full_url)
+
     def test_reuses_client_and_helpers_without_modifying_posix_globals(self):
         globals_before = dict(vars(base))
         self.assertIs(snapshot.GitHub, base.GitHub)

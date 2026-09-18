@@ -160,6 +160,7 @@ concurrency:
 
 env:
   CHROMIX_BUILD_PROFILE: ${{ inputs.build_profile || 'native' }}
+  CHROMIX_WINDOWS_MIGRATION_PROFILE: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'windows-152-x64-stage9' || 'windows-152-x64-legacy-0152' }}
   CHROMIX_JOBS: ${{ inputs.compile_jobs || 'auto' }}
   # Pushes prefer the pinned cache, but its normal artifact expiry may use the
   # pinned cold-source pipeline. Explicit cache requests remain fail-closed.
@@ -191,6 +192,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
         run: |
@@ -200,6 +202,17 @@ jobs:
           if ($env:RESUME_SOURCE_SHA) {
             if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
               throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:RESUME_SOURCE_SHA -cnotin @('97f2881b0e5f43b7e9563569d92dfe702ed1df0b', '30dbab28692793fa311c82ae639186003f3a67d9')) {
+              throw 'No migration profile allows this donor SHA'
+            }
+            if ($env:RESUME_SOURCE_SHA -ceq '30dbab28692793fa311c82ae639186003f3a67d9') {
+              $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+              if ($env:RESUME_RUN_ID -cne '35315624638' -or $env:RESUME_TREE_STAGE -cne '9' -or
+                  $env:RESUME_ATTEMPT -cne '1' -or $env:CHROMIX_BUILD_PROFILE -cne 'native' -or
+                  ($artifactIds -join ',') -cne '10536907942,10536997738') {
+                throw 'Stage9 migration requires the exact native x64 run/attempt/stage/artifact set'
+              }
             }
             if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
               throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
@@ -215,7 +228,7 @@ jobs:
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: fix/issue3-resource-timing-20260916
+          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Verify native process-tree cleanup
         shell: powershell
@@ -346,6 +359,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
         run: |
@@ -355,6 +369,17 @@ jobs:
           if ($env:RESUME_SOURCE_SHA) {
             if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
               throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:RESUME_SOURCE_SHA -cnotin @('97f2881b0e5f43b7e9563569d92dfe702ed1df0b', '30dbab28692793fa311c82ae639186003f3a67d9')) {
+              throw 'No migration profile allows this donor SHA'
+            }
+            if ($env:RESUME_SOURCE_SHA -ceq '30dbab28692793fa311c82ae639186003f3a67d9') {
+              $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+              if ($env:RESUME_RUN_ID -cne '35315624638' -or $env:RESUME_TREE_STAGE -cne '9' -or
+                  $env:RESUME_ATTEMPT -cne '1' -or $env:CHROMIX_BUILD_PROFILE -cne 'native' -or
+                  ($artifactIds -join ',') -cne '10536907942,10536997738') {
+                throw 'Stage9 migration requires the exact native x64 run/attempt/stage/artifact set'
+              }
             }
             if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
               throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
@@ -370,7 +395,7 @@ jobs:
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: fix/issue3-resource-timing-20260916
+          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '2' }}
@@ -488,6 +513,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
         run: |
@@ -497,6 +523,17 @@ jobs:
           if ($env:RESUME_SOURCE_SHA) {
             if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
               throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:RESUME_SOURCE_SHA -cnotin @('97f2881b0e5f43b7e9563569d92dfe702ed1df0b', '30dbab28692793fa311c82ae639186003f3a67d9')) {
+              throw 'No migration profile allows this donor SHA'
+            }
+            if ($env:RESUME_SOURCE_SHA -ceq '30dbab28692793fa311c82ae639186003f3a67d9') {
+              $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+              if ($env:RESUME_RUN_ID -cne '35315624638' -or $env:RESUME_TREE_STAGE -cne '9' -or
+                  $env:RESUME_ATTEMPT -cne '1' -or $env:CHROMIX_BUILD_PROFILE -cne 'native' -or
+                  ($artifactIds -join ',') -cne '10536907942,10536997738') {
+                throw 'Stage9 migration requires the exact native x64 run/attempt/stage/artifact set'
+              }
             }
             if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
               throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
@@ -512,7 +549,7 @@ jobs:
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: fix/issue3-resource-timing-20260916
+          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '3' }}
@@ -630,6 +667,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
         run: |
@@ -639,6 +677,17 @@ jobs:
           if ($env:RESUME_SOURCE_SHA) {
             if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
               throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:RESUME_SOURCE_SHA -cnotin @('97f2881b0e5f43b7e9563569d92dfe702ed1df0b', '30dbab28692793fa311c82ae639186003f3a67d9')) {
+              throw 'No migration profile allows this donor SHA'
+            }
+            if ($env:RESUME_SOURCE_SHA -ceq '30dbab28692793fa311c82ae639186003f3a67d9') {
+              $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+              if ($env:RESUME_RUN_ID -cne '35315624638' -or $env:RESUME_TREE_STAGE -cne '9' -or
+                  $env:RESUME_ATTEMPT -cne '1' -or $env:CHROMIX_BUILD_PROFILE -cne 'native' -or
+                  ($artifactIds -join ',') -cne '10536907942,10536997738') {
+                throw 'Stage9 migration requires the exact native x64 run/attempt/stage/artifact set'
+              }
             }
             if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
               throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
@@ -654,7 +703,7 @@ jobs:
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: fix/issue3-resource-timing-20260916
+          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '4' }}
@@ -772,6 +821,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
         run: |
@@ -781,6 +831,17 @@ jobs:
           if ($env:RESUME_SOURCE_SHA) {
             if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
               throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:RESUME_SOURCE_SHA -cnotin @('97f2881b0e5f43b7e9563569d92dfe702ed1df0b', '30dbab28692793fa311c82ae639186003f3a67d9')) {
+              throw 'No migration profile allows this donor SHA'
+            }
+            if ($env:RESUME_SOURCE_SHA -ceq '30dbab28692793fa311c82ae639186003f3a67d9') {
+              $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+              if ($env:RESUME_RUN_ID -cne '35315624638' -or $env:RESUME_TREE_STAGE -cne '9' -or
+                  $env:RESUME_ATTEMPT -cne '1' -or $env:CHROMIX_BUILD_PROFILE -cne 'native' -or
+                  ($artifactIds -join ',') -cne '10536907942,10536997738') {
+                throw 'Stage9 migration requires the exact native x64 run/attempt/stage/artifact set'
+              }
             }
             if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
               throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
@@ -796,7 +857,7 @@ jobs:
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: fix/issue3-resource-timing-20260916
+          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '5' }}
@@ -914,6 +975,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
         run: |
@@ -923,6 +985,17 @@ jobs:
           if ($env:RESUME_SOURCE_SHA) {
             if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
               throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:RESUME_SOURCE_SHA -cnotin @('97f2881b0e5f43b7e9563569d92dfe702ed1df0b', '30dbab28692793fa311c82ae639186003f3a67d9')) {
+              throw 'No migration profile allows this donor SHA'
+            }
+            if ($env:RESUME_SOURCE_SHA -ceq '30dbab28692793fa311c82ae639186003f3a67d9') {
+              $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+              if ($env:RESUME_RUN_ID -cne '35315624638' -or $env:RESUME_TREE_STAGE -cne '9' -or
+                  $env:RESUME_ATTEMPT -cne '1' -or $env:CHROMIX_BUILD_PROFILE -cne 'native' -or
+                  ($artifactIds -join ',') -cne '10536907942,10536997738') {
+                throw 'Stage9 migration requires the exact native x64 run/attempt/stage/artifact set'
+              }
             }
             if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
               throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
@@ -938,7 +1011,7 @@ jobs:
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: fix/issue3-resource-timing-20260916
+          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '6' }}
@@ -1056,6 +1129,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
         run: |
@@ -1065,6 +1139,17 @@ jobs:
           if ($env:RESUME_SOURCE_SHA) {
             if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
               throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:RESUME_SOURCE_SHA -cnotin @('97f2881b0e5f43b7e9563569d92dfe702ed1df0b', '30dbab28692793fa311c82ae639186003f3a67d9')) {
+              throw 'No migration profile allows this donor SHA'
+            }
+            if ($env:RESUME_SOURCE_SHA -ceq '30dbab28692793fa311c82ae639186003f3a67d9') {
+              $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+              if ($env:RESUME_RUN_ID -cne '35315624638' -or $env:RESUME_TREE_STAGE -cne '9' -or
+                  $env:RESUME_ATTEMPT -cne '1' -or $env:CHROMIX_BUILD_PROFILE -cne 'native' -or
+                  ($artifactIds -join ',') -cne '10536907942,10536997738') {
+                throw 'Stage9 migration requires the exact native x64 run/attempt/stage/artifact set'
+              }
             }
             if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
               throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
@@ -1080,7 +1165,7 @@ jobs:
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: fix/issue3-resource-timing-20260916
+          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '7' }}
@@ -1198,6 +1283,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
         run: |
@@ -1207,6 +1293,17 @@ jobs:
           if ($env:RESUME_SOURCE_SHA) {
             if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
               throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:RESUME_SOURCE_SHA -cnotin @('97f2881b0e5f43b7e9563569d92dfe702ed1df0b', '30dbab28692793fa311c82ae639186003f3a67d9')) {
+              throw 'No migration profile allows this donor SHA'
+            }
+            if ($env:RESUME_SOURCE_SHA -ceq '30dbab28692793fa311c82ae639186003f3a67d9') {
+              $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+              if ($env:RESUME_RUN_ID -cne '35315624638' -or $env:RESUME_TREE_STAGE -cne '9' -or
+                  $env:RESUME_ATTEMPT -cne '1' -or $env:CHROMIX_BUILD_PROFILE -cne 'native' -or
+                  ($artifactIds -join ',') -cne '10536907942,10536997738') {
+                throw 'Stage9 migration requires the exact native x64 run/attempt/stage/artifact set'
+              }
             }
             if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
               throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
@@ -1222,7 +1319,7 @@ jobs:
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: fix/issue3-resource-timing-20260916
+          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '8' }}
@@ -1340,6 +1437,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
         run: |
@@ -1349,6 +1447,17 @@ jobs:
           if ($env:RESUME_SOURCE_SHA) {
             if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
               throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:RESUME_SOURCE_SHA -cnotin @('97f2881b0e5f43b7e9563569d92dfe702ed1df0b', '30dbab28692793fa311c82ae639186003f3a67d9')) {
+              throw 'No migration profile allows this donor SHA'
+            }
+            if ($env:RESUME_SOURCE_SHA -ceq '30dbab28692793fa311c82ae639186003f3a67d9') {
+              $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+              if ($env:RESUME_RUN_ID -cne '35315624638' -or $env:RESUME_TREE_STAGE -cne '9' -or
+                  $env:RESUME_ATTEMPT -cne '1' -or $env:CHROMIX_BUILD_PROFILE -cne 'native' -or
+                  ($artifactIds -join ',') -cne '10536907942,10536997738') {
+                throw 'Stage9 migration requires the exact native x64 run/attempt/stage/artifact set'
+              }
             }
             if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
               throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
@@ -1364,7 +1473,7 @@ jobs:
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: fix/issue3-resource-timing-20260916
+          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '9' }}
@@ -1482,6 +1591,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
         run: |
@@ -1491,6 +1601,17 @@ jobs:
           if ($env:RESUME_SOURCE_SHA) {
             if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
               throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:RESUME_SOURCE_SHA -cnotin @('97f2881b0e5f43b7e9563569d92dfe702ed1df0b', '30dbab28692793fa311c82ae639186003f3a67d9')) {
+              throw 'No migration profile allows this donor SHA'
+            }
+            if ($env:RESUME_SOURCE_SHA -ceq '30dbab28692793fa311c82ae639186003f3a67d9') {
+              $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+              if ($env:RESUME_RUN_ID -cne '35315624638' -or $env:RESUME_TREE_STAGE -cne '9' -or
+                  $env:RESUME_ATTEMPT -cne '1' -or $env:CHROMIX_BUILD_PROFILE -cne 'native' -or
+                  ($artifactIds -join ',') -cne '10536907942,10536997738') {
+                throw 'Stage9 migration requires the exact native x64 run/attempt/stage/artifact set'
+              }
             }
             if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
               throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
@@ -1506,7 +1627,7 @@ jobs:
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: fix/issue3-resource-timing-20260916
+          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '10' }}
@@ -1624,6 +1745,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
         run: |
@@ -1633,6 +1755,17 @@ jobs:
           if ($env:RESUME_SOURCE_SHA) {
             if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
               throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:RESUME_SOURCE_SHA -cnotin @('97f2881b0e5f43b7e9563569d92dfe702ed1df0b', '30dbab28692793fa311c82ae639186003f3a67d9')) {
+              throw 'No migration profile allows this donor SHA'
+            }
+            if ($env:RESUME_SOURCE_SHA -ceq '30dbab28692793fa311c82ae639186003f3a67d9') {
+              $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+              if ($env:RESUME_RUN_ID -cne '35315624638' -or $env:RESUME_TREE_STAGE -cne '9' -or
+                  $env:RESUME_ATTEMPT -cne '1' -or $env:CHROMIX_BUILD_PROFILE -cne 'native' -or
+                  ($artifactIds -join ',') -cne '10536907942,10536997738') {
+                throw 'Stage9 migration requires the exact native x64 run/attempt/stage/artifact set'
+              }
             }
             if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
               throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
@@ -1648,7 +1781,7 @@ jobs:
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: fix/issue3-resource-timing-20260916
+          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '11' }}
@@ -1766,6 +1899,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
         run: |
@@ -1775,6 +1909,17 @@ jobs:
           if ($env:RESUME_SOURCE_SHA) {
             if (-not $env:RESUME_RUN_ID -or -not $env:RESUME_TREE_STAGE) {
               throw 'Explicit migration requires resume_run_id and resume_tree_stage'
+            }
+            if ($env:RESUME_SOURCE_SHA -cnotin @('97f2881b0e5f43b7e9563569d92dfe702ed1df0b', '30dbab28692793fa311c82ae639186003f3a67d9')) {
+              throw 'No migration profile allows this donor SHA'
+            }
+            if ($env:RESUME_SOURCE_SHA -ceq '30dbab28692793fa311c82ae639186003f3a67d9') {
+              $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+              if ($env:RESUME_RUN_ID -cne '35315624638' -or $env:RESUME_TREE_STAGE -cne '9' -or
+                  $env:RESUME_ATTEMPT -cne '1' -or $env:CHROMIX_BUILD_PROFILE -cne 'native' -or
+                  ($artifactIds -join ',') -cne '10536907942,10536997738') {
+                throw 'Stage9 migration requires the exact native x64 run/attempt/stage/artifact set'
+              }
             }
             if ($env:USE_UPSTREAM_CACHE -eq 'true' -or $env:UPSTREAM_RUN_ID) {
               throw 'This migration requires the donor cold-build configuration (use_upstream_cache=false)'
@@ -1790,7 +1935,7 @@ jobs:
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: fix/issue3-resource-timing-20260916
+          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '12' }}

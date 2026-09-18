@@ -1,0 +1,11 @@
+diff --git a/third_party/blink/common/frame/frame_visual_properties_mojom_traits.cc b/third_party/blink/common/frame/frame_visual_properties_mojom_traits.cc
+--- a/third_party/blink/common/frame/frame_visual_properties_mojom_traits.cc
++++ b/third_party/blink/common/frame/frame_visual_properties_mojom_traits.cc
+@@ -15,6 +15,7 @@
+     Read(blink::mojom::FrameVisualPropertiesDataView data,
+          blink::FrameVisualProperties* out) {
+   if (!data.ReadScreenInfos(&out->screen_infos) ||
++      !data.ReadEmulatedScreenInfos(&out->emulated_screen_infos) ||
+       !data.ReadMinSizeForAutoResize(&out->min_size_for_auto_resize) ||
+       !data.ReadMaxSizeForAutoResize(&out->max_size_for_auto_resize) ||
+       !data.ReadVisibleViewportSize(&out->visible_viewport_size) ||

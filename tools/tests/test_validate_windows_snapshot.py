@@ -96,6 +96,25 @@ class SnapshotValidationTest(unittest.TestCase):
                 self.assertEqual(report['attempt'], 3)
                 self.assertIn('/actions/runs/1/attempts/3/jobs', client.calls)
 
+    def test_exact_stage9_donor_with_successful_checkpoint_after_acceptance_failure(self):
+        sha = '30dbab28692793fa311c82ae639186003f3a67d9'
+        branch = 'fix/issue3-font-resume-20260917'
+        identifiers = [10536907942, 10536997738]
+        client = Client(run_id=35315624638, stage=9, attempt=1, sha=sha)
+        client.run.update(head_branch=branch, event='workflow_dispatch')
+        client.jobs[0]['steps'].insert(0, {'name': 'Compile and acceptance', 'conclusion': 'failure'})
+        for artifact, identifier in zip(client.artifacts, identifiers):
+            artifact['id'] = identifier
+        options = dict(run_id=35315624638, stage=9, attempt=1, expected_sha=sha,
+                       expected_artifact_ids=identifiers, recovery_branch=branch)
+        report = self.validate(client, **options)
+        self.assertEqual(report['head_sha'], sha)
+        self.assertEqual(report['pattern'], 'tree-s9-attempt-1-part*')
+        for field, value in (('expected_sha', SHA), ('attempt', 2), ('stage', 8),
+                             ('expected_artifact_ids', ARTIFACT_IDS), ('recovery_branch', RECOVERY_BRANCH)):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.validate(client, **dict(options, **{field: value}))
+
     def test_one_through_four_contiguous_parts_are_valid(self):
         for count in range(1, 5):
             with self.subTest(count=count):

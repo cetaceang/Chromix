@@ -69,9 +69,14 @@ def test_independent_source_and_complete_predecessor_chains(tmp_path):
         apply(tmp_path, patch)
         core_patches.append(patch)
     applied = []
-    for name in (ROOT / 'patches/series').read_text().splitlines():
-        if not name or name.startswith('#'):
-            continue
+    names = [name for name in (ROOT / 'patches/series').read_text().splitlines()
+             if name and not name.startswith('#')]
+    # Pending clock patches are validated before the parent registers them.
+    for number in ('0193', '0194'):
+        name = str(patch_path(number).relative_to(ROOT))
+        if name not in names:
+            names.append(name)
+    for name in names:
         patch = ROOT / name
         target = re.search(r'^\+\+\+ b/(.*)$', patch.read_text(), re.M)[1]
         if target not in targets:
@@ -313,6 +318,139 @@ def test_invalid_snapshot_does_not_publish_partial_policy(backend_binary, args):
     ['uxr-pointer=fine', 'uxr-max-touch-points=10'], ['uxr-hdr=native']])
 def test_valid_snapshot(backend_binary, args):
     assert run(backend_binary, 'validate', *args) == '1 1'
+
+
+ANIMATION_SUPPORT = r'''
+#include "base/uxr_config.h"
+#include <cassert>
+#include <compare>
+#include <cstdint>
+#include <limits>
+#include <string>
+#define DCHECK_GE(a, b) assert((a) >= (b))
+namespace base {
+struct TimeDelta {
+  int64_t value = 0;
+  int64_t InMicroseconds() const { return value; }
+  TimeDelta operator%(TimeDelta other) const { return {value % other.value}; }
+};
+TimeDelta Microseconds(int64_t value) { return {value}; }
+struct TimeTicks {
+  int64_t value = 0;
+  TimeDelta since_origin() const { return {value}; }
+  auto operator<=>(const TimeTicks&) const = default;
+  TimeTicks operator+(TimeDelta delta) const { return {value + delta.value}; }
+  TimeTicks operator-(TimeDelta delta) const { return {value - delta.value}; }
+  TimeDelta operator-(TimeTicks other) const { return {value - other.value}; }
+};
+struct TickClock { TimeTicks now; TimeTicks NowTicks() const { return now; } };
+}
+namespace blink {
+constexpr base::TimeDelta kApproximateFrameTime{16666};
+struct AnimationClock {
+  base::TimeTicks time_;
+  bool can_dynamically_update_time_ = false;
+  base::TickClock* clock_;
+  unsigned task_for_which_time_was_calculated_ = std::numeric_limits<unsigned>::max();
+  static unsigned currently_running_task_;
+  void UpdateTime(base::TimeTicks);
+  base::TimeTicks CurrentTime();
+};
+unsigned AnimationClock::currently_running_task_ = 0;
+struct Timing {
+  base::TimeTicks reference;
+  base::TimeTicks ReferenceMonotonicTime() const { return reference; }
+  Timing& GetTiming() { return *this; }
+};
+struct Document { Timing* loader; Timing* Loader() { return loader; } };
+struct DocumentTimeline {
+  Document* document_;
+  base::TimeDelta origin_time_;
+  base::TimeTicks zero_time_;
+  bool zero_time_initialized_ = false;
+  base::TimeTicks CalculateZeroTime();
+};
+'''
+
+
+@pytest.fixture(scope='module')
+def animation_binary(tmp_path_factory, backend_binary):
+    code = ANIMATION_SUPPORT
+    for signature in ('void AnimationClock::UpdateTime(', 'base::TimeTicks AnimationClock::CurrentTime()',
+                      'base::TimeTicks DocumentTimeline::CalculateZeroTime()'):
+        code += EVIDENCE['methods'][signature]['text'] + '\n'
+    code += r'''
+}
+int main(int argc, char** argv) {
+  assert(argc == 2);
+  auto& config = base::UxrConfig::GetInstance();
+  assert(config.SetAll({{"uxr-timer-resolution", argv[1]}}));
+  const int64_t quantum = config.TimerResolutionMicroseconds();
+  const auto q = [&](int64_t value) { return config.QuantizeClockMicroseconds(value); };
+  for (int64_t origin : {INT64_C(999996), INT64_C(1000003), INT64_C(1700000000000003)}) {
+    blink::Timing loader{{origin}};
+    blink::Document document{&loader};
+    blink::DocumentTimeline timeline{&document, {}, {}, false};
+    const auto zero = timeline.CalculateZeroTime();
+    assert(zero.value == q(origin));
+    loader.reference.value += 12345;
+    assert(timeline.CalculateZeroTime() == zero);
+    base::TickClock ticks{{origin}};
+    blink::AnimationClock clock{{}, false, &ticks};
+    int64_t previous = 0;
+    for (int i = 0; i < 300; ++i) {
+      const int64_t frame = origin + 288996 + i * 16666;
+      // PageAnimator adds the clamped frame delta to CalculateZeroTime().
+      clock.can_dynamically_update_time_ = false;
+      clock.UpdateTime(zero + base::Microseconds(q(frame - zero.value)));
+      const auto delivered = clock.CurrentTime();
+      const int64_t raf = delivered.value - zero.value;
+      assert(raf >= previous);
+      if (quantum) {
+        assert(raf % quantum == 0);
+        assert(delivered.value == q(frame));
+        assert(raf == q(frame) - q(origin));
+      } else {
+        assert(delivered.value == frame);
+      }
+      ticks.now.value = frame + 20000;
+      clock.can_dynamically_update_time_ = true;
+      assert(clock.CurrentTime() == delivered);
+      ++blink::AnimationClock::currently_running_task_;
+      const auto advanced = clock.CurrentTime();
+      const auto predicted = ticks.now.value - (ticks.now.value - delivered.value) % 16666;
+      assert(advanced.value == q(predicted));
+      assert(advanced >= delivered);
+      if (quantum) assert((advanced.value - zero.value) % quantum == 0);
+      assert(advanced.value <= q(ticks.now.value));
+      ticks.now.value += 100000;
+      assert(clock.CurrentTime() == advanced);
+      clock.UpdateTime({frame - 100000});
+      assert(clock.CurrentTime() == advanced);
+      clock.can_dynamically_update_time_ = false;
+      ++blink::AnimationClock::currently_running_task_;
+      assert(clock.CurrentTime() == advanced);
+      previous = raf;
+    }
+    blink::DocumentTimeline shifted{&document, {1234}, {}, false};
+    assert(shifted.CalculateZeroTime().value == q(loader.reference.value) + 1234);
+  }
+}
+'''
+    directory = tmp_path_factory.mktemp('animation-clock')
+    source = directory / 'clock.cc'
+    source.write_text(code, encoding='utf-8')
+    binary = directory / 'clock'
+    result = subprocess.run([CXX, '-std=c++20', '-Wall', '-Wextra', '-Werror', *sanitizer_flags(),
+        '-I', str(backend_binary.parent), str(backend_binary.parent / 'base/uxr_config.cc'), str(source),
+        '-o', str(binary)], capture_output=True, text=True, timeout=90)
+    assert result.returncode == 0, result.stdout + result.stderr
+    return binary
+
+
+@pytest.mark.parametrize('resolution', [0, 1, 7, 11, 1000])
+def test_animation_frames_dynamic_updates_and_origin_share_monotone_grid(animation_binary, resolution):
+    run(animation_binary, str(resolution))
 
 
 def test_clock_policy_is_immutable_under_concurrent_reads(backend_binary):

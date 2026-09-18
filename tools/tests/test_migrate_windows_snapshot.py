@@ -69,7 +69,9 @@ class Fixture:
         put(self.core, "utils/domain_substitution.py", "raise RuntimeError('never execute donor Python')\n")
         script = put(self.core, "utils/prepare.sh", "#!/bin/sh\nexit 99\n")
         script.chmod(0o755)
+        put(self.core, "flags.gn", "# fixture core flags\n")
         core_sha = commit(self.core)
+        put(self.tooling, "flags.windows.gn", "# fixture platform flags\n")
         put(self.tooling, "domain_substitution.list", migration.SOURCE + "\n")
         put(self.tooling, "revision.txt", "1\n")
         put(self.tooling, "download.py", "raise RuntimeError('never execute donor Python')\n")
@@ -86,6 +88,7 @@ class Fixture:
         pins = pins.replace("e71b91c6e336d0f25cfc6b9ef09298a9d2506e24", core_sha)
         pins = pins.replace("333bc7dfff72ff4abc4d9cc76bc41de300a46e06", platform_sha)
         put(self.previous, "build/ungoogled-revisions.psd1", pins)
+        put(self.previous, "build/args.windows.gn", 'target_cpu = "x64"\ntarget_os = "win"\n')
         put(self.previous, "assets/fixture.dat", b"untouched asset\x00")
         put(self.previous, LITE, "lite payload\n")
         put(self.previous, "patches/series", "patches/0001-other.patch\n" + migration.PATCH + "\n")
@@ -405,10 +408,13 @@ def test_failures_keep_recognized_blocker_and_never_touch_caches(fx, monkeypatch
                                       "repo", "asset-extra", "tooling", "unknown-progress"])
 def test_concurrent_changes_fail_closed(fx, monkeypatch, mutation):
     apply = migration._apply
+    injected = False
 
     def change(*args, **kwargs):
+        nonlocal injected
         result = apply(*args, **kwargs)
-        if not kwargs["reverse"]:
+        if not kwargs["reverse"] and not injected:
+            injected = True
             if mutation.startswith("source-"):
                 path = fx.src / migration.SOURCE
                 if mutation == "source-content":
@@ -584,6 +590,10 @@ def test_actual_old_and_current_0152_roundtrip_on_hunk_complete_preimage(fx, tmp
     assert b"FromUtf8" in after and b".empty()" in after
     assert result["changed_files"] == [migration.SOURCE]
     assert result["new_verification"]["status"] == "verified"
+    fx.monkeypatch.setattr(migration, "LEGACY_PATCH_KEYS", {result["previous_key"].rsplit("|", 1)[1]})
+    migration._receipt_provenance(result, result["key"], result["new_verification"],
+        {"prior_targets": {result["target_sha"]}}, migration._capture(fx.src, [migration.SOURCE]),
+        fx.core, fx.tooling, after)
 
 
 def test_false_git_replacement_cannot_forge_expected_head(fx):
@@ -676,3 +686,389 @@ def test_blocker_contract_is_already_recognized_without_prepare_changes():
         assert '-Directory -Filter ".chromix-upstream-restore-*"' in script
     assert migration.BLOCKER.startswith(".chromix-upstream-restore-")
     assert migration.DONOR_SHA == "97f2881b0e5f43b7e9563569d92dfe702ed1df0b"
+
+
+CANVAS_PATCH = "patches/0031-third_party-blink-renderer-platform-graphics-image_data_buffer-cc.patch"
+MAIN_PATCH = "patches/0036-chrome-app-chrome_main-fingerprint-normalize.patch"
+CLOCK_PATCH = "patches/0175-blink-clock-quantization.patch"
+CANVAS = migration.STAGE9_PATCH_TARGETS[CANVAS_PATCH][0]
+MAIN = migration.STAGE9_PATCH_TARGETS[MAIN_PATCH][0]
+CLOCK = migration.STAGE9_PATCH_TARGETS[CLOCK_PATCH][0]
+ANIMATION = "third_party/blink/renderer/core/animation/animation_clock.cc"
+TIMELINE = "third_party/blink/renderer/core/animation/document_timeline.cc"
+OVERLAY_PATCH = "patches/0099-fixture-overlay.patch"
+
+
+@pytest.fixture
+def stage9(fx, monkeypatch):
+    old_series = (fx.previous / "patches/series").read_bytes()
+    extra = {
+        CANVAS_PATCH: patch(CANVAS, "canvas base", "canvas old"),
+        MAIN_PATCH: patch(MAIN, "main base", "main old"),
+        CLOCK_PATCH: patch(CLOCK, "clock base", "clock old"),
+        OVERLAY_PATCH: (f"diff --git a/{CANVAS} b/{CANVAS}\n--- a/{CANVAS}\n+++ b/{CANVAS}\n"
+                        "@@ -3,3 +3,3 @@\n-tail\n+overlay\n more\n end\n").encode(),
+    }
+    for root in (fx.previous, fx.repo):
+        for name, data in extra.items():
+            put(root, name, data)
+        put(root, "patches/series", old_series + "".join(name + "\n" for name in extra).encode())
+    fx.repin()
+    commit(fx.repo)
+    for name, value in ((CANVAS, "canvas old"), (MAIN, "main old"), (CLOCK, "clock old"),
+                        (ANIMATION, "animation base"), (TIMELINE, "timeline base")):
+        put(fx.src, name, f"context\n{value}\ntail\n")
+    put(fx.src, CANVAS, "context\ncanvas old\noverlay\nmore\nend\n")
+    monkeypatch.setattr(migration, "LEGACY_PATCH_SHA256", hashlib.sha256((fx.previous / migration.PATCH).read_bytes()).hexdigest())
+    monkeypatch.setattr(migration, "LEGACY_PATCH_KEYS", {migration.patch_set_key(fx.previous)})
+    monkeypatch.setattr(migration, "LEGACY_SOURCE_REPLACEMENTS", ((b"old blocked.test\n", b"new blocked.test\n"),))
+    fx.prior = fx.run()
+    put(fx.src, "out/Chromix/args.gn", migration.merge_gn_args.GENERATED_HEADER + '\ntarget_cpu = "x64"\ntarget_os = "win"\n')
+    # Match the historical receipt schema, which predates explicit profiles.
+    for name in ("profile", "changed_patches", "source_changes"):
+        fx.prior.pop(name)
+    put(fx.src, migration.RECEIPT, migration.arp._json(fx.prior))
+    fx.previous = fx.repo
+    fx.sha = git(fx.previous, "rev-parse", "HEAD").decode().strip()
+    fx.repo = fx.root / "stage9-target"
+    shutil.copytree(fx.previous, fx.repo)
+    monkeypatch.setattr(migration, "TRUSTED_REPO", fx.repo)
+    targets = dict(migration.STAGE9_PATCH_TARGETS, **{CLOCK_PATCH: (CLOCK, ANIMATION, TIMELINE)})
+    profile = dict(migration.MIGRATION_PROFILES[migration.STAGE9_PROFILE], donor_sha=fx.sha,
+                   prior_targets={fx.prior["target_sha"]}, patch_targets=targets, allowed_series_patches=(),
+                   prior_receipt_sha256=hashlib.sha256((fx.src / migration.RECEIPT).read_bytes()).hexdigest())
+    monkeypatch.setitem(migration.MIGRATION_PROFILES, migration.STAGE9_PROFILE, profile)
+    put(fx.repo, CANVAS_PATCH, patch(CANVAS, "canvas base", "canvas new"))
+    put(fx.repo, MAIN_PATCH, patch(MAIN, "main base", "main new"))
+    put(fx.repo, CLOCK_PATCH, extra[CLOCK_PATCH] + patch(ANIMATION, "animation base", "animation new")
+        + patch(TIMELINE, "timeline base", "timeline new"))
+    return fx
+
+
+def run_stage9(fx, **kwargs):
+    return fx.run(profile=migration.STAGE9_PROFILE, **kwargs)
+
+
+@pytest.mark.parametrize("crlf", [False, True])
+def test_stage9_full_old_and_new_stacks_preserve_prior_receipt_and_net_unchanged_files(stage9, crlf):
+    if crlf:
+        for name in (CANVAS, MAIN, CLOCK, ANIMATION, TIMELINE):
+            path = stage9.src / name
+            path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+        receipt = stage9.prior
+        for report in (receipt["old_verification"], receipt["new_verification"]):
+            for name in (CANVAS, MAIN, CLOCK):
+                report["outputs"][name] = hashlib.sha256((stage9.src / name).read_bytes()).hexdigest()
+        put(stage9.src, migration.RECEIPT, migration.arp._json(receipt))
+        migration.MIGRATION_PROFILES[migration.STAGE9_PROFILE]["prior_receipt_sha256"] = hashlib.sha256(
+            (stage9.src / migration.RECEIPT).read_bytes()).hexdigest()
+    before = snapshot(stage9.work)
+    report = run_stage9(stage9)
+    assert report["profile"] == migration.STAGE9_PROFILE
+    assert report["previous_sha"] == stage9.sha
+    assert report["prior_receipt"] == stage9.prior
+    assert report["prior_receipt_sha256"] == hashlib.sha256(before["src/" + migration.RECEIPT][0]).hexdigest()
+    assert report["changed_files"] == sorted([CANVAS, MAIN, ANIMATION, TIMELINE])
+    assert report["changed_patches"] == sorted([CANVAS_PATCH, MAIN_PATCH, CLOCK_PATCH])
+    assert report["old_verification"]["patch_count"] == report["new_verification"]["patch_count"] == 6
+    assert report["key"] == migration.source_ready_key(stage9.repo)
+    after = snapshot(stage9.work)
+    changed = {"src/" + name for name in report["changed_files"] + [migration.READY, migration.PATCH_MARKER, migration.RECEIPT]}
+    assert set(before) == set(after)
+    for name, value in before.items():
+        if name not in changed:
+            assert after[name] == value, name
+    for change in report["source_changes"]:
+        assert change["after_mtime_ns"] >= change["before_mtime_ns"] + 1_000_000_000
+    assert b"canvas new" in (stage9.src / CANVAS).read_bytes()
+    assert b"overlay" in (stage9.src / CANVAS).read_bytes()
+    with pytest.raises(migration.arp.ApplyError, match="explicit repeat"):
+        run_stage9(stage9)
+    assert snapshot(stage9.work) == after
+
+
+@pytest.mark.parametrize("field,value", [
+    ("previous_sha", "0" * 40), ("target_sha", "0" * 40), ("version", "151.0.0.0"),
+    ("arch", "arm64"), ("platform", "linux"), ("operation", "arbitrary"),
+    ("schema_version", True), ("status", "verified"), ("previous_key", "forged"),
+    ("key", "forged"), ("changed_files", [OTHER]), ("patch_count", 5),
+    ("profile", "other"), ("prior_receipt", {}),
+])
+def test_stage9_rejects_prior_receipt_identity_tampering(stage9, field, value):
+    receipt = stage9.prior
+    receipt[field] = value
+    put(stage9.src, migration.RECEIPT, migration.arp._json(receipt))
+    before = snapshot(stage9.work)
+    with pytest.raises(migration.arp.ApplyError, match="provenance"):
+        migration._receipt_provenance(receipt, migration.source_ready_key(stage9.previous),
+            migration._verify(stage9.src, stage9.previous, stage9.core, stage9.tooling),
+            migration.MIGRATION_PROFILES[migration.STAGE9_PROFILE],
+            migration._capture(stage9.src, [migration.SOURCE]), stage9.core, stage9.tooling,
+            (stage9.src / migration.SOURCE).read_bytes())
+    with pytest.raises(migration.arp.ApplyError, match="provenance"):
+        run_stage9(stage9)
+    assert snapshot(stage9.work) == before
+
+
+@pytest.mark.parametrize("mutation", ["missing", "empty", "null", "duplicate", "invalid", "identity", "legacy-identity",
+    "new-output", "old-output", "proof", "path", "before", "after", "diff", "mtime", "forged-transition", "tool-path"])
+def test_stage9_rejects_prior_receipt_provenance_tampering(stage9, mutation):
+    receipt = stage9.prior
+    if mutation == "identity":
+        receipt["identity"]["series"]["sha256"] = "0" * 64
+    elif mutation == "legacy-identity":
+        receipt["previous_identity"]["series"]["patches"][-1]["sha256"] = "0" * 64
+    elif mutation in ("new-output", "old-output"):
+        receipt[("new" if mutation == "new-output" else "old") + "_verification"]["outputs"][OTHER] = "0" * 64
+    elif mutation == "proof":
+        receipt["old_verification"]["method"] = "trust-markers"
+    elif mutation == "tool-path":
+        receipt["identity"]["regex"]["path"] = "/untrusted/domain_regex.list"
+    elif mutation in ("path", "before", "after", "diff", "mtime", "forged-transition"):
+        change = receipt["source_change"]
+        if mutation == "path":
+            change["path"] = OTHER
+        elif mutation in ("before", "forged-transition"):
+            change["before_sha256"] = "0" * 64
+            if mutation == "forged-transition":
+                receipt["old_verification"]["outputs"][migration.SOURCE] = "0" * 64
+        elif mutation == "after":
+            change["after_sha256"] = "0" * 64
+        elif mutation == "diff":
+            change["diff"] += "forged\n"
+        else:
+            change["after_mtime_ns"] = change["before_mtime_ns"]
+    put(stage9.src, migration.RECEIPT, migration.arp._json(receipt))
+    path = stage9.src / migration.RECEIPT
+    if mutation == "missing":
+        path.unlink()
+    elif mutation in ("empty", "null", "duplicate", "invalid"):
+        path.write_text({"empty": "{}", "null": "null", "duplicate": '{"status":1,"status":2}', "invalid": "not JSON"}[mutation])
+    before = snapshot(stage9.work)
+    with pytest.raises(migration.arp.ApplyError, match="receipt|provenance"):
+        run_stage9(stage9)
+    assert snapshot(stage9.work) == before
+    if mutation not in ("missing", "empty", "null", "duplicate", "invalid"):
+        with pytest.raises(migration.arp.ApplyError, match="provenance|tooling paths"):
+            migration._receipt_provenance(receipt, migration.source_ready_key(stage9.previous),
+                migration._verify(stage9.src, stage9.previous, stage9.core, stage9.tooling),
+                migration.MIGRATION_PROFILES[migration.STAGE9_PROFILE],
+                migration._capture(stage9.src, [migration.SOURCE]), stage9.core, stage9.tooling,
+                (stage9.src / migration.SOURCE).read_bytes())
+
+
+@pytest.mark.parametrize("mutation", ["other-patch", "0152", "target", "cache", "series", "series-comment", "input", "asset",
+    "lite", "extra-patch", "source", "source-outside-hunk", "marker", "donor", "donor-head", "non-native", "gn", "new-target"])
+def test_stage9_rejects_unlisted_inputs_sources_and_markers(stage9, monkeypatch, mutation):
+    if mutation in ("other-patch", "0152"):
+        put(stage9.repo, migration.PATCH if mutation == "0152" else "patches/0001-other.patch", patch())
+    elif mutation in ("target", "cache"):
+        put(stage9.repo, CANVAS_PATCH, patch(OTHER if mutation == "target" else "out/Chromix/obj/cached.obj"))
+    elif mutation.startswith("series"):
+        path = stage9.repo / "patches/series"
+        put(stage9.repo, "patches/series", path.read_bytes() + (b"# changed\n" if mutation == "series-comment" else b"patches/unknown.patch\n"))
+    elif mutation in ("input", "asset", "lite", "extra-patch"):
+        name = {"input": "build/windows/prepare-ungoogled.ps1", "asset": "assets/fixture.dat", "lite": LITE,
+                "extra-patch": "patches/unlisted.patch"}[mutation]
+        put(stage9.repo, name, "changed")
+    elif mutation.startswith("source"):
+        path = stage9.src / CANVAS
+        path.write_bytes(b"unrecognized\n" if mutation == "source" else path.read_bytes() + b"// outside hunks\n")
+    elif mutation == "marker":
+        put(stage9.src, migration.READY, "forged")
+    elif mutation == "donor":
+        put(stage9.previous, MAIN_PATCH, "forged")
+    elif mutation == "donor-head":
+        put(stage9.previous, "unrelated", "changed")
+        commit(stage9.previous)
+    elif mutation == "gn":
+        path = stage9.src / "out/Chromix/args.gn"
+        path.write_bytes(path.read_bytes() + b"thin_lto_enable_optimizations = false\n")
+    elif mutation == "non-native":
+        monkeypatch.setenv("CHROMIX_BUILD_PROFILE", "fast")
+    else:
+        put(stage9.repo, CLOCK_PATCH, patch(CLOCK, "clock base", "clock new") + patch(OTHER))
+    before = snapshot(stage9.work)
+    with pytest.raises((migration.arp.ApplyError, ValueError)):
+        run_stage9(stage9)
+    assert snapshot(stage9.work) == before
+
+
+@pytest.mark.parametrize("point", ["candidate", "second-publish", "marker", "receipt"])
+def test_stage9_failure_keeps_blocker_prior_receipt_and_caches(stage9, monkeypatch, point):
+    before = snapshot(stage9.work)
+    if point == "candidate":
+        verify = migration._verify
+
+        def fail(src, repo, *args):
+            if repo == stage9.repo and src != stage9.src:
+                raise ValueError("injected candidate failure")
+            return verify(src, repo, *args)
+
+        monkeypatch.setattr(migration, "_verify", fail)
+    else:
+        write = migration._write
+        target = {"second-publish": ANIMATION, "marker": migration.READY, "receipt": migration.RECEIPT}[point]
+
+        def fail(path, *args, **kwargs):
+            if path == stage9.src / target:
+                raise OSError("injected publication failure")
+            return write(path, *args, **kwargs)
+
+        monkeypatch.setattr(migration, "_write", fail)
+    with pytest.raises((OSError, ValueError), match="injected"):
+        run_stage9(stage9)
+    assert (stage9.work / migration.BLOCKER).is_dir()
+    assert (stage9.src / migration.RECEIPT).read_bytes() == before["src/" + migration.RECEIPT][0]
+    after = snapshot(stage9.work)
+    for name, value in before.items():
+        if name.startswith("src/out/") or name.startswith("download_cache/"):
+            assert after[name] == value
+    with pytest.raises(migration.arp.ApplyError, match="in-progress"):
+        run_stage9(stage9)
+
+
+def test_stage9_receipt_cannot_change_during_scratch(stage9, monkeypatch):
+    apply = migration._apply
+
+    def change(*args, **kwargs):
+        result = apply(*args, **kwargs)
+        put(stage9.src, migration.RECEIPT, "{}")
+        return result
+
+    monkeypatch.setattr(migration, "_apply", change)
+    with pytest.raises(migration.arp.ApplyError, match="receipt.*concurrent"):
+        run_stage9(stage9)
+    assert (stage9.work / migration.BLOCKER).is_dir()
+
+
+def test_profiles_are_closed_and_do_not_auto_select_by_sha(fx, monkeypatch):
+    assert set(migration.MIGRATION_PROFILES) == {migration.LEGACY_PROFILE, migration.STAGE9_PROFILE}
+    assert migration.PATCH not in migration.STAGE9_ALLOWED_PATCHES
+    assert len(migration.STAGE9_ALLOWED_PATCHES) == 26
+    assert len(migration.STAGE9_ALLOWED_SERIES_PATCHES) == 17
+    assert all(len(targets) == 1 for targets in migration.STAGE9_PATCH_TARGETS.values())
+    assert migration.MIGRATION_PROFILES[migration.STAGE9_PROFILE]["prior_targets"] == {
+        "3bf77f6ca83d4f7a5041bc1b671effca9aa83a20"}
+    assert migration.STAGE9_PATCH_TARGETS[CLOCK_PATCH] == (CLOCK,)
+    assert migration.MIGRATION_PROFILES[migration.STAGE9_PROFILE]["donor_sha"] == "30dbab28692793fa311c82ae639186003f3a67d9"
+    with pytest.raises(migration.arp.ApplyError, match="unsupported.*profile"):
+        fx.run(profile="arbitrary")
+    with pytest.raises(migration.arp.ApplyError, match="fixed supported donor"):
+        fx.run(sha=migration.STAGE9_DONOR_SHA)
+    monkeypatch.setenv("CHROMIX_WINDOWS_MIGRATION_PROFILE", "arbitrary")
+    with pytest.raises(migration.arp.ApplyError, match="unsupported.*profile"):
+        fx.run()
+
+
+def test_profile_can_only_append_explicit_series_additions(stage9, monkeypatch):
+    name = "patches/0192-fixture.patch"
+    profile = dict(migration.MIGRATION_PROFILES[migration.STAGE9_PROFILE])
+    profile["allowed_series_patches"] = (name,)
+    profile["allowed_patches"] = profile["allowed_patches"] | {name}
+    profile["patch_targets"] = dict(profile["patch_targets"], **{name: (OTHER,)})
+    monkeypatch.setitem(migration.MIGRATION_PROFILES, migration.STAGE9_PROFILE, profile)
+    put(stage9.repo, name, patch(OTHER, "other patched", "other revised"))
+    path = stage9.repo / "patches/series"
+    path.write_bytes(path.read_bytes() + (name + "\n").encode())
+    commit(stage9.repo)
+    result = run_stage9(stage9)
+    assert name in result["changed_patches"]
+    assert OTHER in result["changed_files"]
+    assert result["new_verification"]["patch_count"] == 7
+
+
+@pytest.mark.parametrize("series", [["b", "a", "c"], ["a", "c", "b"], ["a", "b"], ["a", "b", "c", "d"]])
+def test_series_allowlist_does_not_allow_reorder_omit_or_extra(series):
+    with pytest.raises(migration.arp.ApplyError, match="series"):
+        migration._series_additions(["a", "b"], series, ("c",))
+
+
+@pytest.mark.parametrize("mutation", ["valid", "reorder", "comment", "missing", "extra", "multifile", "executable"])
+def test_final_stage9_append_inventory_is_exact(stage9, monkeypatch, mutation):
+    additions = migration.STAGE9_ALLOWED_SERIES_PATCHES
+    profile = dict(migration.MIGRATION_PROFILES[migration.STAGE9_PROFILE], allowed_series_patches=additions)
+    monkeypatch.setitem(migration.MIGRATION_PROFILES, migration.STAGE9_PROFILE, profile)
+    put(stage9.repo, CLOCK_PATCH, (stage9.previous / CLOCK_PATCH).read_bytes())
+    for name in additions:
+        target, = migration.STAGE9_PATCH_TARGETS[name]
+        old = "animation base" if target == ANIMATION else "timeline base" if target == TIMELINE else "append base"
+        put(stage9.src, target, f"context\n{old}\ntail\n")
+        put(stage9.repo, name, patch(target, old, "append revised"))
+    old = (stage9.previous / "patches/series").read_bytes()
+    series = old + "".join(name + "\n" for name in additions).encode()
+    if mutation == "reorder":
+        series = old + "".join(name + "\n" for name in reversed(additions)).encode()
+    elif mutation == "comment":
+        series = old + b"# not an exact append\n" + series[len(old):]
+    elif mutation == "missing":
+        series = old + "".join(name + "\n" for name in additions[:-1]).encode()
+    elif mutation == "extra":
+        name = "patches/0209-not-approved.patch"
+        put(stage9.repo, name, patch(OTHER))
+        series += (name + "\n").encode()
+    elif mutation == "multifile":
+        path = stage9.repo / additions[0]
+        path.write_bytes(path.read_bytes() + patch(OTHER))
+    elif mutation == "executable":
+        (stage9.repo / additions[0]).chmod(0o755)
+    put(stage9.repo, "patches/series", series)
+    commit(stage9.repo)
+    before = snapshot(stage9.work)
+    if mutation == "valid":
+        report = run_stage9(stage9)
+        assert set(additions).issubset(report["changed_patches"])
+        assert report["new_verification"]["patch_count"] == 23
+    else:
+        with pytest.raises(migration.arp.ApplyError):
+            run_stage9(stage9)
+        assert snapshot(stage9.work) == before
+
+
+@pytest.mark.parametrize("semantic_change", [False, True])
+def test_context_only_patch_allows_relocation_but_not_edits(stage9, monkeypatch, semantic_change):
+    profile = dict(migration.MIGRATION_PROFILES[migration.STAGE9_PROFILE],
+                   context_only_patches=frozenset({MAIN_PATCH}))
+    monkeypatch.setitem(migration.MIGRATION_PROFILES, migration.STAGE9_PROFILE, profile)
+    raw = (stage9.previous / MAIN_PATCH).read_bytes().replace(b"@@ -1,3 +1,3 @@", b"@@ -2,3 +2,3 @@")
+    if semantic_change:
+        raw = raw.replace(b"+main old", b"+main revised")
+    put(stage9.repo, MAIN_PATCH, raw)
+    before = snapshot(stage9.work)
+    if semantic_change:
+        with pytest.raises(migration.arp.ApplyError, match="only context relocation"):
+            run_stage9(stage9)
+        assert snapshot(stage9.work) == before
+    else:
+        report = run_stage9(stage9)
+        assert MAIN_PATCH in report["changed_patches"]
+        assert MAIN not in report["changed_files"]
+        assert snapshot(stage9.work)["src/" + MAIN] == before["src/" + MAIN]
+
+
+def test_hunk_lines_resembling_headers_are_semantic_edits():
+    raw = patch(old="-- old", new="++ new")
+    assert migration._patch_edits(raw) == [b"--- old\n", b"+++ new\n"]
+
+
+def test_untracked_root_cache_cannot_change_preparation_inventory(stage9):
+    for root in (stage9.repo, stage9.previous):
+        put(root, ".cache/patch-preimages/source.cc", "non-input cache")
+    assert run_stage9(stage9)["status"] == "migrated"
+
+
+def test_cache_inside_preparation_tree_is_not_silently_ignored(stage9):
+    put(stage9.repo, "patches/.cache/unlisted.patch", "unexpected input")
+    before = snapshot(stage9.work)
+    with pytest.raises(migration.arp.ApplyError, match="preparation input"):
+        run_stage9(stage9)
+    assert snapshot(stage9.work) == before
+
+
+def test_stage9_receipt_bytes_are_pinned_not_just_parsed(stage9):
+    path = stage9.src / migration.RECEIPT
+    path.write_bytes(path.read_bytes() + b"\n")
+    before = snapshot(stage9.work)
+    with pytest.raises(migration.arp.ApplyError, match="provenance digest"):
+        run_stage9(stage9)
+    assert snapshot(stage9.work) == before

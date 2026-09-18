@@ -1,0 +1,33 @@
+diff --git a/content/browser/renderer_host/render_widget_host_impl.cc b/content/browser/renderer_host/render_widget_host_impl.cc
+--- a/content/browser/renderer_host/render_widget_host_impl.cc
++++ b/content/browser/renderer_host/render_widget_host_impl.cc
+@@ -1163,6 +1163,8 @@
+ 
+     // These properties come from the top-level main frame's renderer. The
+     // top-level main frame in the browser doesn't specify a value.
++    visual_properties.emulated_screen_infos =
++        properties_from_parent_local_root_.emulated_screen_infos;
+     visual_properties.page_scale_factor =
+         properties_from_parent_local_root_.page_scale_factor;
+     visual_properties.is_pinch_gesture_active =
+@@ -2547,7 +2549,10 @@
+     bool is_pinch_gesture_active,
+     const gfx::Size& visible_viewport_size,
+     const gfx::Rect& compositor_viewport,
+-    std::vector<gfx::Rect> root_widget_viewport_segments) {
++    std::vector<gfx::Rect> root_widget_viewport_segments,
++    const std::optional<display::ScreenInfos>& emulated_screen_infos) {
++  properties_from_parent_local_root_.emulated_screen_infos =
++      emulated_screen_infos;
+   properties_from_parent_local_root_.page_scale_factor = page_scale_factor;
+   properties_from_parent_local_root_.compositing_scale_factor =
+       compositing_scale_factor;
+@@ -3252,6 +3257,8 @@
+   return zoom_changed || size_changed || parent_local_surface_id_changed ||
+          old_visual_properties->screen_infos !=
+              new_visual_properties.screen_infos ||
++         old_visual_properties->emulated_screen_infos !=
++             new_visual_properties.emulated_screen_infos ||
+          old_visual_properties->compositor_viewport_pixel_rect !=
+              new_visual_properties.compositor_viewport_pixel_rect ||
+          old_visual_properties->is_fullscreen_granted !=

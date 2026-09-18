@@ -121,9 +121,88 @@ def test_getters_no_longer_override_native_layout():
     assert 'ForTopMostMainFrame() && !uxr_display_initialized_' in widget
     assert 'display.enabled() && !AutoResizeMode() && !DeviceEmulator()' in widget
     assert 'last_web_exposed_screen_infos_' in widget
-    assert 'remote_frame->DidChangeScreenInfos(web_screen_infos)' in widget
+    assert 'remote_frame->DidChangeScreenInfos(original_screen_infos,' in widget
+    assert 'emulated_screen_infos);' in widget
     assert 'current.is_extended = false' in screen
     assert 'EnableDeviceEmulation(params,' in widget
+
+
+DISPLAY_TRANSPORT_NUMBERS = ('0192', *(f'{number:04d}' for number in range(195, 209)))
+
+
+def display_transport_patches():
+    return [next((ROOT / 'patches').glob(number + '-*.patch'))
+            for number in DISPLAY_TRANSPORT_NUMBERS]
+
+
+def test_native_and_emulated_display_transport_contract():
+    transport_patches = display_transport_patches()
+    assert all(path.read_text().count('diff --git ') == 1 for path in transport_patches)
+    patch = ''.join(path.read_text() for path in transport_patches)
+    widget = (ROOT / 'patches/0126-display-widget-initialization.patch').read_text()
+    remote = (ROOT / 'patches/0128-display-oopif-initialization.patch').read_text()
+    assert patch.count('+      !data.ReadEmulatedScreenInfos(&out->emulated_screen_infos) ||') == 2
+    assert patch.count('+  display.mojom.ScreenInfos? emulated_screen_infos;') == 2
+    assert '+         emulated_screen_infos == other.emulated_screen_infos &&' in patch
+    assert '+      sent_visual_properties_->emulated_screen_infos !=' in patch
+    assert '+         old_visual_properties->emulated_screen_infos !=' in patch
+    assert 'properties_from_parent_local_root_.emulated_screen_infos' in patch
+    assert 'visual_properties.emulated_screen_infos);' in patch
+    assert 'visual_properties.screen_infos = ancestor_widget->GetOriginalScreenInfos();' in remote
+    assert 'ancestor_widget->GetEmulatedScreenInfos();' in remote
+    assert 'inherited_emulated_screen_infos_ = visual_properties.emulated_screen_infos;' in widget
+    assert 'SetCompositorDeviceScaleFactorOverride(' in widget
+    assert '? GetOriginalScreenInfo().device_scale_factor' in widget
+    assert '!ForSubframe() || !View()->MainFrameImpl()' in widget
+    effective_widget = '\n'.join(line[1:] for line in widget.splitlines()
+                                 if line.startswith((' ', '+')) and not line.startswith('+++'))
+    assert effective_widget.index('  device_emulator_ = nullptr;') < effective_widget.index('    emulator->DisableAndApply();')
+    for name in ('EmulatedScreenPreservesNativeLayoutAndInputScale',
+                 'EmulatedScreenMojoRoundTripAndClear',
+                 'EmulatedScreenInitialNestedPropagationAndClear'):
+        assert name in patch
+    assert 'check(300, 150, 1.25f, 1.f);' in patch
+    regressions = (ROOT / 'patches/0208-display-native-emulated-regressions.patch').read_text()
+    assert regressions.count('+  WebView().EnableDeviceEmulation(params);') == 3
+    assert '+  WebView().DisableDeviceEmulation();' in regressions
+    assert '+  widget->EnableDeviceEmulation(' not in regressions
+
+
+def test_complete_display_stack_exact_apply_reverse(tmp_path):
+    import hashlib
+    import re
+    baseline = os.environ.get('CHROMIX_DISPLAY_BASELINE_ROOT')
+    if not baseline:
+        pytest.skip('exact Chromium 152.0.7977.82 source root is required')
+    numbers = ('0125', '0126', '0127', '0128', *DISPLAY_TRANSPORT_NUMBERS)
+    patches = [next((ROOT / 'patches').glob(number + '-*.patch')) for number in numbers]
+    targets = {p for patch in patches for p in re.findall(r'^\+\+\+ b/(.+)$', patch.read_text(), re.M)}
+    originals = {}
+    for relative in targets:
+        original = Path(baseline) / relative
+        assert original.is_file(), relative
+        originals[relative] = (original.read_bytes(), original.stat().st_mtime_ns)
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(originals[relative][0])
+    assert hashlib.sha256(originals['third_party/blink/renderer/core/frame/web_frame_widget_impl.cc'][0]).hexdigest() == (
+        '34a84b9210fcedad78b63a533e4e620868da0ea60d4230099914f06549539c05')
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
+    for reverse, ordered in ((False, patches), (True, list(reversed(patches)))):
+        for patch in ordered:
+            command = ['git', 'apply', '--verbose', '--whitespace=error']
+            if reverse:
+                command.append('--reverse')
+            result = subprocess.run([*command, str(patch)], cwd=tmp_path, text=True, capture_output=True)
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert 'offset' not in result.stderr and 'fuzz' not in result.stderr
+        if not reverse:
+            for relative, (data, _) in originals.items():
+                assert (tmp_path / relative).read_bytes() != data
+    for relative, (data, timestamp) in originals.items():
+        assert (tmp_path / relative).read_bytes() == data
+        original = Path(baseline) / relative
+        assert original.read_bytes() == data and original.stat().st_mtime_ns == timestamp
 
 
 @pytest.mark.parametrize('number,relative', [

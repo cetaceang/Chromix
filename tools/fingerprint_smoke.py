@@ -1031,11 +1031,22 @@ def execution_contract_errors(execution, profile, expected_args: list[str], iden
             key, _, value = arg.lstrip("-").partition("=")
             switches.setdefault(key, []).append(value)
     errors = []
-    expected_profile = str(Path(profile).resolve())
-    if switches.get("user-data-dir") != [expected_profile]:
+    expected_profile = None
+    actual_profiles = switches.get("user-data-dir", [])
+    try:
+        expected_profile = Path(profile).resolve()
+        profile_matches = (len(actual_profiles) == 1 and bool(actual_profiles[0])
+                           and Path(actual_profiles[0]).resolve() == expected_profile)
+    except (OSError, ValueError, RuntimeError):
+        profile_matches = False
+    if not profile_matches:
         errors.append("executed user-data-dir differs from the canonical profile or is duplicated")
-    if identity_profile is not None and expected_profile == str(Path(identity_profile).resolve()):
-        errors.append("media control reuses the identity profile")
+    if identity_profile is not None:
+        try:
+            if expected_profile == Path(identity_profile).resolve():
+                errors.append("media control reuses the identity profile")
+        except (OSError, ValueError, RuntimeError):
+            errors.append("cannot canonicalize the identity profile")
     if "use-fake-ui-for-media-stream" in switches:
         errors.append("fake media UI is forbidden")
     fake = switches.get("use-fake-device-for-media-stream", [])
@@ -1176,6 +1187,7 @@ def evaluate_matrix(scenarios: list[dict]) -> list:
 
 
 def verify_execution(cdp, identity: dict, sandbox: bool) -> dict:
+    failed = False
     try:
         version = cdp.send("Browser.getVersion")
         command = cdp.send("Browser.getBrowserCommandLine")["arguments"]
@@ -1188,8 +1200,15 @@ def verify_execution(cdp, identity: dict, sandbox: bool) -> dict:
             raise SmokeError("browser unexpectedly launched without the sandbox")
         return {"binary": actual, "command_line": command, "version": version,
                 "source": "CDP Browser.getBrowserCommandLine (not OS process attestation)"}
+    except BaseException:
+        failed = True
+        raise
     finally:
-        cdp.detach()
+        try:
+            cdp.detach()
+        except Exception:
+            if not failed:
+                raise
 
 
 def evaluate(target, script: str, argument, timeout_ms: int):

@@ -517,12 +517,12 @@ int main(int argc, char** argv) {
         Equal(buffer->GetPixmap(), noise ? readback.pixmap() : original.pixmap());
         if (!noise) assert(buffer->GetPixmap().addr() == original.storage.data());
         assert(original.storage == before);
-        // The upstream image constructor already converts non-unpremul images.
-        // Keep that native conversion, without an extra no-noise copy.
+        // Opaque image readback retains the encoder's RGB selection.
         conversions = allocation_count = raster_count = 0;
         auto sync = ImageDataBuffer::Create(original.image()); assert(sync);
-        Equal(sync->GetPixmap(), readback.pixmap());
-        assert(conversions == 1);
+        Equal(sync->GetPixmap(), !noise && at == kOpaque_SkAlphaType
+                                    ? original.pixmap() : readback.pixmap());
+        assert(conversions == (noise && at == kOpaque_SkAlphaType ? 2 : 1));
         assert(allocation_count == (noise ? 2 : 1) && raster_count == (noise ? 2 : 1));
         assert(original.storage == before);
         for (int y = 0; y < 3; ++y) for (size_t x = original.info.minRowBytes(); x < original.row; ++x)

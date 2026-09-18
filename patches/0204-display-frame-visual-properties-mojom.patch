@@ -1,0 +1,13 @@
+diff --git a/third_party/blink/public/mojom/frame/frame_visual_properties.mojom b/third_party/blink/public/mojom/frame/frame_visual_properties.mojom
+--- a/third_party/blink/public/mojom/frame/frame_visual_properties.mojom
++++ b/third_party/blink/public/mojom/frame/frame_visual_properties.mojom
+@@ -13,6 +13,9 @@
+ struct FrameVisualProperties {
+   // Information about the screens (dpi, depth, etc..).
+   display.mojom.ScreenInfos screen_infos;
++
++  // Web-exposed state only, never a coordinate conversion scale.
++  display.mojom.ScreenInfos? emulated_screen_infos;
+ 
+   // Whether or not blink should be in auto-resize mode.
+   bool auto_resize_enabled;

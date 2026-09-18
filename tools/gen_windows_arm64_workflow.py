@@ -40,6 +40,7 @@ def workflow():
         'tools/tests/test_windows_arm64_build.py',
         'tools/tests/test_verify_windows_bundle.py',
     ]
+    result['env'].pop('CHROMIX_WINDOWS_MIGRATION_PROFILE', None)
     result['env'].update(CHROMIX_TARGET_ARCH='arm64', CHROMIX_USE_UPSTREAM_CACHE='0',
                          CHROMIX_PREFER_UPSTREAM_CACHE='0')
     for index in range(1, 13):

@@ -153,6 +153,50 @@ def decode(encoded, mime, *, lossless_webp=False):
                 **({'lossless_webp':structure} if structure is not None else {})}
 
 
+def export_evidence_errors(item, kind, *, raw_payloads=False):
+    errors = []
+    if item.get('repeat') is not True:
+        errors.append('Blob repeat mismatch')
+    if kind == 'html' and item.get('urlMatches') is not True:
+        errors.append('DataURL repeat/Blob mismatch')
+    if not raw_payloads:
+        return errors
+
+    def raw(value):
+        if not isinstance(value, str) or not value or len(value) > 1400000:
+            raise ValueError('invalid export payload text')
+        decoded = base64.b64decode(value, validate=True)
+        if not decoded or len(decoded) > 1024 * 1024:
+            raise ValueError('invalid export payload size')
+        if base64.b64encode(decoded).decode('ascii') != value:
+            raise ValueError('noncanonical export payload')
+        return decoded
+
+    try:
+        blob, repeated = raw(item.get('bytes')), raw(item.get('repeatBytes'))
+        if blob != repeated or item.get('repeat') is not (blob == repeated):
+            errors.append('Blob repeat payload mismatch')
+        if kind == 'html':
+            urls = [item.get('dataURL'), item.get('repeatDataURL')]
+            prefix = 'data:' + item['type'] + ';base64,'
+            if any(not isinstance(url, str) or not url.startswith(prefix) for url in urls):
+                raise ValueError('DataURL MIME/payload missing')
+            payloads = [raw(url[len(prefix):]) for url in urls]
+            same_url, same_blob = urls[0] == urls[1], payloads[0] == blob
+            if not same_url or item.get('urlRepeat') is not same_url:
+                errors.append('DataURL repeat payload mismatch')
+            if not same_blob or item.get('urlBlobMatches') is not same_blob:
+                errors.append('DataURL/Blob payload mismatch')
+            if item.get('urlMatches') is not (same_url and same_blob):
+                errors.append('DataURL combined evidence mismatch')
+        elif any(field not in item or item[field] is not None for field in
+                 ('dataURL', 'repeatDataURL', 'urlRepeat', 'urlBlobMatches', 'urlMatches')):
+            errors.append('OffscreenCanvas must not claim DataURL evidence')
+    except (ValueError, KeyError, TypeError) as error:
+        errors.append(str(error))
+    return errors
+
+
 def evaluate(observation, *, require_taint=True, check_cross_context=True):
     errors, comparisons, skipped = [], [], []
     if not isinstance(observation, dict):
@@ -160,9 +204,10 @@ def evaluate(observation, *, require_taint=True, check_cross_context=True):
     for scope in SCOPES:
         value = observation.get(scope, {})
         try:
-            if type(value.get('version')) is not int or value['version'] not in (1, 2) or value.get('errors') != []:
+            if type(value.get('version')) is not int or value['version'] not in (1, 2, 3) or value.get('errors') != []:
                 raise ValueError('probe failed: ' + str(value.get('errors')))
-            codec_v2 = value['version'] == 2
+            codec_v2 = value['version'] >= 2
+            raw_payloads = value['version'] >= 3
             kinds = ('html', 'offscreen') if scope in ('window', 'iframe') else ('offscreen',)
             expected = {f'{kind}/{space}/{str(alpha).lower()}' for kind in kinds
                         for space in ('srgb', 'display-p3') for alpha in (True, False)}
@@ -236,8 +281,8 @@ def evaluate(observation, *, require_taint=True, check_cross_context=True):
                     raise ValueError('missing codec matrix')
                 for item in encoded:
                     mime = item['type']
-                    if item.get('repeat') is not True or (row['kind'] == 'html' and item.get('urlMatches') is not True):
-                        errors.append(label + '/' + mime + ': unstable or mismatched exports')
+                    errors.extend(label + '/' + mime + ': ' + error for error in
+                                  export_evidence_errors(item, row['kind'], raw_payloads=raw_payloads))
                     jpeg = mime == 'image/jpeg'
                     if codec_v2 and item.get('quality') != 0.92:
                         raise ValueError(label + ': incorrect export quality')
@@ -274,10 +319,10 @@ def evaluate(observation, *, require_taint=True, check_cross_context=True):
                             ('full-quality', [item['fullQuality'] for item in encoded[1:]], reference, row['srgb'], 1),
                             ('quality', quality['exports'], quality['reference'], quality['srgb'], 0.92)):
                         for mime, item in zip(('image/jpeg', 'image/webp'), items):
-                            if (item.get('type') != mime or item.get('quality') != expected_quality or
-                                    item.get('repeat') is not True or
-                                    (row['kind'] == 'html' and item.get('urlMatches') is not True)):
+                            if item.get('type') != mime or item.get('quality') != expected_quality:
                                 raise ValueError(label + ': invalid ' + name + ' export')
+                            errors.extend(label + '/' + name + '/' + mime + ': ' + error for error in
+                                          export_evidence_errors(item, row['kind'], raw_payloads=raw_payloads))
                             jpeg = mime == 'image/jpeg'
                             check(name + '/' + mime + '/browser', item['decodedSrgb'] if jpeg else item['decoded'],
                                   srgb if jpeg else ref, lossy=True, jpeg=jpeg, category='codec-source')

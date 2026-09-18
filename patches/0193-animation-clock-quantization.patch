@@ -1,0 +1,25 @@
+diff --git a/third_party/blink/renderer/core/animation/animation_clock.cc b/third_party/blink/renderer/core/animation/animation_clock.cc
+--- a/third_party/blink/renderer/core/animation/animation_clock.cc
++++ b/third_party/blink/renderer/core/animation/animation_clock.cc
+@@ -32,6 +32,8 @@
+ 
+ #include <math.h>
+ 
++#include "base/uxr_config.h"
++
+ namespace blink {
+ 
+ namespace {
+@@ -44,6 +46,12 @@
+ 
+ void AnimationClock::UpdateTime(base::TimeTicks time) {
+   task_for_which_time_was_calculated_ = currently_running_task_;
++  // Both frame delivery and dynamic prediction must use the same grid.
++  const auto& config = base::UxrConfig::GetInstance();
++  if (config.TimerResolutionMicroseconds() > 0) {
++    time = base::TimeTicks() + base::Microseconds(
++        config.QuantizeClockMicroseconds(time.since_origin().InMicroseconds()));
++  }
+ 
+   // TODO(crbug.com/985770): Change this to a DCHECK_GE(time, time_) when
+   // VR no longer sends historical timestamps.

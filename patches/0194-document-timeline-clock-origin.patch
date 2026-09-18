@@ -1,0 +1,28 @@
+diff --git a/third_party/blink/renderer/core/animation/document_timeline.cc b/third_party/blink/renderer/core/animation/document_timeline.cc
+--- a/third_party/blink/renderer/core/animation/document_timeline.cc
++++ b/third_party/blink/renderer/core/animation/document_timeline.cc
+@@ -30,6 +30,7 @@
+ 
+ #include "third_party/blink/renderer/core/animation/document_timeline.h"
+ 
++#include "base/uxr_config.h"
+ #include "cc/animation/animation_id_provider.h"
+ #include "third_party/blink/public/platform/platform.h"
+ #include "third_party/blink/renderer/bindings/core/v8/v8_document_timeline_options.h"
+@@ -150,7 +151,14 @@
+ base::TimeTicks DocumentTimeline::CalculateZeroTime() {
+   if (!zero_time_initialized_ && document_->Loader()) {
+-    zero_time_ = document_->Loader()->GetTiming().ReferenceMonotonicTime() +
+-                 origin_time_;
++    auto reference = document_->Loader()->GetTiming().ReferenceMonotonicTime();
++    const auto& config = base::UxrConfig::GetInstance();
++    if (config.TimerResolutionMicroseconds() > 0) {
++      // Match Performance's separately clamped absolute time and origin.
++      reference = base::TimeTicks() + base::Microseconds(
++          config.QuantizeClockMicroseconds(
++              reference.since_origin().InMicroseconds()));
++    }
++    zero_time_ = reference + origin_time_;
+     zero_time_initialized_ = true;
+   }
+   return zero_time_;

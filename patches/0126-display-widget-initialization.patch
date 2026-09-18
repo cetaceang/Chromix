@@ -10,10 +10,37 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
  
  #include <algorithm>
  #include <memory>
-@@ -2072,6 +2074,34 @@
+@@ -1935,6 +1937,7 @@
+ 
+ void WebFrameWidgetImpl::UpdateVisualProperties(
+     const VisualProperties& properties) {
++  const uint64_t update_sequence = ++visual_properties_update_sequence_;
+   VisualProperties visual_properties(properties);
+   if (browser_controls_top_height_override_) {
+     visual_properties.browser_controls_params.top_controls_height =
+@@ -1987,7 +1990,14 @@
+   }
+ 
+   gfx::Size old_visible_viewport_size = widget_base_->VisibleViewportSize();
+-  ApplyVisualPropertiesSizing(visual_properties);
++  if (!ApplyVisualPropertiesSizing(visual_properties)) {
++    ++visual_properties_update_sequence_;
++    return;
++  }
++  if (!widget_base_ || widget_base_->WillBeDestroyed() || !local_root_ ||
++      visual_properties_update_sequence_ != update_sequence) {
++    return;
++  }
+ 
+   if (old_visible_viewport_size != widget_base_->VisibleViewportSize()) {
+     ForEachLocalFrameControlledByWidget(
+@@ -2072,10 +2082,39 @@
        }
      }
    }
+-}
+-
+-void WebFrameWidgetImpl::ApplyVisualPropertiesSizing(
 +  // Configure the existing emulation backend once, after native widget sizing.
 +  // Subsequent resize/zoom events flow through its normal visual-properties
 +  // path. Fixed view_size intentionally stays fixed until a CDP update.
@@ -42,21 +69,227 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
 +      EnableDeviceEmulation(params, mojom::blink::DeviceEmulationCacheBehavior::kClearCache);
 +    }
 +  }
- }
- 
- void WebFrameWidgetImpl::ApplyVisualPropertiesSizing(
-@@ -5439,16 +5469,24 @@
-     View()->CancelPagePopup();
++}
++
++bool WebFrameWidgetImpl::ApplyVisualPropertiesSizing(
+     const VisualProperties& visual_properties) {
++  const uint64_t initial_sequence = screen_update_sequence_;
+   gfx::Rect new_compositor_viewport_pixel_rect =
+       visual_properties.compositor_viewport_pixel_rect;
+   gfx::Size new_size;
+@@ -2090,15 +2129,24 @@
+         device_scale_factor_for_testing_ / non_testing_device_scale_factor_);
    }
  
-+  // DOM screen state and OOPIF visual properties must follow the same effective
-+  // backend, including emulation. Keep the original compositor screen above
-+  // for native popup/scale handling, not for web-exposed display lists/events.
++  if (!ForTopMostMainFrame()) {
++    inherited_emulated_screen_infos_ = visual_properties.emulated_screen_infos;
++  } else {
++    inherited_emulated_screen_infos_.reset();
++  }
++
+   if (ForMainFrame()) {
+     if (size_ != new_size) {
+       // Only hide popups when the size changes. Eg https://crbug.com/761908.
+       View()->CancelPagePopup();
++      if (!IsScreenUpdateCurrent(initial_sequence)) {
++        return false;
++      }
+     }
+ 
+     if (DeviceEmulator() && widget_base_ && !widget_base_->WillBeDestroyed()) {
+       DeviceEmulator()->UpdateVisualProperties(visual_properties);
+-      return;
++      return IsScreenUpdateCurrent(initial_sequence + 2);
+     }
+ 
+     if (AutoResizeMode()) {
+@@ -2110,9 +2158,13 @@
+ 
+   SetViewportSegments(visual_properties.root_widget_viewport_segments);
+ 
++  const uint64_t update_sequence = screen_update_sequence_ + 1;
+   widget_base_->UpdateSurfaceAndScreenInfo(
+       visual_properties.local_surface_id.value_or(viz::LocalSurfaceId()),
+       new_compositor_viewport_pixel_rect, visual_properties.screen_infos);
++  if (!IsScreenUpdateCurrent(update_sequence)) {
++    return false;
++  }
+ 
+   // Store this even when auto-resizing, it is the size of the full viewport
+   // used for clipping, and this value is propagated down the Widget
+@@ -2133,6 +2185,9 @@
+           visual_properties.browser_controls_params);
+     }
+ 
++    if (!IsScreenUpdateCurrent(update_sequence)) {
++      return false;
++    }
+     LocalRootImpl()->GetFrame()->UpdateWindowControlsOverlay(
+         visual_properties.window_controls_overlay_rect);
+ 
+@@ -2149,8 +2204,12 @@
+       View()->Resize(widget_base_->VisibleViewportSize());
+     }
+ 
++    if (!IsScreenUpdateCurrent(update_sequence)) {
++      return false;
++    }
+     Resize(new_size);
+   }
++  return IsScreenUpdateCurrent(update_sequence);
+ }
+ 
+ bool WebFrameWidgetImpl::DidChangeFullscreenState(
+@@ -2411,8 +2470,14 @@
+   // Remote viewports are only applicable to local frames with remote ancestors.
+   DCHECK(ForSubframe() || !LocalRootImpl()->GetFrame()->IsOutermostMainFrame());
+ 
+-  if (visual_properties.has_value())
++  if (visual_properties.has_value()) {
++    const uint64_t visual_sequence = visual_properties_update_sequence_ + 1;
+     UpdateVisualProperties(visual_properties.value());
++    if (!widget_base_ || widget_base_->WillBeDestroyed() || !local_root_ ||
++        visual_properties_update_sequence_ != visual_sequence) {
++      return;
++    }
++  }
+   ApplyViewportIntersection(std::move(intersection_state));
+ }
+ 
+@@ -2457,10 +2522,11 @@
+ }
+ 
+ void WebFrameWidgetImpl::DisableDeviceEmulation() {
+-  if (device_emulator_ && widget_base_ && !widget_base_->WillBeDestroyed()) {
+-    device_emulator_->DisableAndApply();
+-  }
++  Persistent<ScreenMetricsEmulator> emulator(device_emulator_.Get());
+   device_emulator_ = nullptr;
++  if (emulator && widget_base_ && !widget_base_->WillBeDestroyed()) {
++    emulator->DisableAndApply();
++  }
+ }
+ 
+ void WebFrameWidgetImpl::SetIsInertForSubFrame(bool inert) {
+@@ -2718,6 +2784,7 @@
+                             ->widget_base_.get()
+                       : nullptr);
+ 
++  last_orientation_screen_info_ = GetScreenInfo();
+   probe::DidInitializeFrameWidget(local_root_->GetFrame());
+   local_root_->GetFrame()->NotifyFrameWidgetCreated();
+ 
+@@ -3629,6 +3696,11 @@
+       new_local_surface_id, compositor_viewport_pixel_rect, new_screen_infos);
+ }
+ 
++bool WebFrameWidgetImpl::IsScreenUpdateCurrent(uint64_t sequence) const {
++  return widget_base_ && !widget_base_->WillBeDestroyed() && local_root_ &&
++         local_root_->GetFrame() && screen_update_sequence_ == sequence;
++}
++
+ void WebFrameWidgetImpl::UpdateScreenInfo(
+     const display::ScreenInfos& new_screen_infos) {
+   widget_base_->UpdateScreenInfo(new_screen_infos);
+@@ -3647,11 +3719,23 @@
+ }
+ 
+ const display::ScreenInfo& WebFrameWidgetImpl::GetScreenInfo() {
+-  return widget_base_->GetScreenInfo();
++  return GetScreenInfos().current();
+ }
+ 
+ const display::ScreenInfos& WebFrameWidgetImpl::GetScreenInfos() {
++  if (!device_emulator_ && inherited_emulated_screen_infos_) {
++    return *inherited_emulated_screen_infos_;
++  }
+   return widget_base_->screen_infos();
++}
++
++std::optional<display::ScreenInfos>
++WebFrameWidgetImpl::GetEmulatedScreenInfos() {
++  if ((device_emulator_ && !widget_base_->WillBeDestroyed()) ||
++      inherited_emulated_screen_infos_) {
++    return GetScreenInfos();
++  }
++  return std::nullopt;
+ }
+ 
+ const display::ScreenInfo& WebFrameWidgetImpl::GetOriginalScreenInfo() {
+@@ -5227,7 +5311,13 @@
+   // Emulation happens on regular main frames which don't use auto-resize mode.
+   DCHECK(!AutoResizeMode());
+ 
++  const uint64_t update_sequence = screen_update_sequence_;
++  const uint64_t visual_sequence = visual_properties_update_sequence_;
+   UpdateScreenInfo(screen_infos);
++  if (!IsScreenUpdateCurrent(update_sequence + 1) ||
++      visual_properties_update_sequence_ != visual_sequence) {
++    return;
++  }
+   widget_base_->SetVisibleViewportSize(visible_viewport_size);
+   Resize(widget_base_->DIPsToCeiledBlinkSpace(widget_size_in_dips));
+ }
+@@ -5410,14 +5500,39 @@
+ #endif  // BUILDFLAG(IS_WIN)
+ 
+ void WebFrameWidgetImpl::OrientationChanged() {
+-  local_root_->SendOrientationChangeEvent();
++  if (!widget_base_ || widget_base_->WillBeDestroyed() || !local_root_) {
++    return;
++  }
++  const display::ScreenInfo screen_info = GetScreenInfo();
++  const bool changed = last_orientation_screen_info_ &&
++      (last_orientation_screen_info_->orientation_type !=
++           screen_info.orientation_type ||
++       last_orientation_screen_info_->orientation_angle !=
++           screen_info.orientation_angle);
++  last_orientation_screen_info_ = screen_info;
++  if (changed) {
++    local_root_->SendOrientationChangeEvent();
++  }
+ }
+ 
+ void WebFrameWidgetImpl::DidUpdateSurfaceAndScreen(
+     const display::ScreenInfos& previous_original_screen_infos) {
+-  display::ScreenInfo screen_info = widget_base_->GetScreenInfo();
+-  View()->SetZoomFactorForDeviceScaleFactor(screen_info.device_scale_factor,
+-                                            screen_info.text_scale_multiplier);
++  const uint64_t update_sequence = ++screen_update_sequence_;
++  if (!IsScreenUpdateCurrent(update_sequence)) {
++    return;
++  }
++  // A local main frame owns the shared WebView state, including A(B(A)).
++  if (!ForSubframe() || !View()->MainFrameImpl()) {
++    if (!device_emulator_) {
++      View()->SetCompositorDeviceScaleFactorOverride(
++          inherited_emulated_screen_infos_
++              ? GetOriginalScreenInfo().device_scale_factor
++              : 0.f);
++    }
++    const display::ScreenInfo& screen_info = GetScreenInfo();
++    View()->SetZoomFactorForDeviceScaleFactor(
++        screen_info.device_scale_factor, screen_info.text_scale_multiplier);
++  }
+ 
+   if (ShouldAutoDetermineCompositingToLCDTextSetting()) {
+     // This causes compositing state to be modified which dirties the
+@@ -5437,49 +5552,74 @@
+   if (previous_original_screen_infos.current().device_scale_factor !=
+       original_screen_infos.current().device_scale_factor) {
+     View()->CancelPagePopup();
+-  }
++    if (!IsScreenUpdateCurrent(update_sequence)) {
++      return;
++    }
++  }
++
++  // Web screen state is independent of native compositor and input geometry.
 +  const display::ScreenInfos web_screen_infos = GetScreenInfos();
 +  const display::ScreenInfos previous_web_screen_infos =
 +      last_web_exposed_screen_infos_.value_or(previous_original_screen_infos);
 +  last_web_exposed_screen_infos_ = web_screen_infos;
-+
+ 
    const bool window_screen_has_changed =
        !Screen::AreWebExposedScreenPropertiesEqual(
 -          previous_original_screen_infos.current(),
@@ -74,35 +307,73 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
  
    // Update Screens interface data before firing any events. The API is designed
    // to offer synchronous access to the most up-to-date cached screen
-@@ -5457,12 +5495,12 @@
+   // information when a change event is fired.  It is not required but it
+   // is convenient to have all ScreenDetailed objects be up to date when any
    // window.screen events are fired as well.
++  Vector<Persistent<WebLocalFrameImpl>> local_frames;
    ForEachLocalFrameControlledByWidget(
-       LocalRootImpl()->GetFrame(),
+-      LocalRootImpl()->GetFrame(),
 -      [&original_screen_infos, window_screen_has_changed,
-+      [&web_screen_infos, window_screen_has_changed,
-        color_gamut_changed](WebLocalFrameImpl* local_frame) {
-         auto* screen = local_frame->GetFrame()->DomWindow()->screen();
+-       color_gamut_changed](WebLocalFrameImpl* local_frame) {
+-        auto* screen = local_frame->GetFrame()->DomWindow()->screen();
 -        screen->UpdateDisplayId(original_screen_infos.current().display_id);
-+        screen->UpdateDisplayId(web_screen_infos.current().display_id);
-         CoreInitializer::GetInstance().DidUpdateScreens(
+-        CoreInitializer::GetInstance().DidUpdateScreens(
 -            *local_frame->GetFrame(), original_screen_infos);
-+            *local_frame->GetFrame(), web_screen_infos);
-         if (window_screen_has_changed)
-           screen->DispatchEvent(*Event::Create(event_type_names::kChange));
-         if (color_gamut_changed) {
-@@ -5472,12 +5510,12 @@
-         }
+-        if (window_screen_has_changed)
+-          screen->DispatchEvent(*Event::Create(event_type_names::kChange));
+-        if (color_gamut_changed) {
+-          local_frame->GetFrame()
+-              ->GetDocument()
+-              ->MediaQueryAffectingValueChanged(MediaValueChange::kOther);
+-        }
++      LocalRootImpl()->GetFrame(), [&local_frames](WebLocalFrameImpl* frame) {
++        local_frames.push_back(frame);
        });
- 
+-
 -  if (previous_original_screen_infos != original_screen_infos) {
-+  if (previous_web_screen_infos != web_screen_infos) {
-     // Propagate changes down to child local root RenderWidgets and
-     // BrowserPlugins in other frame trees/processes.
-     ForEachRemoteFrameControlledByWidget(
+-    // Propagate changes down to child local root RenderWidgets and
+-    // BrowserPlugins in other frame trees/processes.
+-    ForEachRemoteFrameControlledByWidget(
 -        [&original_screen_infos](RemoteFrame* remote_frame) {
 -          remote_frame->DidChangeScreenInfos(original_screen_infos);
-+        [&web_screen_infos](RemoteFrame* remote_frame) {
-+          remote_frame->DidChangeScreenInfos(web_screen_infos);
-         });
-   }
+-        });
+-  }
++  for (const auto& local_frame : local_frames) {
++    if (!IsScreenUpdateCurrent(update_sequence)) {
++      return;
++    }
++    if (!local_frame->GetFrame()) {
++      continue;
++    }
++    auto* screen = local_frame->GetFrame()->DomWindow()->screen();
++    screen->UpdateDisplayId(web_screen_infos.current().display_id);
++    CoreInitializer::GetInstance().DidUpdateScreens(*local_frame->GetFrame(),
++                                                  web_screen_infos);
++    if (!IsScreenUpdateCurrent(update_sequence)) {
++      return;
++    }
++    if (local_frame->GetFrame() && window_screen_has_changed) {
++      screen->DispatchEvent(*Event::Create(event_type_names::kChange));
++    }
++    if (!IsScreenUpdateCurrent(update_sequence)) {
++      return;
++    }
++    if (local_frame->GetFrame() &&
++        (color_gamut_changed || previous_web_screen_infos != web_screen_infos)) {
++      local_frame->GetFrame()->GetDocument()->MediaQueryAffectingValueChanged(
++          MediaValueChange::kOther);
++    }
++  }
++
++  const auto emulated_screen_infos = GetEmulatedScreenInfos();
++  ForEachRemoteFrameControlledByWidget(
++      [&original_screen_infos,
++       &emulated_screen_infos](RemoteFrame* remote_frame) {
++        remote_frame->DidChangeScreenInfos(original_screen_infos,
++                                          emulated_screen_infos);
++      });
++  // Inherited emulation can change orientation without a native screen update.
++  OrientationChanged();
  }
+ 
+ gfx::Rect WebFrameWidgetImpl::ViewportVisibleRect() {

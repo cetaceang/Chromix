@@ -139,3 +139,60 @@ try {
             assert ("snapshot_safe=true" in state["events"]) is (mode in ("success", "mingw_layout"))
     else:
         assert state["events"] == []
+
+
+STAGE9_SHA = "30dbab28692793fa311c82ae639186003f3a67d9"
+LEGACY_SHA = "97f2881b0e5f43b7e9563569d92dfe702ed1df0b"
+
+
+def test_all_windows_migration_guards_pin_both_profiles_without_broadening_restore():
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    profile = workflow["env"]["CHROMIX_WINDOWS_MIGRATION_PROFILE"]
+    assert STAGE9_SHA in profile and "windows-152-x64-stage9" in profile
+    assert "windows-152-x64-legacy-0152" in profile
+    guards = []
+    for index in range(1, 13):
+        steps = workflow["jobs"][f"build-{index}"]["steps"]
+        guard = next(s for s in steps if s.get("name") == "Check explicit snapshot migration inputs")
+        restore = next(s for s in steps if s.get("name") == "Restore exact source-migration snapshot")
+        assert guard["env"]["RESUME_ATTEMPT"] == "${{ inputs.resume_attempt }}"
+        for value in (STAGE9_SHA, LEGACY_SHA, "35315624638", "10536907942,10536997738",
+                      "$env:RESUME_TREE_STAGE -cne '9'", "$env:RESUME_ATTEMPT -cne '1'",
+                      "$env:CHROMIX_BUILD_PROFILE -cne 'native'"):
+            assert value in guard["run"]
+        branch = restore["with"]["recovery-branch"]
+        assert STAGE9_SHA in branch
+        assert "fix/issue3-font-resume-20260917" in branch
+        assert "fix/issue3-resource-timing-20260916" in branch
+        guards.append(guard["run"])
+    assert len(set(guards)) == 1
+
+
+@pytest.mark.parametrize("mutation", ["valid", "reverse-artifacts", "legacy", "sha", "uppercase", "run", "stage", "attempt",
+                                      "profile", "extra-artifact", "duplicate-artifact", "missing-artifact", "upstream"])
+def test_stage9_workflow_guard_executes_exact_profile_checks(tmp_path, mutation):
+    powershell = shutil.which("pwsh") or shutil.which("powershell") or "/opt/pwsh/pwsh"
+    if not Path(powershell).is_file():
+        pytest.skip("PowerShell is unavailable")
+    steps = yaml.safe_load(WORKFLOW.read_text())["jobs"]["build-9"]["steps"]
+    guard = next(s for s in steps if s.get("name") == "Check explicit snapshot migration inputs")["run"]
+    env = dict(os.environ, RESUME_SOURCE_SHA=STAGE9_SHA, RESUME_RUN_ID="35315624638", RESUME_TREE_STAGE="9",
+               RESUME_ATTEMPT="1", RESUME_ARTIFACT_IDS="10536907942,10536997738", CHROMIX_BUILD_PROFILE="native",
+               USE_UPSTREAM_CACHE="false", UPSTREAM_RUN_ID="")
+    overrides = {
+        "valid": {}, "reverse-artifacts": {"RESUME_ARTIFACT_IDS": "10536997738, 10536907942"},
+        "legacy": {"RESUME_SOURCE_SHA": LEGACY_SHA, "RESUME_RUN_ID": "35054494898", "RESUME_TREE_STAGE": "3",
+                   "RESUME_ARTIFACT_IDS": "10462681393,10462257055"},
+        "sha": {"RESUME_SOURCE_SHA": "a" * 40}, "uppercase": {"RESUME_SOURCE_SHA": STAGE9_SHA.upper()},
+        "run": {"RESUME_RUN_ID": "35315624639"}, "stage": {"RESUME_TREE_STAGE": "8"},
+        "attempt": {"RESUME_ATTEMPT": "2"}, "profile": {"CHROMIX_BUILD_PROFILE": "fast"},
+        "extra-artifact": {"RESUME_ARTIFACT_IDS": "10536907942,10536997738,1"},
+        "duplicate-artifact": {"RESUME_ARTIFACT_IDS": "10536907942,10536907942"},
+        "missing-artifact": {"RESUME_ARTIFACT_IDS": "10536907942"}, "upstream": {"USE_UPSTREAM_CACHE": "true"},
+    }
+    env.update(overrides[mutation])
+    script = tmp_path / "guard.ps1"
+    script.write_text("$ErrorActionPreference = 'Stop'\ntry {\n" + guard + "\n} catch { exit 1 }\nexit 0\n")
+    result = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-File", str(script)],
+                            env=env, text=True, capture_output=True, timeout=30)
+    assert result.returncode == (0 if mutation in ("valid", "reverse-artifacts", "legacy") else 1), result.stderr

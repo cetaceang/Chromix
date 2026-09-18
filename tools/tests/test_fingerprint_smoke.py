@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from types import SimpleNamespace
 from urllib.parse import urlencode
 
@@ -633,6 +634,15 @@ def test_identity_execution_rejects_fake_media(fake_switch):
     assert smoke.execution_contract_errors({"command_line": [*command, fake_switch]}, "/fixture/identity", args)
 
 
+def test_execution_contract_error_survives_cdp_cleanup(monkeypatch):
+    def detach():
+        raise RuntimeError('cleanup failure')
+    cdp = SimpleNamespace(send=lambda method: {'arguments': []} if method == 'Browser.getBrowserCommandLine' else {},
+                          detach=detach)
+    with pytest.raises(smoke.SmokeError, match='did not expose its executed command line'):
+        smoke.verify_execution(cdp, {}, True)
+
+
 def test_execution_profile_canonicalization_rejects_alias_to_identity(tmp_path):
     identity = tmp_path / "identity"
     identity.mkdir()
@@ -646,7 +656,53 @@ def test_execution_profile_canonicalization_rejects_alias_to_identity(tmp_path):
     command[-1] = "--user-data-dir=" + str(distinct)
     assert not smoke.execution_contract_errors({"command_line": command}, distinct, args, identity)
     command[-1] = "--user-data-dir=" + str(tmp_path / "unused" / ".." / "media")
-    assert smoke.execution_contract_errors({"command_line": command}, distinct, args, identity)
+    assert not smoke.execution_contract_errors({"command_line": command}, distinct, args, identity)
+
+
+@pytest.mark.parametrize("fault", [None, "conflict", "duplicate", "identity-alias", "resolve-error"])
+def test_execution_profile_resolves_both_windows_path_spellings(monkeypatch, fault):
+    long = Path("C:/Users/runneradmin/AppData/Local/Temp/media")
+    short = Path("C:/Users/RUNNER~1/AppData/Local/Temp/media")
+    identity = Path("C:/Users/runneradmin/AppData/Local/Temp/identity")
+    resolved = []
+    def resolve(path):
+        resolved.append(path)
+        if fault == "resolve-error" and path == identity:
+            raise OSError("filesystem unavailable")
+        return long if path == short else path
+    monkeypatch.setattr(Path, "resolve", resolve)
+    command = ["chrome", "--fingerprint=off", "--use-fake-device-for-media-stream",
+               "--user-data-dir=" + str(short)]
+    if fault in ("conflict", "duplicate"):
+        command.append("--user-data-dir=" + str(short if fault == "duplicate" else identity))
+    errors = smoke.execution_contract_errors({"command_line": command}, long, ["--fingerprint=off"],
+                                              short if fault == "identity-alias" else identity)
+    assert bool(errors) == (fault is not None)
+    assert long in resolved
+    if fault not in ("conflict", "duplicate"):
+        assert short in resolved
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows filesystem short-name API required")
+def test_execution_profile_windows_short_name_roundtrip(tmp_path):
+    import ctypes
+    from ctypes import wintypes
+    profile = tmp_path / "long profile directory"
+    profile.mkdir()
+    get_short = ctypes.windll.kernel32.GetShortPathNameW
+    get_short.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+    get_short.restype = wintypes.DWORD
+    size = get_short(str(profile), None, 0)
+    assert size
+    output = ctypes.create_unicode_buffer(size)
+    assert get_short(str(profile), output, size)
+    if output.value == str(profile):
+        pytest.skip("8.3 name generation is disabled on this volume")
+    command = ["chrome", "--fingerprint=off", "--user-data-dir=" + output.value]
+    assert not smoke.execution_contract_errors({"command_line": command}, profile, ["--fingerprint=off"])
+    command.extend(["--use-fake-device-for-media-stream"])
+    assert "media control reuses the identity profile" in smoke.execution_contract_errors(
+        {"command_line": command}, profile, ["--fingerprint=off"], output.value)
 
 
 @pytest.mark.parametrize("fault", [None, "fake-ui", "fake-ui-value", "fake-missing", "fake-duplicate", "fake-value",

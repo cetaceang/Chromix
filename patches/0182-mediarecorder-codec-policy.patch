@@ -1,5 +1,5 @@
 diff --git a/third_party/blink/renderer/modules/mediarecorder/media_recorder_handler.cc b/third_party/blink/renderer/modules/mediarecorder/media_recorder_handler.cc
-index 615d12b8f4fc3958404fab90832f4423cb4be1b6..607c1712b2294640b4b40fdd00c5b2b9e40fe162 100644
+index 615d12b8f4fc3958404fab90832f4423cb4be1b6..1ca8a0de4212b6c4a38d2f5a79071df47aa5497d 100644
 --- a/third_party/blink/renderer/modules/mediarecorder/media_recorder_handler.cc
 +++ b/third_party/blink/renderer/modules/mediarecorder/media_recorder_handler.cc
 @@ -231,8 +231,15 @@
@@ -18,7 +18,7 @@ index 615d12b8f4fc3958404fab90832f4423cb4be1b6..607c1712b2294640b4b40fdd00c5b2b9
      const bool can_support = CanSupportMimeTypeForCodec(type, codec);
  
      Vector<String> uma_key_vector;
-@@ -472,7 +479,9 @@
+@@ -472,7 +479,13 @@
      return false;
    }
  
@@ -26,10 +26,14 @@ index 615d12b8f4fc3958404fab90832f4423cb4be1b6..607c1712b2294640b4b40fdd00c5b2b9
 +  // An encoded input track may use a codec excluded by the launch policy.
 +  // Re-encode through the selected allowed codec when restrictions are active.
 +  passthrough_enabled_ = type_.empty() && !media::HasUxrVideoCodecRestrictions();
++  // The default muxer is WebM even when policy disables passthrough.
++  if (type_.empty() && !passthrough_enabled_) {
++    type_ = media_stream->NumberOfVideoComponents() ? "video/webm" : "audio/webm";
++  }
  
    // Once established that we support the codec(s), hunt then individually.
    video_codec_profile_ = VideoStringToCodecProfile(codecs);
-@@ -554,6 +563,11 @@
+@@ -554,6 +567,11 @@
      LOG(WARNING) << __func__ << ": no tracks to be recorded.";
      return false;
    }

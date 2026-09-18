@@ -1,0 +1,11 @@
+diff --git a/third_party/blink/common/widget/visual_properties.cc b/third_party/blink/common/widget/visual_properties.cc
+--- a/third_party/blink/common/widget/visual_properties.cc
++++ b/third_party/blink/common/widget/visual_properties.cc
+@@ -16,6 +16,7 @@
+ 
+ bool VisualProperties::operator==(const VisualProperties& other) const {
+   return screen_infos == other.screen_infos &&
++         emulated_screen_infos == other.emulated_screen_infos &&
+          auto_resize_enabled == other.auto_resize_enabled &&
+          min_size_for_auto_resize == other.min_size_for_auto_resize &&
+          max_size_for_auto_resize == other.max_size_for_auto_resize &&

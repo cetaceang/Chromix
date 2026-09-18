@@ -16,7 +16,7 @@ from chromix._device_probe import PROBE_VERSION, probe_hash, probe_source, ASSET
 from chromix import _device_fonts as fonts
 from test_device_pool import bundle as legacy_bundle, seal
 from test_device_p0 import v2_observation
-from test_canvas_chain_audit import template as chain_template, codec_v2_template, codec_export
+from test_canvas_chain_audit import template as chain_template, codec_v2_template, codec_v3_template, codec_export
 from test_fingerprint_runtime_audits import render_report
 from gpu_backend_fixtures import backend_fixture, system_fixture
 
@@ -112,6 +112,22 @@ def test_codec_v2_source_errors_remain_admission_failures(mode):
     else:
         assert checked['errors']
         assert any('codec-source' in e or 'lossyQuality' in e for e in checked['errors'])
+
+
+@pytest.mark.parametrize('mutation', [None, 'repeatBytes', 'repeatDataURL', 'dataURL'])
+def test_codec_v3_raw_exports_remain_admission_requirements(mutation):
+    chains = codec_v3_template.__wrapped__(codec_v2_template.__wrapped__(chain_template.__wrapped__()))
+    if mutation:
+        chains['window']['rows'][1]['exports'][0][mutation] = None
+    sample = observation()
+    for scope in pool.SCOPES:
+        raw = render.unpack(sample[scope]['render'])
+        raw['chain'] = deepcopy(chains[scope])
+        if scope in ('window', 'iframe'):
+            raw['chain']['taint'] = {'status':'not_collected'}
+        sample[scope]['render'] = pack(raw)
+    checked = render.assess_observation(sample)
+    assert bool(checked['errors']) is (mutation is not None)
 
 
 @pytest.mark.parametrize('lossy', [False, True])

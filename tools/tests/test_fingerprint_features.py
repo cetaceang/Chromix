@@ -43,16 +43,43 @@ CPP_BASE = r'''
 #include <string_view>
 #include <vector>
 namespace base {
+#define FILE_PATH_LITERAL(value) value
 class CommandLine {
  public:
+  using StringType = std::string;
+  using StringVector = std::vector<StringType>;
+  using SwitchMap = std::map<std::string, StringType>;
   std::map<std::string, std::string> values;
+  std::vector<std::string> argv_values;
+  const std::vector<std::string>& argv() const { return argv_values; }
+  static CommandLine FromArgvWithoutProgram(const StringVector& args) {
+    CommandLine command;
+    for (const auto& arg : args) {
+      if (arg.rfind("--", 0) != 0) continue;
+      auto separator = arg.find('=');
+      auto key = arg.substr(2, separator == std::string::npos ? separator : separator - 2);
+      auto value = separator == std::string::npos ? "" : arg.substr(separator + 1);
+      command.values[key] = value;
+    }
+    return command;
+  }
   bool HasSwitch(const std::string& key) const { return values.contains(key); }
   std::string GetSwitchValueASCII(const std::string& key) const {
     auto it = values.find(key); return it == values.end() ? "" : it->second;
   }
-  void AppendSwitchASCII(const std::string& key, const std::string& value) { values[key] = value; }
-  void AppendSwitch(const std::string& key) { values[key] = ""; }
-  void RemoveSwitch(const std::string& key) { values.erase(key); }
+  void AppendSwitchASCII(const std::string& key, const std::string& value) {
+    values[key] = value;
+    argv_values.push_back("--" + key + (value.empty() ? "" : "=" + value));
+  }
+  void AppendSwitchNative(const std::string& key, const StringType& value) { AppendSwitchASCII(key, value); }
+  StringType GetSwitchValueNative(const std::string& key) const { return GetSwitchValueASCII(key); }
+  void AppendSwitch(const std::string& key) { AppendSwitchASCII(key, ""); }
+  void RemoveSwitch(const std::string& key) {
+    values.erase(key);
+    std::erase_if(argv_values, [&](const auto& arg) {
+      return arg == "--" + key || arg.starts_with("--" + key + "=");
+    });
+  }
   const auto& GetSwitches() const { return values; }
   static CommandLine* ForCurrentProcess() { static CommandLine command; return &command; }
 };
@@ -154,16 +181,31 @@ def normalizer(request, tmp_path_factory):
     for name, os_name in [('IS_WIN', 'windows'), ('IS_MAC', 'macos'), ('IS_LINUX', 'linux')]:
         flags += f'#define {name} {int(request.param == os_name)}\n'
     body = block(added(36), '  if (!command_line->HasSwitch(switches::kProcessType))')
-    source = flags + CPP_BASE + '\nvoid Normalize(base::CommandLine* command_line) {\n' + body + r'''
+    source = flags + CPP_BASE + '\nint Normalize(base::CommandLine* command_line) {\n' + body + r'''
+  return 0;
 }
 int main(int argc, char** argv) {
   auto* command_line = base::CommandLine::ForCurrentProcess();
+  command_line->argv_values.push_back(argc ? argv[0] : "");
   for (int i = 1; i < argc; ++i) {
-    std::string arg = argv[i]; size_t separator = arg.find('=');
+    std::string arg = argv[i]; command_line->argv_values.push_back(arg);
+    size_t separator = arg.find('=');
     command_line->values[arg.substr(2, separator == std::string::npos ? separator : separator - 2)] =
         separator == std::string::npos ? "" : arg.substr(separator + 1);
   }
-  Normalize(command_line);
+  if (Normalize(command_line)) return 1;
+  const auto once = command_line->values;
+  for (int pass = 0; pass < 2; ++pass) {
+    for (const auto& [key, value] : command_line->values) {
+      const auto count = std::count_if(command_line->argv().begin() + 1,
+          command_line->argv().end(), [&](const auto& arg) {
+        return arg == "--" + key || arg.starts_with("--" + key + "=");
+      });
+      assert(count == 1);
+    }
+    assert(Normalize(command_line) == 0);
+    assert(command_line->values == once);
+  }
   for (const auto& [key, value] : command_line->values) std::cout << key << '=' << value << '\n';
 }
 '''
@@ -174,6 +216,24 @@ int main(int argc, char** argv) {
 def normalize(fixture, *args):
     result = subprocess.run([str(fixture[1]), *args], capture_output=True, text=True, check=True)
     return dict(line.split('=', 1) for line in result.stdout.splitlines())
+
+
+@pytest.mark.parametrize('key,value', [('fingerprint', 'off'), ('fingerprint', '42'),
+    ('fingerprint-noise', 'FALSE'), ('uxr-languages', 'en-US'),
+    ('fingerprint-gpu-vendor', '显卡'), ('uxr-font-whitelist', '字体')])
+def test_normalizer_collapses_identical_arguments_without_losing_native_text(normalizer, key, value):
+    arg = '--' + key + '=' + value
+    assert normalize(normalizer, arg, arg) == normalize(normalizer, arg)
+
+
+@pytest.mark.parametrize('key,first,last', [('fingerprint', 'off', '42'),
+    ('fingerprint-noise', 'false', 'true'), ('uxr-timer-resolution', '7', '11')])
+def test_normalizer_rejects_conflicting_duplicates_before_mutation(normalizer, key, first, last):
+    result = subprocess.run([str(normalizer[1]), '--' + key + '=' + first, '--' + key + '=' + last],
+                            capture_output=True, text=True)
+    assert result.returncode == 1
+    assert result.stdout == ''
+    assert 'Conflicting fingerprint switch: ' + key in result.stderr
 
 
 def test_public_defaults_do_not_require_synthetic(normalizer):
