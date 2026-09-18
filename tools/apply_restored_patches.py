@@ -110,12 +110,14 @@ def _substitute(text: str, rules: list[tuple[re.Pattern, str]]) -> str:
     return text
 
 
-def transform_patch(data: bytes, listed: set[str], rules: list[tuple[re.Pattern, str]]
+def transform_patch(data: bytes, listed: set[str], rules: list[tuple[re.Pattern, str]],
+                    *, stage: Path | None = None
                     ) -> tuple[bytes, list[tuple[str, str, int | None]]]:
     """Return a lossless-metadata Git unified diff and (path, action, mode) entries.
 
     Renames, copies, binary diffs, symlink/mode-only patches and quoted paths are
     deliberately unsupported. Each file section selects UTF-8, then Latin-1.
+    With stage, LF-only sections follow an existing uniformly CRLF target's EOL.
     """
     if not data.endswith(b"\n") or b"\x00" in data:
         raise ApplyError("unsupported diff: missing final newline or binary content")
@@ -199,6 +201,17 @@ def transform_patch(data: bytes, listed: set[str], rules: list[tuple[re.Pattern,
                         or after.count("\r") != before.count("\r") or "\x00" in after):
                     raise ApplyError(f"domain substitution changes hunk line boundaries: {name}")
                 lines[number] = lines[number][:1] + after.encode(encoding)
+        if stage is not None and action != "create":
+            source = _read(stage, name)
+            # A no-newline marker's preceding CR is content, not a line ending.
+            terminated = [number for number in body_indexes
+                          if number + 1 == i
+                          or lines[number + 1] != b"\\ No newline at end of file\n"]
+            if (b"\r\n" in source and source.count(b"\n") == source.count(b"\r\n")
+                    and not any(lines[number].endswith(b"\r\n") for number in terminated)):
+                # Mixed source/patch endings are explicit; never normalize them.
+                for number in terminated:
+                    lines[number] = lines[number][:-1] + b"\r\n"
         output.extend(lines[start:i])
         entries.append((name, action, mode))
     if not entries:
@@ -444,29 +457,36 @@ def run_apply(src: Path | str, repo: Path | str, core: Path | str,
             os.chmod(path, mode | stat.S_IWUSR)
         environment = _patch_environment()
         for number, (name, data, entries) in enumerate(patches):
-            for target, action, _ in entries:
-                path = _path(stage, target)
-                if action == "create" and path.exists():
-                    raise ApplyError(f"new file already exists (duplicate/partial): {target}. {CLEAN}")
-                if action != "create" and not path.is_file():
-                    raise ApplyError(f"unknown/missing patch path: {target}. {CLEAN}")
-            patch_file = scratch / f"{number:04d}.patch"
-            patch_file.write_bytes(data)
-            command = _patch_command(program, patch_file)
-            result = subprocess.run(command, cwd=stage, env=environment, stdin=subprocess.DEVNULL,
-                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
-            if result.returncode:
-                detail = result.stdout.decode("utf-8", errors="replace")
-                raise ApplyError(f"patch failed: {name} (exit {result.returncode})\n{detail}\n{CLEAN}")
-            for target, action, mode in entries:
-                path = _path(stage, target)
-                if action == "delete":
-                    if path.exists():
-                        raise ApplyError(f"patch did not delete {target}. {CLEAN}")
-                elif not path.is_file():
-                    raise ApplyError(f"patch did not produce {target}. {CLEAN}")
-                elif action == "create":
-                    os.chmod(path, mode or 0o644)
+            groups = [(data, entries)]
+            if len({entry[0] for entry in entries}) != len(entries):
+                # Repeated targets need current staged state, including create/delete.
+                sections = re.split(rb"(?m)(?=^diff --git )", data)[1:]
+                groups = [(section, [entry]) for section, entry in zip(sections, entries, strict=True)]
+            for section, section_entries in groups:
+                for target, action, _ in section_entries:
+                    path = _path(stage, target)
+                    if action == "create" and path.exists():
+                        raise ApplyError(f"new file already exists (duplicate/partial): {target}. {CLEAN}")
+                    if action != "create" and not path.is_file():
+                        raise ApplyError(f"unknown/missing patch path: {target}. {CLEAN}")
+                patch_file = scratch / f"{number:04d}.patch"
+                effective, _ = transform_patch(section, set(), [], stage=stage)
+                patch_file.write_bytes(effective)
+                command = _patch_command(program, patch_file)
+                result = subprocess.run(command, cwd=stage, env=environment, stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+                if result.returncode:
+                    detail = result.stdout.decode("utf-8", errors="replace")
+                    raise ApplyError(f"patch failed: {name} (exit {result.returncode})\n{detail}\n{CLEAN}")
+                for target, action, mode in section_entries:
+                    path = _path(stage, target)
+                    if action == "delete":
+                        if path.exists():
+                            raise ApplyError(f"patch did not delete {target}. {CLEAN}")
+                    elif not path.is_file():
+                        raise ApplyError(f"patch did not produce {target}. {CLEAN}")
+                    elif action == "create":
+                        os.chmod(path, mode or 0o644)
         after = _snapshot(stage, names)
         for name, (data, info) in before.items():
             path = _path(src, name)

@@ -23,12 +23,12 @@ RESTORED = b"context blocked.test\nold blocked.test\ntail\n"
 EXPECTED = b"context blocked.test\nnew blocked.test\ntail\n"
 
 
-def patch(path="listed.txt", old="old example.com", new="new example.com", *, encoding="utf-8"):
+def patch(path="listed.txt", old="old example.com", new="new example.com", *, encoding="utf-8", eol="\n"):
     return (f"diff --git a/{path} b/{path}\n"
             "index 1111111..2222222 100644\n"
             f"--- a/{path}\n+++ b/{path}\n"
             "@@ -1,3 +1,3 @@ example.com metadata\n"
-            f" context example.com\n-{old}\n+{new}\n tail\n").encode(encoding)
+            f" context example.com{eol}-{old}{eol}+{new}{eol} tail{eol}").encode(encoding)
 
 
 def new_patch(path="sub/new.txt", content="new example.com", mode="100644"):
@@ -141,15 +141,17 @@ def test_mtime_preserves_unchanged_payload_and_advances_changed_source(tmp_path)
     assert different.read_bytes() == b"new\n"
 
 
-def test_net_unchanged_patched_file_is_not_rewritten(tmp_path):
+@pytest.mark.parametrize("eol", [b"\n", b"\r\n"])
+def test_net_unchanged_patched_file_is_not_rewritten(tmp_path, eol):
     fx = Fixture(tmp_path)
     fx.set_patches(patch(), patch(old="new example.com", new="old example.com"))
-    source = fx.src / "listed.txt"
+    original = RESTORED.replace(b"\n", eol)
+    source = put(fx.src, "listed.txt", original)
     before = source.stat().st_mtime_ns
     result = fx.run()
     assert result["status"] == "applied"
     assert result["changed_files"] == []
-    assert source.read_bytes() == RESTORED
+    assert source.read_bytes() == original
     assert source.stat().st_mtime_ns == before
 
 
@@ -290,15 +292,17 @@ def test_platform_list_selection_and_lite_substitution(tmp_path, platform):
     assert fx.manifest()["identity"]["list"]["path"] == str(selected / "domain_substitution.list")
 
 
+@pytest.mark.parametrize("eol", [b"\n", b"\r\n"])
 @pytest.mark.parametrize("encoding", ["utf-8", "latin-1"])
-def test_utf8_and_latin1_patch_and_lite_roundtrip(tmp_path, encoding):
+def test_utf8_and_latin1_patch_and_lite_roundtrip(tmp_path, encoding, eol):
     fx = Fixture(tmp_path)
     fx.set_patches(patch(old="café old example.com", new="café new example.com", encoding=encoding))
-    put(fx.src, "listed.txt", "context blocked.test\ncafé old blocked.test\ntail\n".encode(encoding))
+    original = "context blocked.test\ncafé old blocked.test\ntail\n".encode(encoding).replace(b"\n", eol)
+    put(fx.src, "listed.txt", original)
     put(fx.core, "domain_substitution.list", b"listed.txt\nlatin.txt\n")
     put(fx.repo, arp.LITE + "/latin.txt", "café example.com\n".encode(encoding))
     fx.run()
-    assert (fx.src / "listed.txt").read_bytes() == "context blocked.test\ncafé new blocked.test\ntail\n".encode(encoding)
+    assert (fx.src / "listed.txt").read_bytes() == original.replace(b"old ", b"new ")
     assert (fx.src / "latin.txt").read_bytes() == "café blocked.test\n".encode(encoding)
 
 
@@ -319,6 +323,305 @@ def test_no_newline_marker_and_crlf_content_are_preserved(tmp_path):
     put(fx.src, "listed.txt", RESTORED.replace(b"\n", b"\r\n"))
     fx.run()
     assert (fx.src / "listed.txt").read_bytes() == EXPECTED.replace(b"\n", b"\r\n")
+
+
+def test_windows_lf_patch_sections_follow_staged_eol_and_receipts(tmp_path, monkeypatch):
+    fx = Fixture(tmp_path)
+    put(fx.tooling, "domain_substitution.list", b"windows.txt\nlf.txt\nsub/new.txt\n")
+    put(fx.src, "windows.txt", RESTORED.replace(b"\n", b"\r\n"))
+    put(fx.src, "lf.txt", RESTORED)
+    put(fx.src, "raw.txt", ORIGINAL.replace(b"\n", b"\r\n"))
+    put(fx.src, "gone.txt", b"remove\r\n")
+    put(fx.repo, arp.LITE + "/lite.txt", ORIGINAL.replace(b"\n", b"\r\n"))
+    unrelated = put(fx.src, "unrelated.txt", b"example.com\r\nmixed\nunterminated")
+    untouched = {p: (p.read_bytes(), p.stat().st_mtime_ns)
+                 for p in (unrelated, fx.src / "listed.txt")}
+    deletion = (b"diff --git a/gone.txt b/gone.txt\ndeleted file mode 100644\n"
+                b"--- a/gone.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-remove\n")
+    first = (patch("windows.txt") + patch("lf.txt") + patch("raw.txt")
+             + patch("lite.txt") + deletion + new_patch("deleted.txt", content="temporary") + new_patch())
+    second = (patch("windows.txt", old="new example.com", new="newer example.com")
+              + new_patch("gone.txt", content="recreated")
+              + deletion.replace(b"gone.txt", b"deleted.txt").replace(b"remove", b"temporary"))
+    third = (b"diff --git a/gone.txt b/gone.txt\n--- a/gone.txt\n+++ b/gone.txt\n"
+             b"@@ -1 +1 @@\n-recreated\n+changed\n")
+    fx.set_patches(first, second, third)
+    inputs = {p: (p.read_bytes(), p.stat().st_mtime_ns)
+              for root in (fx.repo, fx.core, fx.tooling) for p in root.rglob("*") if p.is_file()}
+    effective = []
+    real_run = arp.subprocess.run
+
+    def capture(command, **kwargs):
+        assert "--binary" in command and "--fuzz=0" in command
+        if "chromix patch probe " not in command[-1]:
+            effective.append(Path(command[-1]).read_bytes())
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(arp.subprocess, "run", capture)
+    result = fx.run(platform="windows")
+    expected_first = (patch("windows.txt", eol="\r\n").replace(b"example.com", b"blocked.test")
+                      + patch("lf.txt").replace(b"example.com", b"blocked.test")
+                      + patch("raw.txt", eol="\r\n") + patch("lite.txt", eol="\r\n")
+                      + deletion.replace(b"-remove\n", b"-remove\r\n")
+                      + new_patch("deleted.txt", content="temporary")
+                      + new_patch(content="new blocked.test"))
+    # Hunk-header metadata is never domain-substituted or EOL-adapted.
+    expected_first = expected_first.replace(b"@@ blocked.test metadata", b"@@ example.com metadata")
+    assert effective[0] == expected_first
+    assert effective[2] == third
+    expected = {
+        "windows.txt": EXPECTED.replace(b"new ", b"newer ").replace(b"\n", b"\r\n"),
+        "lf.txt": EXPECTED,
+        "raw.txt": ORIGINAL.replace(b"old ", b"new ").replace(b"\n", b"\r\n"),
+        "lite.txt": ORIGINAL.replace(b"old ", b"new ").replace(b"\n", b"\r\n"),
+        "gone.txt": b"changed\n",
+        "sub/new.txt": b"new blocked.test\n",
+    }
+    assert result["changed_files"] == sorted(expected)
+    assert result["patch_count"] == 3
+    assert {name: (fx.src / name).read_bytes() for name in expected} == expected
+    assert not (fx.src / "deleted.txt").exists()
+    manifest_outputs = {name: hashlib.sha256(data).hexdigest() for name, data in expected.items()}
+    manifest_outputs["deleted.txt"] = None
+    assert fx.manifest()["outputs"] == manifest_outputs
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in untouched} == untouched
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in inputs} == inputs
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in fx.src.rglob("*") if p.is_file()}
+    assert fx.run(platform="windows", patch_bin="missing-patch")["status"] == "skipped"
+    assert fx.run(platform="windows", check=True, patch_bin="missing-patch")["status"] == "checked"
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before} == before
+    assert not (fx.src / arp.IN_PROGRESS).exists()
+    put(fx.src, "windows.txt", expected["windows.txt"].replace(b"\r\n", b"\n"))
+    for check in (False, True):
+        with pytest.raises(arp.ApplyError, match="completed source changed or partial"):
+            fx.run(platform="windows", check=check)
+
+
+@pytest.mark.parametrize("interleaved", [False, True])
+@pytest.mark.parametrize("old_eol,new_eol", [(b"\r\n", b"\n"), (b"\n", b"\r\n")])
+def test_same_patch_repeated_target_uses_current_eol(tmp_path, monkeypatch, old_eol, new_eol, interleaved):
+    fx = Fixture(tmp_path)
+    source = put(fx.src, "f.txt", b"old" + old_eol)
+    header = b"diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n"
+    first = header + b"@@ -1 +1 @@\n-old" + old_eol + b"+middle" + new_eol
+    last = header + b"@@ -1,0 +2 @@\n+last\n"
+    between = patch() if interleaved else b""
+    fx.set_patches(first + between + last)
+    patch_file = fx.repo / "patches/0001.patch"
+    original_patch = patch_file.read_bytes(), patch_file.stat().st_mtime_ns
+    unrelated = put(fx.src, "unrelated.txt", b"unrelated\r\n")
+    unrelated_before = unrelated.read_bytes(), unrelated.stat().st_mtime_ns
+    effective = []
+    real_run = arp.subprocess.run
+
+    def capture(command, **kwargs):
+        if "chromix patch probe " not in command[-1]:
+            effective.append(Path(command[-1]).read_bytes())
+            assert source.read_bytes() == b"old" + old_eol
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(arp.subprocess, "run", capture)
+    result = fx.run()
+    expected = b"middle" + new_eol + b"last" + new_eol
+    assert source.read_bytes() == expected
+    assert len(effective) == (3 if interleaved else 2)
+    assert effective[0] == first
+    assert effective[-1] == last.replace(b"+last\n", b"+last" + new_eol)
+    assert (fx.src / "listed.txt").read_bytes() == (EXPECTED if interleaved else RESTORED)
+    assert result["patch_count"] == 1
+    assert result["changed_files"] == (["f.txt", "listed.txt"] if interleaved else ["f.txt"])
+    assert fx.manifest()["outputs"]["f.txt"] == hashlib.sha256(expected).hexdigest()
+    assert (patch_file.read_bytes(), patch_file.stat().st_mtime_ns) == original_patch
+    assert (unrelated.read_bytes(), unrelated.stat().st_mtime_ns) == unrelated_before
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in fx.src.rglob("*") if p.is_file()}
+    assert fx.run(patch_bin="missing-patch")["status"] == "skipped"
+    assert fx.run(check=True, patch_bin="missing-patch")["status"] == "checked"
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before} == before
+    assert not (fx.src / arp.IN_PROGRESS).exists()
+
+
+@pytest.mark.parametrize("delete_first", [False, True])
+@pytest.mark.parametrize("eol", ["\n", "\r\n"])
+def test_same_patch_create_modify_and_delete_recreate(tmp_path, delete_first, eol):
+    fx = Fixture(tmp_path)
+    deletion = b""
+    if delete_first:
+        put(fx.src, "f.txt", b"old\r\n")
+        deletion = (b"diff --git a/f.txt b/f.txt\ndeleted file mode 100644\n"
+                    b"--- a/f.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n")
+    creation = new_patch("f.txt", content="middle" + eol[:-1])
+    modification = (b"diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n"
+                    b"@@ -1 +1 @@\n-middle\n+last\n")
+    fx.set_patches(deletion + creation + modification)
+    result = fx.run()
+    expected = b"last" + eol.encode()
+    assert (fx.src / "f.txt").read_bytes() == expected
+    assert result["patch_count"] == 1
+    assert result["changed_files"] == ["f.txt"]
+    assert fx.manifest()["outputs"] == {"f.txt": hashlib.sha256(expected).hexdigest()}
+    assert fx.run(check=True)["status"] == "checked"
+    assert not (fx.src / arp.IN_PROGRESS).exists()
+
+
+@pytest.mark.parametrize("conflict", ["content", "whitespace", "partial", "missing", "exists"])
+def test_same_patch_repeated_target_conflicts_remain_fail_closed(tmp_path, conflict):
+    fx = Fixture(tmp_path)
+    source = put(fx.src, "f.txt", b"old\r\n")
+    header = b"diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n"
+    first = header + b"@@ -1 +1 @@\n-old\r\n+middle\n"
+    if conflict == "missing":
+        first = (b"diff --git a/f.txt b/f.txt\ndeleted file mode 100644\n"
+                 b"--- a/f.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n")
+    second = header + b"@@ -1 +1 @@\n-middle\n+last\n"
+    if conflict == "content":
+        second = second.replace(b"-middle", b"-different")
+    elif conflict == "whitespace":
+        second = second.replace(b"-middle", b"-middle ")
+    elif conflict == "partial":
+        second = header + b"@@ -1 +1 @@\n-earlier\n+middle\n"
+    elif conflict == "exists":
+        second = new_patch("f.txt", content="last")
+    fx.set_patches(first + patch() + second)
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in fx.src.rglob("*") if p.is_file()}
+    error = ("unknown/missing patch path" if conflict == "missing" else
+             "new file already exists" if conflict == "exists" else "patch failed.*0001")
+    with pytest.raises(arp.ApplyError, match=error):
+        fx.run()
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before} == before
+    assert source.read_bytes() == b"old\r\n"
+    assert (fx.src / arp.IN_PROGRESS).exists()
+    assert not (fx.src / arp.MARKER).exists()
+    assert not list(fx.src.rglob("*.rej"))
+    assert not list(fx.src.rglob("*.orig"))
+    for check in (False, True):
+        with pytest.raises(arp.ApplyError, match="in-progress"):
+            fx.run(check=check)
+
+
+@pytest.mark.parametrize("final_cr", [b"", b"\r"])
+@pytest.mark.parametrize("side", ["old", "new", "both", "context"])
+def test_crlf_adaptation_respects_no_newline_lines(tmp_path, side, final_cr):
+    fx = Fixture(tmp_path)
+    marker = b"\\ No newline at end of file\n"
+    if side == "context":
+        body = (b"@@ -1,3 +1,3 @@\n context example.com\n-old example.com\n"
+                b"+new example.com\n tail" + final_cr + b"\n" + marker)
+        original = RESTORED.replace(b"\n", b"\r\n")[:-2] + final_cr
+        expected = EXPECTED.replace(b"\n", b"\r\n")[:-2] + final_cr
+    else:
+        old = b"old example.com" + (final_cr if side in ("old", "both") else b"")
+        new = b"new example.com" + (final_cr if side in ("new", "both") else b"")
+        body = (b"@@ -1,2 +1,2 @@\n context example.com\n-" + old + b"\n"
+                + (marker if side in ("old", "both") else b"") + b"+" + new + b"\n"
+                + (marker if side in ("new", "both") else b""))
+        original = (b"context blocked.test\r\n" + old.replace(b"example.com", b"blocked.test")
+                    + (b"" if side in ("old", "both") else b"\r\n"))
+        expected = (b"context blocked.test\r\n" + new.replace(b"example.com", b"blocked.test")
+                    + (b"" if side in ("new", "both") else b"\r\n"))
+    fx.set_patches(b"diff --git a/listed.txt b/listed.txt\n--- a/listed.txt\n+++ b/listed.txt\n" + body)
+    put(fx.src, "listed.txt", original)
+    fx.run()
+    assert (fx.src / "listed.txt").read_bytes() == expected
+
+
+@pytest.mark.parametrize("mixed_source", [False, True])
+def test_explicit_mixed_patch_eol_is_not_rewritten(tmp_path, mixed_source):
+    fx = Fixture(tmp_path)
+    original = RESTORED.replace(b"\n", b"\r\n")
+    body = patch(eol="\r\n").replace(b"+new example.com\r\n", b"+new example.com\n")
+    if mixed_source:
+        original = original.replace(b"old blocked.test\r\n", b"old blocked.test\n")
+        body = body.replace(b"-old example.com\r\n", b"-old example.com\n")
+    fx.set_patches(body)
+    put(fx.src, "listed.txt", original)
+    fx.run()
+    assert (fx.src / "listed.txt").read_bytes() == b"context blocked.test\r\nnew blocked.test\ntail\r\n"
+
+
+@pytest.mark.parametrize("content", [b"new example.com\n", b"new example.com\r\n",
+                                     b"new example.com\r\nmixed\n", b"new example.com\r"])
+def test_new_file_uses_patch_eol_without_inheriting_other_targets(tmp_path, content):
+    fx = Fixture(tmp_path)
+    marker = b"\\ No newline at end of file\n"
+    lines = content.splitlines(keepends=True)
+    body = b"".join(b"+" + line for line in lines)
+    if not content.endswith(b"\n"):
+        body += b"\n" + marker
+    creation = (b"diff --git a/sub/new.txt b/sub/new.txt\nnew file mode 100644\n"
+                b"--- /dev/null\n+++ b/sub/new.txt\n"
+                + f"@@ -0,0 +1,{len(lines)} @@\n".encode() + body)
+    fx.set_patches(patch(), creation)
+    put(fx.src, "listed.txt", RESTORED.replace(b"\n", b"\r\n"))
+    fx.run()
+    assert (fx.src / "listed.txt").read_bytes() == EXPECTED.replace(b"\n", b"\r\n")
+    assert (fx.src / "sub/new.txt").read_bytes() == content
+
+
+def test_lf_hunk_preserves_mixed_eol_outside_hunks(tmp_path):
+    fx = Fixture(tmp_path)
+    original = RESTORED + b"unrelated CRLF\r\nunterminated\r"
+    source = put(fx.src, "listed.txt", original)
+    fx.run()
+    assert source.read_bytes() == EXPECTED + b"unrelated CRLF\r\nunterminated\r"
+
+
+@pytest.mark.parametrize("conflict", [False, True])
+def test_real_port_h_patch_crlf_representation_not_semantic_repair(tmp_path, conflict):
+    fx = Fixture(tmp_path)
+    repo = Path(__file__).resolve().parents[2]
+    fx.set_patches((repo / "patches/0086-third_party-webrtc-p2p-base-port-h.patch").read_bytes())
+    # Matching-context fixture, not an attestation of the upstream .47 source.
+    original = (b"// unrelated source\r\n" * 437
+                + b"      const void* tag,\r\n"
+                b"      absl::AnyInvocable<void(const SentPacketInfo&)> callback) override;\r\n"
+                b"  void NotifySentPacket(const SentPacketInfo& packet) override;\r\n"
+                b"\r\n protected:\r\n  void UpdateNetworkCost() override;\r\n"
+                b"// unterminated tail")
+    if conflict:
+        original = original.replace(b"SentPacketInfo", b"DifferentPacketInfo")
+    source = put(fx.src, "third_party/webrtc/p2p/base/port.h", original)
+    before = source.stat().st_mtime_ns
+    if conflict:
+        with pytest.raises(arp.ApplyError, match="patch failed"):
+            fx.run(platform="windows")
+        assert source.read_bytes() == original
+        assert source.stat().st_mtime_ns == before
+        assert (fx.src / arp.IN_PROGRESS).exists()
+        assert not (fx.src / arp.MARKER).exists()
+    else:
+        fx.run(platform="windows")
+        addition = (b"\r\n  // A STUN mapping may have a different family when the path uses NAT64.\r\n"
+                    b"  static bool IsValidStunMappedAddress(const SocketAddress& address);\r\n")
+        assert source.read_bytes() == original.replace(b"\r\n protected:", addition + b"\r\n protected:")
+
+
+@pytest.mark.parametrize("conflict", ["mixed", "content", "whitespace", "context", "partial"])
+def test_crlf_adaptation_conflicts_remain_fail_closed(tmp_path, conflict):
+    fx = Fixture(tmp_path)
+    fx.set_patches(patch(), patch("second.txt"))
+    second = ORIGINAL.replace(b"\n", b"\r\n")
+    if conflict == "mixed":
+        second = second.replace(b"tail\r\n", b"tail\n")
+    elif conflict == "content":
+        second = second.replace(b"old", b"conflict")
+    elif conflict == "whitespace":
+        second = second.replace(b"old example", b"old  example")
+    elif conflict == "context":
+        second = second.replace(b"context", b"mismatch")
+    else:
+        second = second.replace(b"old", b"new")
+    put(fx.src, "second.txt", second)
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in fx.src.rglob("*") if p.is_file()}
+    with pytest.raises(arp.ApplyError, match="patch failed.*0002"):
+        fx.run()
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before} == before
+    assert (fx.src / arp.IN_PROGRESS).exists()
+    assert not (fx.src / arp.MARKER).exists()
+    assert not list(fx.src.rglob("*.rej"))
+    assert not list(fx.src.rglob("*.orig"))
+    for check in (False, True):
+        with pytest.raises(arp.ApplyError, match="in-progress"):
+            fx.run(check=check)
 
 
 @pytest.mark.parametrize("name", ["../escape", "/absolute", "a/../../escape", "a//b", "a/./b",
