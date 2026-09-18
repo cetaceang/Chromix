@@ -47,6 +47,8 @@ def scope(spec=None, name="window", phase="initial"):
             headers[header] = "?1" if value else "?0"
         else:
             headers[header] = json.dumps(value)
+    if name == "worker":
+        headers = {key: value for key, value in headers.items() if not key.startswith("sec-ch-ua")}
     query = {"scenario": spec["name"], "restart": spec["restart"], "scope": name, "phase": phase}
     return {"ua": headers["user-agent"], "language": "en-US", "languages": ["en-US", "en"],
             "intlLocale": "en-US", "environment": environment(),
@@ -246,6 +248,39 @@ def test_scope_headers_are_negotiated_and_bound_to_exact_request():
     assert "window.ch.mobile" in failures(smoke.evaluate_scope(sample, spec, "window"))
 
 
+@pytest.mark.parametrize("phase", ["initial", "reload"])
+def test_worker_native_hint_absence_is_explicit_and_does_not_relax_js_or_wire_checks(phase):
+    spec = scenario()
+    sample = scope(spec, "worker", phase)
+    checks = smoke.evaluate_scope(sample, spec, "worker", phase)
+    assert not failures(checks)
+    assert "worker.ch.absent" in {check["name"] for check in checks}
+    assert not any(check["status"] == "not_supported" for check in checks)
+    for header in ["sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform", *smoke.HIGH_HEADERS.values(),
+                   "sec-ch-ua-unexpected"]:
+        broken = deepcopy(sample)
+        broken["http"]["headers"][header] = '"unexpected"'
+        assert "worker.ch.absent" in failures(smoke.evaluate_scope(broken, spec, "worker", phase))
+    for header in ("user-agent", "accept-language"):
+        broken = deepcopy(sample)
+        del broken["http"]["headers"][header]
+        assert failures(smoke.evaluate_scope(broken, spec, "worker", phase))
+    assert "worker.http_request_context" in failures(
+        smoke.evaluate_scope(sample, {**spec, "restart": 2}, "worker", phase))
+
+
+@pytest.mark.parametrize("field", ["brands", "mobile", "platform", *smoke.HIGH_HEADERS])
+@pytest.mark.parametrize("broken", ["missing", "wrong_type"])
+def test_worker_ch_fields_remain_required_without_http_hints(field, broken):
+    sample = scope(name="worker")
+    js = sample["uaData"]["low" if field in ("brands", "mobile", "platform") else "high"]
+    if broken == "missing":
+        del js[field]
+    else:
+        js[field] = 0
+    assert f"worker.ch.{field}" in failures(smoke.evaluate_scope(sample, scenario(), "worker"))
+
+
 @pytest.mark.parametrize("name", ["iframe", "worker"])
 @pytest.mark.parametrize("field", ["ua", "languages", "intlLocale", "low", "high"])
 def test_cross_scope_comparison_is_strict(name, field):
@@ -397,13 +432,52 @@ def test_launch_exception_is_failed_and_uses_persistent_profile(tmp_path):
     assert calls[0]["service_workers"] == "block"
 
 
+def identity_media(denied=False):
+    return {"permissions": {name: {"available": True, "state": "denied" if denied else "prompt"}
+                             for name in ("camera", "microphone", "notifications")},
+            "deviceProbe": {"available": True}, "devices": [], "devicesError": None,
+            "permissionGrantsByRunner": 0, "deniedDocument": denied,
+            "origin": "http://127.0.0.1:9876", "secureContext": True,
+            "policyAllows": {name: not denied for name in ("camera", "microphone")}, "capture": {}}
+
+
+def media_control_fixture():
+    origin = "http://127.0.0.1:9876"
+    args = smoke.browser_args(scenario(), origin, False)
+    control = {"fake_only": True, "profile": "/fixture/media-sample", "profile_fresh": True,
+               "args": [*args, "--use-fake-device-for-media-stream"], "grant_calls": 1,
+               "granted_permissions": ["camera", "microphone"], "permissions_cleared": True,
+               "closed": True, "failures": [], "blocked_requests": [], "rows": {}}
+    control["execution"] = {"command_line": ["/explicit/chrome", *control["args"],
+                                               "--user-data-dir=" + control["profile"]]}
+    for phase, path in (("before", "/frame"), ("denied", "/denied"), ("after", "/frame")):
+        denied = phase == "denied"
+        control["rows"][phase] = {"url": origin + path, "status": 200,
+            "headers": {"content-security-policy": "default-src " + origin,
+                        **({"permissions-policy": "camera=(), microphone=()"} if denied else {})},
+            "probe": {"origin": origin, "secureContext": True,
+                "permissions": {name: "granted" for name in ("camera", "microphone")},
+                "policyAllows": {name: not denied for name in ("camera", "microphone")},
+                "capture": {name: {"exception": {"name": "NotAllowedError"}} if denied else {
+                    "success": True, "stopped": True,
+                    "tracks": [{"kind": kind, "readyState": "live", "enabled": True}]}
+                    for name, kind in (("camera", "video"), ("microphone", "audio"))}}}
+    return control, args, origin
+
+
 @pytest.mark.parametrize("fault", [None, "crash", "pageerror", "disconnect", "external", "close"])
 def test_persistent_context_without_browser_handle_and_runtime_failures(tmp_path, monkeypatch, fault):
     events, page_events, routes = {}, {}, {}
     network_online, network_events, offline_calls = True, [], []
+    permission_calls = []
+    media_rows = media_control_fixture()[0]["rows"]
     frame = SimpleNamespace()
+    def goto(url, **kwargs):
+        page.url = url
+        row = media_rows["denied" if url.endswith("/denied") else "before"]
+        return SimpleNamespace(url=url, status=200, all_headers=lambda: deepcopy(row["headers"]))
     page = SimpleNamespace(on=lambda name, callback: page_events.update({name: callback}),
-                           goto=lambda *a, **kw: None, frame=lambda **kw: frame)
+                           goto=goto, frame=lambda **kw: frame)
     def set_offline(offline):
         nonlocal network_online
         offline_calls.append(offline)
@@ -416,10 +490,17 @@ def test_persistent_context_without_browser_handle_and_runtime_failures(tmp_path
             return {"online": network_online}
         if script == smoke.NETWORK_EVENT_READ:
             return {"online": network_online, "events": deepcopy(network_events)}
-        return {}
+        if script == smoke.MEDIA_PROBE:
+            assert argument == {"denied": True, "capture": False}
+            return identity_media(denied=True)
+        if script == smoke.MEDIA_CONTROL_PROBE:
+            assert argument is None
+            return deepcopy(media_rows["denied" if page.url.endswith("/denied") else "before"]["probe"])
+        raise AssertionError("unexpected probe")
     detached = []
     identity = {"path": "/explicit/chrome", "sha256": "a" * 64, "size": 100}
-    cdp = SimpleNamespace(send=lambda method: {"arguments": ["/explicit/chrome"]}
+    cdp = SimpleNamespace(send=lambda method: {"arguments": [launches[-1]["executable_path"],
+                          *launches[-1]["args"], "--user-data-dir=" + launches[-1]["user_data_dir"]]}
                           if method == "Browser.getBrowserCommandLine" else {"product": "mock"},
                           detach=lambda: detached.append(True))
     def close():
@@ -435,7 +516,11 @@ def test_persistent_context_without_browser_handle_and_runtime_failures(tmp_path
                               route_web_socket=lambda pattern, callback: routes.update(ws=callback),
                               on=lambda name, callback: events.update({name: callback}),
                               new_page=new_page, new_cdp_session=lambda target: cdp, close=close,
-                              set_offline=set_offline)
+                              set_offline=set_offline,
+                              grant_permissions=lambda permissions, **kw: permission_calls.append(
+                                  ("grant", launches[-1]["user_data_dir"], permissions, kw)),
+                              clear_permissions=lambda: permission_calls.append(
+                                  ("clear", launches[-1]["user_data_dir"])))
     launches = []
     def launch(**kwargs):
         launches.append(kwargs)
@@ -455,21 +540,178 @@ def test_persistent_context_without_browser_handle_and_runtime_failures(tmp_path
             request = SimpleNamespace(url="https://external.invalid/", redirected_from=None)
             routes["http"](SimpleNamespace(request=request, abort=lambda reason: aborted.append(reason)))
             assert aborted == ["blockedbyclient"]
-        return observation(spec, phase)
+        return {**observation(spec, phase), "media": identity_media()}
     monkeypatch.setattr(smoke, "binary_identity", lambda path: identity)
     monkeypatch.setattr(smoke, "collect_page", collect)
     monkeypatch.setattr(smoke, "evaluate", mocked_evaluate)
-    monkeypatch.setattr(smoke, "evaluate_observation", lambda observation, *_: smoke.evaluate_network_events(observation["network_events"]))
     profile = tmp_path / "profile"
     first = smoke.run_scenario(playwright, scenario(), identity, server, options(), profile)
-    second = smoke.run_scenario(playwright, {**scenario(), "restart": 2}, identity, server, options(), profile)
-    assert first["status"] == ("passed" if fault is None else "failed")
-    assert second["status"] == first["status"]
+    second = smoke.run_scenario(playwright, {**scenario(), "name": "sample-restart", "restart": 2},
+                                identity, server, options(), profile)
+    assert first["status"] == ("passed" if fault is None else "failed"), first["failures"]
+    assert second["status"] == first["status"], second["failures"]
     assert first["profile_fresh"] is True and second["profile_fresh"] is False
-    assert launches[0]["user_data_dir"] == launches[1]["user_data_dir"]
-    assert detached == [True, True]
+    assert len(launches) == 4
+    assert launches[0]["user_data_dir"] == launches[2]["user_data_dir"] == str(profile)
+    media_profiles = [launches[index]["user_data_dir"] for index in (1, 3)]
+    assert media_profiles == [str(tmp_path / ("media-" + result["name"])) for result in (first, second)]
+    assert len({str(profile), *media_profiles}) == 3
+    for index, result in enumerate((first, second)):
+        control = result["media_control"]
+        assert control["profile"] == media_profiles[index] and control["profile_fresh"] is True
+        assert control["permissions_cleared"] is True and control["closed"] is (fault != "close")
+        assert control["grant_calls"] == 1 and control["granted_permissions"] == ["camera", "microphone"]
+        assert control["args"] == [*result["args"], "--use-fake-device-for-media-stream"]
+        assert result["execution"]["command_line"] == [identity["path"], *result["args"],
+                                                     "--user-data-dir=" + str(profile)]
+        assert control["execution"]["command_line"] == [identity["path"], *control["args"],
+                                                      "--user-data-dir=" + media_profiles[index]]
+        expected_checks = {"external": {"network.only_local_origin"},
+                           "close": {"media.control.closed", "media.control.failures"}}.get(fault, set())
+        assert failures(result["checks"]) == expected_checks
+        expected_errors = {"crash": {"page_crash"}, "pageerror": {"page_error"},
+                           "disconnect": {"unexpected_browser_disconnect"}, "close": {"browser_close"}}.get(fault, set())
+        assert {failure["name"] for failure in result["failures"]} == expected_checks | expected_errors
+    assert permission_calls == [event for media_profile in media_profiles for event in (
+        ("grant", media_profile, ["camera", "microphone"], {"origin": server.origin}), ("clear", media_profile))]
+    assert detached == [True, True, True, True]
     assert offline_calls == [True, False, True, False]
     assert network_online is True
+
+
+def test_policy_control_requires_live_tracks_around_policy_only_denial():
+    control, args, origin = media_control_fixture()
+    check = lambda value: smoke.evaluate_media_control(value, "/fixture/identity", args, origin)
+    assert not failures(check(control))
+    for phase in ("before", "after"):
+        for name in ("camera", "microphone"):
+            for capture in ({"exception": {"name": "NotFoundError"}}, {"timeout": True},
+                            {"success": True, "tracks": [], "stopped": True},
+                            {"success": True, "tracks": [{"kind": "audio", "readyState": "ended", "enabled": True}], "stopped": True}):
+                broken = deepcopy(control)
+                broken["rows"][phase]["probe"]["capture"][name] = capture
+                assert f"media.control.{phase}.{name}.live" in failures(check(broken))
+    for name in ("camera", "microphone"):
+        for capture in ({"exception": {"name": "NotFoundError"}}, {"timeout": True}, {"success": True},
+                        {"exception": {"name": "NotAllowedError"}, "success": True},
+                        {"exception": {"name": "NotAllowedError"}, "timeout": True}):
+            broken = deepcopy(control)
+            broken["rows"]["denied"]["probe"]["capture"][name] = capture
+            assert f"media.denied.{name}.capture_rejected" in failures(check(broken))
+    for mutate in (
+            lambda c: c["rows"]["denied"]["headers"].pop("permissions-policy"),
+            lambda c: c["rows"]["denied"]["headers"].update({"content-security-policy": "sandbox allow-scripts"}),
+            lambda c: c["rows"]["denied"]["probe"].update(origin="null"),
+            lambda c: c["rows"]["denied"]["probe"]["policyAllows"].update(camera=True),
+            lambda c: c.update(fake_only=False), lambda c: c.update(profile="/fixture/identity"),
+            lambda c: c.update(profile_fresh=False), lambda c: c.update(grant_calls=0),
+            lambda c: c.update(permissions_cleared=False), lambda c: c.update(closed=False),
+            lambda c: c["args"].pop(), lambda c: c["execution"]["command_line"].pop()):
+        broken = deepcopy(control)
+        mutate(broken)
+        assert failures(check(broken))
+    assert failures(check(None))
+
+
+def test_no_grant_identity_denied_observation_cannot_supply_capture_proof():
+    media = identity_media(denied=True)
+    assert not failures(smoke.evaluate_media(media, True, capture_required=False))
+    media["capture"] = {"camera": {"exception": {"name": "NotFoundError"}}}
+    assert "media.denied.identity_capture_not_requested" in failures(
+        smoke.evaluate_media(media, True, capture_required=False))
+    media["capture"] = {}
+    media["permissionGrantsByRunner"] = 1
+    assert "media.denied.permission_grants" in failures(smoke.evaluate_media(media, True, capture_required=False))
+
+
+@pytest.mark.parametrize("fake_switch", ["--use-fake-device-for-media-stream", "--use-fake-device-for-media-stream=0",
+                                        "--use-fake-ui-for-media-stream", "--use-fake-ui-for-media-stream=false"])
+def test_identity_execution_rejects_fake_media(fake_switch):
+    _, args, _ = media_control_fixture()
+    command = ["/explicit/chrome", *args, "--user-data-dir=/fixture/identity"]
+    assert not smoke.execution_contract_errors({"command_line": command}, "/fixture/identity", args)
+    assert smoke.execution_contract_errors({"command_line": [*command, fake_switch]}, "/fixture/identity", args)
+
+
+def test_execution_profile_canonicalization_rejects_alias_to_identity(tmp_path):
+    identity = tmp_path / "identity"
+    identity.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(identity, target_is_directory=True)
+    control, args, _ = media_control_fixture()
+    command = ["/explicit/chrome", *control["args"], "--user-data-dir=" + str(identity)]
+    assert smoke.execution_contract_errors({"command_line": command}, alias, args, identity)
+    distinct = tmp_path / "media"
+    distinct.mkdir()
+    command[-1] = "--user-data-dir=" + str(distinct)
+    assert not smoke.execution_contract_errors({"command_line": command}, distinct, args, identity)
+    command[-1] = "--user-data-dir=" + str(tmp_path / "unused" / ".." / "media")
+    assert smoke.execution_contract_errors({"command_line": command}, distinct, args, identity)
+
+
+@pytest.mark.parametrize("fault", [None, "fake-ui", "fake-ui-value", "fake-missing", "fake-duplicate", "fake-value",
+                                  "fingerprint-conflict", "fingerprint-duplicate", "profile-missing",
+                                  "profile-duplicate", "profile-reused", "derived-conflict", "argument-missing",
+                                  "switch-terminator"])
+def test_media_control_cleanup_and_fake_only_launch(tmp_path, monkeypatch, fault):
+    calls = []
+    identity = {"path": "/explicit/chrome"}
+    page = SimpleNamespace(on=lambda *_: None)
+    def grant(permissions, **kwargs):
+        calls.append(("grant", permissions, kwargs))
+        raise RuntimeError("grant control failure")
+    def send(method):
+        if method == "Browser.getVersion":
+            return {"product": "mock"}
+        assert method == "Browser.getBrowserCommandLine"
+        launch = calls[0][1]
+        command = [identity["path"], *launch["args"], "--user-data-dir=" + launch["user_data_dir"]]
+        extra = {"fake-ui": "--use-fake-ui-for-media-stream", "fake-ui-value": "--use-fake-ui-for-media-stream=false",
+                 "fake-duplicate": "--use-fake-device-for-media-stream", "fake-value": "--use-fake-device-for-media-stream=0",
+                 "fingerprint-conflict": "--fingerprint=999", "fingerprint-duplicate": "--fingerprint=off",
+                 "profile-duplicate": "--user-data-dir=" + launch["user_data_dir"], "switch-terminator": "--"}
+        if fault in extra:
+            command.append(extra[fault])
+        elif fault == "fake-missing":
+            command.remove("--use-fake-device-for-media-stream")
+        elif fault == "profile-missing":
+            command.pop()
+        elif fault == "profile-reused":
+            command[-1] = "--user-data-dir=" + str(tmp_path / "identity")
+        elif fault == "derived-conflict":
+            command.extend(["--uxr-languages=de-DE", "--uxr-languages=en-US"])
+        elif fault == "argument-missing":
+            command.remove("--disable-background-networking")
+        calls.append("execution")
+        return {"arguments": command}
+    cdp = SimpleNamespace(send=send, detach=lambda: calls.append("detached"))
+    context = SimpleNamespace(browser=None, set_default_timeout=lambda *_: None,
+        set_default_navigation_timeout=lambda *_: None, route=lambda *_: None, route_web_socket=lambda *_: None,
+        on=lambda *_: None, new_page=lambda: page, new_cdp_session=lambda _: cdp,
+        grant_permissions=grant, clear_permissions=lambda: calls.append("cleared"), close=lambda: calls.append("closed"))
+    def launch(**kwargs):
+        calls.append(("launch", kwargs))
+        return context
+    monkeypatch.setattr(smoke, "binary_identity", lambda path: identity)
+    control = smoke.run_media_control(SimpleNamespace(chromium=SimpleNamespace(launch_persistent_context=launch)),
+        scenario(), identity, SimpleNamespace(origin="http://127.0.0.1:9876", snapshot=lambda: []),
+        options(), tmp_path / "media", tmp_path / "identity")
+    assert calls[0][1]["chromium_sandbox"] is True
+    assert calls[0][1]["args"][-1] == "--use-fake-device-for-media-stream"
+    assert "--use-fake-ui-for-media-stream" not in calls[0][1]["args"]
+    assert calls[-2:] == ["cleared", "closed"]
+    assert control["permissions_cleared"] and control["closed"]
+    if fault is None:
+        assert control["failures"][0]["message"] == "grant control failure"
+        assert control["grant_calls"] == 1 and control["granted_permissions"] == []
+        assert calls[3] == ("grant", ["camera", "microphone"], {"origin": "http://127.0.0.1:9876"})
+        assert [event[0] if isinstance(event, tuple) else event for event in calls] == [
+            "launch", "execution", "detached", "grant", "cleared", "closed"]
+    else:
+        assert control["failures"][0]["message"].startswith("media pre-grant execution contract:")
+        assert control["grant_calls"] == 0 and control["granted_permissions"] == []
+        assert [event[0] if isinstance(event, tuple) else event for event in calls] == [
+            "launch", "execution", "detached", "cleared", "closed"]
 
 
 def test_failed_json_and_exit_without_runtime(tmp_path, capsys, monkeypatch):
@@ -501,7 +743,7 @@ def test_output_cannot_overwrite_binary_hardlink(tmp_path, capsys):
 def test_node_js_syntax_and_mocked_worker_canvas_are_not_browser_evidence():
     if not NODE.is_file():
         pytest.skip("explicit Node executable unavailable; no browser verification")
-    scripts = {name: getattr(smoke, name) for name in ["NAV_PROBE", "WORKER_SCRIPT", "WORKER_PROBE", "SIGNAL_PROBE", "MEDIA_PROBE",
+    scripts = {name: getattr(smoke, name) for name in ["NAV_PROBE", "WORKER_SCRIPT", "WORKER_PROBE", "SIGNAL_PROBE", "MEDIA_PROBE", "MEDIA_CONTROL_PROBE",
                                                       "SURFACE_PROBE", "SURFACE_WORKER_SCRIPT", "NETWORK_EVENT_SETUP", "NETWORK_EVENT_READ"]}
     source = "const scripts = " + json.dumps(scripts) + ";\n" + r'''
 const vm = require('node:vm');

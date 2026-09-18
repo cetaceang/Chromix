@@ -187,6 +187,225 @@ def test_bridge_gate_precedes_endpoint_and_connection():
     assert get.index('return nullptr;') < get.index('new CanvasBridgeClient(') < get.index('WaitUntilReady()')
 
 
+def codec_export(reference, mime, kind, quality):
+    image = Image.frombytes('RGBA', (32, 24), bytes(reference))
+    if mime == 'image/jpeg':
+        backdrop = Image.new('RGB', image.size)
+        backdrop.paste(image, mask=image.getchannel('A'))
+        image = backdrop
+    buffer = BytesIO()
+    image.save(buffer, format=audit.FORMATS[mime], quality=round(quality * 100),
+               subsampling=0 if quality == 1 else 2, lossless=quality == 1, method=3)
+    payload = base64.b64encode(buffer.getvalue()).decode('ascii')
+    decoded = audit.decode(payload, mime)['rgba']
+    return {'type':mime, 'quality':quality, 'bytes':payload, 'repeat':True,
+            'urlMatches':True if kind == 'html' else None, 'decoded':decoded,
+            'decodedSrgb':decoded, 'decodedNoPremultiply':decoded}
+
+
+@pytest.fixture(scope='module')
+def codec_v2_template(template):
+    from chromix._canvas_chain import quality_pixels
+    data = deepcopy(template)
+    for scope in data.values():
+        scope['version'] = 2
+        for sample in scope['rows']:
+            kind, alpha = sample['kind'], sample['alpha']
+            for item in sample['exports']:
+                item['quality'] = 0.92
+                if item['type'] != 'image/png':
+                    item.update(codec_export(sample['reference'], item['type'], kind, 0.92))
+                    item['fullQuality'] = codec_export(sample['reference'], item['type'], kind, 1)
+            reference = quality_pixels(alpha)
+            sample['lossyQuality'] = {'input':quality_pixels(), 'reference':reference,
+                'srgb':reference, 'finalRead':reference, 'attributes':sample['attributes'],
+                'exports':[codec_export(reference, mime, kind, 0.92) for mime in ('image/jpeg', 'image/webp')]}
+    return data
+
+
+def test_subsampled_sharp_source_requires_codec_reference(codec_v2_template):
+    data = deepcopy(codec_v2_template)
+    result = audit.evaluate(data)
+    assert result['errors'] == []
+    assert data == codec_v2_template
+    opaque = data['window']['rows'][1]
+    for item in opaque['exports'][1:]:
+        assert not audit.compare(item['decoded'], opaque['reference'], lossy=True)['pass']
+    assert any(c.get('category') == 'codec-source' for c in result['comparisons'])
+    assert all(c['max_bound'] == 36 and c['mean_bound'] == 7 for c in result['comparisons']
+               if c.get('category') == 'codec-source')
+    assert all(c['max_bound'] == 2 and c['mean_bound'] == 0.6 for c in result['comparisons']
+               if c['path'].endswith('/independent-srgb'))
+
+
+@pytest.mark.parametrize('mutation', ['quality-missing', 'quality-input', 'quality-source', 'quality-final',
+    'quality-exports', 'quality-attributes', 'full-missing', 'full-type', 'full-quality', 'full-repeat',
+    'full-url', 'sharp-quality', 'sharp-source-substitution', 'quality-source-substitution',
+    'full-source-substitution', 'sharp-decoder-corruption', 'quality-decoder-corruption', 'full-decoder-corruption'])
+def test_codec_v2_evidence_is_mandatory(codec_v2_template, mutation):
+    data = deepcopy(codec_v2_template)
+    sample = data['window']['rows'][1]
+    quality = sample['lossyQuality']
+    sharp = sample['exports'][1]
+    full = sharp['fullQuality']
+    if mutation == 'quality-missing':
+        sample.pop('lossyQuality')
+    elif mutation.startswith('quality-') and mutation.split('-', 1)[1] in ('input', 'source', 'final', 'exports', 'attributes'):
+        field = {'source':'reference', 'final':'finalRead'}.get(mutation[8:], mutation[8:])
+        quality[field] = []
+    elif mutation == 'full-missing':
+        sharp.pop('fullQuality')
+    elif mutation.startswith('full-') and mutation[5:] in ('type', 'quality', 'repeat', 'url'):
+        field = {'url':'urlMatches'}.get(mutation[5:], mutation[5:])
+        full[field] = None
+    elif mutation == 'sharp-quality':
+        sharp['quality'] = 1
+    else:
+        name = mutation.split('-')[0]
+        item = {'sharp':sharp, 'quality':quality['exports'][0], 'full':full}[name]
+        if mutation.endswith('source-substitution'):
+            item.update(codec_export([0, 0, 0, 255] * 768, 'image/jpeg', 'html', item['quality']))
+        else:
+            item['decodedSrgb'] = [255, 255, 255, 255] * 768
+    errors = audit.evaluate(data)['errors']
+    assert errors and any(not error.endswith(': codec-quality mismatch') for error in errors)
+
+
+def webp_chunk(name, payload):
+    return name + len(payload).to_bytes(4, 'little') + payload + b'\x00' * (len(payload) & 1)
+
+
+def webp_riff(chunks):
+    payload = b'WEBP' + b''.join(webp_chunk(name, data) for name, data in chunks)
+    return b'RIFF' + len(payload).to_bytes(4, 'little') + payload
+
+
+def lossless_chunks(alpha=True):
+    item = codec_export(audit.input_pixels(alpha), 'image/webp', 'html', 1)
+    raw = base64.b64decode(item['bytes'])
+    assert raw[12:16] == b'VP8L'
+    return [(b'VP8L', raw[20:20 + int.from_bytes(raw[16:20], 'little')])]
+
+
+def extended_lossless_chunks(alpha=True):
+    from PIL import ImageCms
+    icc = ImageCms.ImageCmsProfile(ImageCms.createProfile('sRGB')).tobytes()
+    header = bytes([0x20 | (0x10 if alpha else 0)]) + b'\x00' * 3
+    header += (31).to_bytes(3, 'little') + (23).to_bytes(3, 'little')
+    return [(b'VP8X', header), (b'ICCP', icc), *lossless_chunks(alpha)]
+
+
+@pytest.mark.parametrize('extended', [False, True])
+@pytest.mark.parametrize('alpha', [False, True])
+def test_full_quality_webp_lossless_container(extended, alpha):
+    from chromix._canvas_chain import decode
+    raw = webp_riff(extended_lossless_chunks(alpha) if extended else lossless_chunks(alpha))
+    checked = decode(base64.b64encode(raw).decode('ascii'), 'image/webp', lossless_webp=True)
+    assert checked['lossless_webp']['container'] == ('VP8X' if extended else 'VP8L')
+    assert checked['lossless_webp']['alpha'] is alpha
+    assert audit.compare(checked['rgba'], audit.input_pixels(alpha))['pass']
+
+
+@pytest.mark.parametrize('mutation', ['riff', 'webp', 'size-small', 'size-large', 'trailing',
+    'truncated-header', 'huge-chunk', 'truncated-payload', 'bad-padding', 'duplicate-vp8l',
+    'duplicate-vp8x', 'lossy', 'alpha-chunk', 'animation', 'unknown', 'missing-vp8l',
+    'vp8l-signature', 'vp8l-version', 'vp8l-width', 'vp8l-height', 'vp8l-short',
+    'vp8x-size', 'vp8x-reserved', 'vp8x-reserved-bytes', 'vp8x-animation', 'vp8x-width',
+    'vp8x-height', 'alpha-flags', 'metadata-flags', 'metadata-empty', 'metadata-order',
+    'vp8x-order', 'metadata-without-vp8x', 'too-many-chunks'])
+def test_full_quality_webp_rejects_malformed_structure(mutation):
+    from chromix._canvas_chain import webp_lossless_structure
+    chunks = extended_lossless_chunks()
+    if mutation in ('riff', 'webp', 'size-small', 'size-large', 'trailing', 'truncated-header',
+                    'huge-chunk', 'truncated-payload', 'bad-padding'):
+        raw = bytearray(webp_riff(chunks))
+        if mutation == 'riff': raw[:4] = b'RIFX'
+        elif mutation == 'webp': raw[8:12] = b'WAVE'
+        elif mutation == 'size-small': raw[4:8] = (len(raw) - 10).to_bytes(4, 'little')
+        elif mutation == 'size-large': raw[4:8] = (len(raw)).to_bytes(4, 'little')
+        elif mutation == 'trailing': raw.extend(b'x')
+        elif mutation == 'truncated-header': raw = bytearray(webp_riff(chunks) + b'VP8')
+        elif mutation == 'huge-chunk': raw[16:20] = (0xffffffff).to_bytes(4, 'little')
+        elif mutation == 'truncated-payload': raw = raw[:-2]
+        else:
+            raw = bytearray(webp_riff(chunks + [(b'XMP ', b'x')]))
+            raw[-1] = 1
+    else:
+        if mutation == 'duplicate-vp8l': chunks.append(chunks[-1])
+        elif mutation == 'duplicate-vp8x': chunks.insert(1, chunks[0])
+        elif mutation in ('lossy', 'alpha-chunk', 'animation', 'unknown'):
+            chunks.append(({'lossy':b'VP8 ', 'alpha-chunk':b'ALPH', 'animation':b'ANIM', 'unknown':b'FAKE'}[mutation], b'x'))
+        elif mutation == 'missing-vp8l': chunks.pop()
+        elif mutation.startswith('vp8l-'):
+            payload = bytearray(chunks[-1][1])
+            if mutation == 'vp8l-signature': payload[0] = 0
+            elif mutation == 'vp8l-version': payload[4] |= 0x20
+            elif mutation == 'vp8l-width': payload[1] ^= 1
+            elif mutation == 'vp8l-height': payload[3] ^= 1
+            else: payload = payload[:5]
+            chunks[-1] = (b'VP8L', bytes(payload))
+        elif mutation.startswith('vp8x-') and mutation != 'vp8x-order' or mutation == 'alpha-flags':
+            payload = bytearray(chunks[0][1])
+            if mutation == 'vp8x-size': payload.append(0)
+            elif mutation == 'vp8x-reserved': payload[0] |= 0x80
+            elif mutation == 'vp8x-reserved-bytes': payload[1] = 1
+            elif mutation == 'vp8x-animation': payload[0] |= 2
+            elif mutation == 'vp8x-width': payload[4] ^= 1
+            elif mutation == 'vp8x-height': payload[7] ^= 1
+            else: payload[0] ^= 0x10
+            chunks[0] = (b'VP8X', bytes(payload))
+        elif mutation == 'metadata-flags': chunks.pop(1)
+        elif mutation == 'metadata-empty': chunks[1] = (b'ICCP', b'')
+        elif mutation == 'metadata-order': chunks[1], chunks[2] = chunks[2], chunks[1]
+        elif mutation == 'vp8x-order': chunks[0], chunks[1] = chunks[1], chunks[0]
+        elif mutation == 'metadata-without-vp8x': chunks.pop(0)
+        else: chunks.extend([(b'EXIF', b'x'), (b'XMP ', b'x'), (b'VP8L', b'x')])
+        raw = webp_riff(chunks)
+    with pytest.raises(ValueError, match='lossless WebP'):
+        webp_lossless_structure(bytes(raw))
+
+
+def test_full_quality_webp_checks_entropy_not_only_container():
+    from chromix._canvas_chain import decode
+    chunks = lossless_chunks()
+    chunks[0] = (b'VP8L', chunks[0][1][:5] + b'\x00')
+    with pytest.raises((ValueError, OSError)):
+        decode(base64.b64encode(webp_riff(chunks)).decode('ascii'), 'image/webp', lossless_webp=True)
+
+
+def test_full_quality_webp_rejects_coherent_low_quality(codec_v2_template):
+    data = deepcopy(codec_v2_template)
+    sample = data['window']['rows'][0]
+    item = sample['exports'][2]['fullQuality']
+    item.update(codec_export(sample['reference'], 'image/webp', 'html', 0.5))
+    item['quality'] = 1
+    assert audit.compare(item['decoded'], sample['reference'], lossy=True)['pass']
+    assert not audit.compare(item['decoded'], sample['reference'])['pass']
+    result = audit.evaluate(data, check_cross_context=False)
+    assert any('/lossless-source:' in e for e in result['errors'])
+    assert any('lossless WebP' in e for e in result['errors'])
+
+
+def test_full_quality_webp_rejects_wrong_lossless_source(codec_v2_template):
+    data = deepcopy(codec_v2_template)
+    sample = data['window']['rows'][1]
+    changed = list(sample['reference'])
+    changed[0] += 10
+    item = sample['exports'][2]['fullQuality']
+    item.update(codec_export(changed, 'image/webp', 'html', 1))
+    assert audit.compare(item['decoded'], sample['reference'], lossy=True)['pass']
+    result = audit.evaluate(data, check_cross_context=False)
+    assert any('/lossless-source:' in e for e in result['errors'])
+    assert any('/lossless-independent-source:' in e for e in result['errors'])
+
+
+def test_legacy_codec_quality_failure_not_reclassified(codec_v2_template):
+    data = deepcopy(codec_v2_template)
+    for scope in data.values():
+        scope['version'] = 1
+    assert any(error.endswith(': codec-quality mismatch') for error in audit.evaluate(data)['errors'])
+
+
 def test_native_smoke_does_not_enable_synthetic_paths():
     from test_fingerprint_smoke import smoke, scenario
     for mode in ('native', 'on', 'off'):

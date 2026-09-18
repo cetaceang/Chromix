@@ -3,12 +3,14 @@
 The clients here are Python/OpenSSL and aioquic, never native-browser acceptance.
 """
 import asyncio
+from contextlib import nullcontext
 from copy import deepcopy
 import json
 from pathlib import Path
 import socket
 import ssl
 import sys
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 import pytest
@@ -64,6 +66,69 @@ def test_lifecycle_raw_fixture_has_separate_full_and_resumed_comparisons():
     assert all(c['status'] == 'observed_match' for c in comparisons)
 
 
+@pytest.mark.parametrize('status', [200, 503, None])
+def test_lifecycle_collector_binds_initial_phase_to_navigation(monkeypatch, tmp_path, status):
+    fixture = lifecycle_report()
+    rows, navigations, closed = iter(fixture['runs']), [], []
+    origin = 'https://localhost:1234'
+
+    def new_context(**kwargs):
+        row = next(rows)
+
+        def goto(url, **kwargs):
+            navigations.append(url)
+            assert url == origin + f'/echo?context={row["context"]}&phase=initial'
+            if status is None:
+                return None
+            return SimpleNamespace(ok=status == 200, json=lambda: deepcopy(row['phases'][0]['wire']))
+
+        def evaluate(script, argument):
+            if script == lifecycle.launch.bounded(lifecycle.PROBE):
+                assert argument == row['context']
+                assert "'initial'" not in lifecycle.PROBE
+                return deepcopy(row['phases'][1:])
+            assert script == lifecycle.launch.bounded(lifecycle.IDENTITY) and argument is None
+            return deepcopy(row['identity'])
+
+        page = SimpleNamespace(goto=goto, evaluate=evaluate)
+        return SimpleNamespace(new_page=lambda: page, close=lambda: closed.append(row['context']))
+
+    instance = SimpleNamespace(version='152.0.7977.82', new_context=new_context,
+                               close=lambda: closed.append('browser'))
+    pw = SimpleNamespace(chromium=SimpleNamespace(launch=lambda **kwargs: instance))
+    server = SimpleNamespace(spki='fixture', hellos=fixture['client_hellos'],
+                             connections=fixture['connections'], handshake_errors=[])
+    monkeypatch.setitem(sys.modules, 'playwright.sync_api', SimpleNamespace(sync_playwright=lambda: nullcontext(pw)))
+    monkeypatch.setattr(lifecycle, 'endpoint', lambda *args, **kwargs: nullcontext((server, origin)))
+    monkeypatch.setattr(lifecycle.launch.pool, 'file_hash', lambda _: 'a' * 64)
+    report = lifecycle.run(tmp_path / 'browser')
+    if status == 200:
+        assert report['errors'] == [] and report['status'] == 'passed'
+        assert report['runs'] == fixture['runs']
+        assert len(navigations) == 2 and closed == [0, 1, 'browser']
+    else:
+        assert report['status'] == 'failed' and report['errors']
+        assert report['runs'] == [] and closed == [0, 'browser']
+
+
+def test_lifecycle_unbound_navigation_cannot_replace_resumed_initial_phase():
+    report = lifecycle_report()
+    navigation = deepcopy(report['connections'][0])
+    navigation['id'] = 5
+    navigation['requests'] = [deepcopy(navigation['requests'][0])]
+    navigation['requests'][0]['headers'][3][1] = '/'
+    navigation.pop('goaway_stream')
+    report['connections'].append(navigation)
+    report['client_hellos'].append({**deepcopy(report['client_hellos'][0]), 'connection_id': 5})
+    report['connections'][0]['session_reused'] = True
+    report['client_hellos'][0]['extensions'].append(41)
+    errors, comparisons = lifecycle.assess(report)
+    assert 'full: negotiated TLS13/H2 session state mismatch' in errors
+    assert 'full: PSK offer does not match session state' in errors
+    assert 'full: TLS profile changed across browser contexts' in errors
+    assert comparisons[0]['status'] == 'mismatch'
+
+
 @pytest.mark.parametrize('mutate', [
     lambda r: r['connections'][1].update(session_reused=False),
     lambda r: r['connections'][0].update(session_reused=True),
@@ -73,6 +138,8 @@ def test_lifecycle_raw_fixture_has_separate_full_and_resumed_comparisons():
     lambda r: r['connections'][0].update(goaway_stream=999),
     lambda r: r['client_hellos'].pop(),
     lambda r: r['client_hellos'][1]['extensions'].remove(41),
+    lambda r: r['client_hellos'][0]['extensions'].append(41),
+    lambda r: r['client_hellos'][2]['ciphers'].reverse(),
     lambda r: r['client_hellos'][3]['ciphers'].reverse(),
     lambda r: r['client_hellos'][0].update(connection_id=9),
     lambda r: r['runs'].pop(),
@@ -207,6 +274,54 @@ def test_quic_parameters_decode_unknowns_without_cid_or_token_bytes():
     assert not quic.assess(quic_report())
 
 
+def quic_version_report(versions):
+    report = quic_report()
+    for c, values in zip(report['connections'], versions):
+        payload = b''.join(v.to_bytes(4, 'big') for v in values)
+        block = transport_parameters() + encode_varint(17) + encode_varint(len(payload)) + payload
+        c['transport_parameters'] = quic.parse_transport_parameters(block)
+    return report
+
+
+def test_quic_reserved_version_insertion_is_not_a_profile_change():
+    report = quic_version_report(([1, 1, 1783253706], [1, 3129658042, 1]))
+    assert quic.assess(report) == []
+    assert quic.assess(quic_version_report(([1, 1, 2, 0x1a2a3a4a], [1, 0xfaeada0a, 1, 2]))) == []
+
+
+@pytest.mark.parametrize('versions', [
+    [2, 1, 2, 0x1a2a3a4a],
+    [1, 2, 1, 0x1a2a3a4a],
+    [1, 1, 3, 0x1a2a3a4a],
+    [1, 1, 2],
+    [1, 1, 2, 0x1a2a3a4a, 0xfaeada0a],
+    [1, 1, 2, 0x1a2a3a4b],
+    [1, 1, 1, 2, 0x1a2a3a4a],
+])
+def test_quic_real_version_order_and_grease_count_differences_fail(versions):
+    report = quic_version_report(([1, 1, 2, 0x1a2a3a4a], versions))
+    assert 'QUIC transport parameters changed across contexts or were not observed' in quic.assess(report)
+
+
+def test_quic_chosen_version_is_not_grease_normalized():
+    report = quic_version_report(([0x1a2a3a4a, 1], [0xfaeada0a, 1]))
+    assert quic.assess(report)
+
+
+@pytest.mark.parametrize('mutate', [
+    lambda row: row.update(versions=[]),
+    lambda row: row.update(versions=[1, True, 0x0a0a0a0a]),
+    lambda row: row.update(versions=[1, 1, 2**32]),
+    lambda row: row.update(length=8),
+    lambda row: row.pop('versions'),
+    lambda row: row.update(value_sha256='a' * 64, versions=None),
+])
+def test_quic_malformed_version_information_fails(mutate):
+    report = quic_version_report(([1, 1, 0x0a0a0a0a], [1, 1, 0x0a0a0a0a]))
+    mutate(report['connections'][0]['transport_parameters']['parameters'][-1])
+    assert quic.assess(report)
+
+
 @pytest.mark.parametrize('data', [b'', b'\x40', b'\x04\x01', b'\x04\x02\x40', b'\x0c\x01x',
     b'\x04\x02\0\0', b'\x11\x01x', b'\x0c\0\x0c\0', b'x' * 65537])
 def test_malformed_quic_parameter_blocks_fail(data):
@@ -231,7 +346,10 @@ def test_malformed_quic_parameter_blocks_fail(data):
     lambda r: r['connections'][0]['settings'].append([1,1]),
     lambda r: r['connections'][0]['settings'][0].__setitem__(1, 9),
     lambda r: r['connections'][0]['requests'][0]['pseudo_order'].reverse(),
+    lambda r: r['connections'][0].pop('transport_parameters'),
+    lambda r: r['connections'][0]['transport_parameters'].update(parameters=[]),
     lambda r: r['connections'][0]['transport_parameters']['parameters'].pop(),
+    lambda r: r['connections'][0]['transport_parameters']['parameters'][-1].update(value_sha256='a' * 64),
     lambda r: r['connections'][0]['transport_parameters']['parameters'][2].update(value=9),
     lambda r: r['runs'][0]['identity']['wire']['headers'].update({'sec-ch-ua-arch':'"arm"'}),
 ])

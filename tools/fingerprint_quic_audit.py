@@ -103,7 +103,10 @@ def canonical_parameters(observed):
             if (not isinstance(versions, list) or not versions or length != 4 * len(versions) or
                     any(type(v) is not int or not 0 <= v < 2**32 for v in versions)):
                 raise ValueError('invalid QUIC version information evidence')
-            result.append([key, [0x0a0a0a0a if v & 0x0f0f0f0f == 0x0a0a0a0a else v for v in versions]])
+            # Keep the chosen version and real-version order; GREASE insertion varies.
+            available = [v for v in versions[1:] if v & 0x0f0f0f0f != 0x0a0a0a0a]
+            grease_count = len(versions) - 1 - len(available)
+            result.append([key, [versions[0], *available, *([0x0a0a0a0a] * grease_count)]])
         elif key in INTEGER_PARAMETERS:
             value = row['value']
             if type(value) is not int or not 0 <= value < 2**62 or length not in (1, 2, 4, 8):

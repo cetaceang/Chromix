@@ -15,7 +15,7 @@ from fingerprint_transport_audit import endpoint, IDENTITY, launch, header_error
 PHASES = ('initial', 'reuse', 'goaway', 'resumed', 'reuse_after')
 PROBE = """async context => {
   const phases=[];
-  for (const phase of ['initial','reuse','goaway','resumed','reuse_after']) {
+  for (const phase of ['reuse','goaway','resumed','reuse_after']) {
     const path='/echo?context='+context+'&phase='+phase+(phase==='goaway'?'&close=1':'');
     const response=await fetch(path,{cache:'no-store'});
     if (!response.ok) throw new Error('fixture status '+response.status);
@@ -154,9 +154,14 @@ def run(browser, headed=False):
                         context = instance.new_context(no_viewport=True)
                         try:
                             page = context.new_page()
-                            page.goto(origin, wait_until='load', timeout=30000)
+                            # Bind the full handshake before navigation can seed a PSK reconnect.
+                            response = page.goto(origin + f'/echo?context={i}&phase=initial',
+                                wait_until='load', timeout=30000)
+                            if response is None or not response.ok:
+                                raise RuntimeError('missing successful initial navigation response')
+                            initial = {'phase': 'initial', 'wire': response.json()}
                             report['runs'].append({'context': i,
-                                'phases': page.evaluate(launch.bounded(PROBE), i),
+                                'phases': [initial, *page.evaluate(launch.bounded(PROBE), i)],
                                 'identity': page.evaluate(launch.bounded(IDENTITY), None)})
                         finally:
                             context.close()

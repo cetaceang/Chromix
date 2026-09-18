@@ -97,23 +97,23 @@ def server():
 
 def case_args(name, family, native_capabilities):
     if name == 'native':
-        return [*BASE_ARGS, '--fingerprint-audio-render=native', '--fingerprint-timer-resolution=0']
+        return [*BASE_ARGS, '--uxr-audio-render=native', '--uxr-timer-resolution=0']
     mixed = name in ('isolated', 'restart')
     uvpaa = native_capabilities.get('uvpaa', {}).get('value', False)
     return [*BASE_ARGS,
-        '--fingerprint-audio-render=isolated', '--fingerprint-audio-seed=' + ('12345' if mixed else '67890'),
-        '--fingerprint-timer-resolution=' + ('7' if mixed else '11'),
-        '--fingerprint-font-policy=restricted', '--fingerprint-font-whitelist=' + family,
-        '--fingerprint-color-scheme=' + ('dark' if mixed else 'light'),
-        '--fingerprint-preferred-contrast=' + ('more' if mixed else 'no-preference'),
-        '--fingerprint-forced-colors=' + ('active' if mixed else 'none'),
-        '--fingerprint-reduced-motion=' + str(mixed).lower(),
-        '--fingerprint-reduced-transparency=' + str(mixed).lower(),
-        '--fingerprint-inverted-colors=' + str(mixed).lower(),
-        '--fingerprint-pointer=' + ('fine' if mixed else 'none'),
-        '--fingerprint-hover=' + ('hover' if mixed else 'none'),
-        '--fingerprint-max-touch-points=' + ('5' if mixed else '0'),
-        '--fingerprint-keyboard-layout=native', '--uxr-plugins=chrome', '--uxr-voices=windows',
+        '--uxr-audio-render=isolated', '--uxr-audio-seed=' + ('12345' if mixed else '67890'),
+        '--uxr-timer-resolution=' + ('7' if mixed else '11'),
+        '--uxr-font-policy=restricted', '--uxr-font-whitelist=' + family,
+        '--uxr-color-scheme=' + ('dark' if mixed else 'light'),
+        '--uxr-preferred-contrast=' + ('more' if mixed else 'no-preference'),
+        '--uxr-forced-colors=' + ('active' if mixed else 'none'),
+        '--uxr-reduced-motion=' + str(mixed).lower(),
+        '--uxr-reduced-transparency=' + str(mixed).lower(),
+        '--uxr-inverted-colors=' + str(mixed).lower(),
+        '--uxr-pointer=' + ('fine' if mixed else 'none'),
+        '--uxr-hover=' + ('hover' if mixed else 'none'),
+        '--uxr-max-touch-points=' + ('5' if mixed else '0'),
+        '--uxr-keyboard-layout=native', '--uxr-plugins=chrome', '--uxr-voices=windows',
         '--uxr-webauthn-uvpaa=' + str(not uvpaa).lower()]
 
 

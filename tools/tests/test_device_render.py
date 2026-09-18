@@ -16,7 +16,7 @@ from chromix._device_probe import PROBE_VERSION, probe_hash, probe_source, ASSET
 from chromix import _device_fonts as fonts
 from test_device_pool import bundle as legacy_bundle, seal
 from test_device_p0 import v2_observation
-from test_canvas_chain_audit import template as chain_template
+from test_canvas_chain_audit import template as chain_template, codec_v2_template, codec_export
 from test_fingerprint_runtime_audits import render_report
 from gpu_backend_fixtures import backend_fixture, system_fixture
 
@@ -86,6 +86,56 @@ def _template():
 
 def observation():
     return deepcopy(_template())
+
+
+@pytest.mark.parametrize('mode', ['intact', 'missing', 'sharp', 'quality', 'full'])
+def test_codec_v2_source_errors_remain_admission_failures(mode):
+    chains = codec_v2_template.__wrapped__(chain_template.__wrapped__())
+    sample = observation()
+    for scope in pool.SCOPES:
+        raw = render.unpack(sample[scope]['render'])
+        raw['chain'] = deepcopy(chains[scope])
+        if scope in ('window', 'iframe'):
+            raw['chain']['taint'] = {'status':'not_collected'}
+        if scope == 'window' and mode != 'intact':
+            row = raw['chain']['rows'][1]
+            if mode == 'missing':
+                row.pop('lossyQuality')
+            else:
+                item = {'sharp':row['exports'][1], 'quality':row['lossyQuality']['exports'][0],
+                        'full':row['exports'][1]['fullQuality']}[mode]
+                item.update(codec_export([0, 0, 0, 255] * 768, 'image/jpeg', 'html', item['quality']))
+        sample[scope]['render'] = pack(raw)
+    checked = render.assess_observation(sample)
+    if mode == 'intact':
+        assert checked['errors'] == []
+    else:
+        assert checked['errors']
+        assert any('codec-source' in e or 'lossyQuality' in e for e in checked['errors'])
+
+
+@pytest.mark.parametrize('lossy', [False, True])
+def test_full_quality_webp_errors_remain_admission_failures(lossy):
+    chains = codec_v2_template.__wrapped__(chain_template.__wrapped__())
+    row = chains['window']['rows'][0]
+    source = list(row['reference'])
+    if not lossy:
+        source[0] += 10
+    item = row['exports'][2]['fullQuality']
+    item.update(codec_export(source, 'image/webp', 'html', 0.5 if lossy else 1))
+    item['quality'] = 1
+    sample = observation()
+    for scope in pool.SCOPES:
+        raw = render.unpack(sample[scope]['render'])
+        raw['chain'] = deepcopy(chains[scope])
+        if scope in ('window', 'iframe'):
+            raw['chain']['taint'] = {'status':'not_collected'}
+        sample[scope]['render'] = pack(raw)
+    checked = render.assess_observation(sample)
+    assert any('/lossless-source:' in e for e in checked['errors'])
+    assert any(('lossless WebP' if lossy else '/lossless-independent-source:') in e
+               for e in checked['errors'])
+    assert checked['codec_quality'] == []
 
 
 def refresh_render(record, root, browser=None):

@@ -111,12 +111,22 @@ def _assess(report):
                 prefix([family + ': malformed codec queries'])
             if any(type(row[key]) is not int or row[key] < 0 for key in ('rtcSend', 'rtcReceive')):
                 prefix([family + ': malformed RTC capabilities'])
+            capability_results = {}
             for key in ('encoding', 'decoding'):
-                if not isinstance(row[key], dict) or any(type(row[key].get(k)) is not bool for k in ('supported', 'smooth', 'powerEfficient')):
-                    prefix([family + ': missing MediaCapabilities result'])
+                result = row.get(key)
+                valid = isinstance(result, dict) and all(
+                    type(result.get(field)) is bool
+                    for field in ('supported', 'smooth', 'powerEfficient'))
+                if not valid:
+                    prefix([family + ': missing MediaCapabilities result: ' + key])
+                capability_results[key] = result if valid else None
             if family in CASES[name]:
+                advertised_capabilities = any(
+                    capability_results[key] is not None and any(capability_results[key][field]
+                        for field in ('supported', 'smooth', 'powerEfficient'))
+                    for key in ('encoding', 'decoding'))
                 if (any(row[key] for key in API_KEYS) or row['canPlay'] or row['rtcSend'] or row['rtcReceive'] or
-                        any(row[key]['supported'] or row[key]['smooth'] or row[key]['powerEfficient'] for key in ('encoding', 'decoding'))):
+                        advertised_capabilities):
                     prefix([family + ': disabled codec still advertised'])
                 for key in ('encoded', 'recorded'):
                     if not rejected(row[key]):

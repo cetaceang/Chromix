@@ -284,6 +284,43 @@ def test_media_saved_pass_cannot_hide_operation_failures(mutate):
     assert acceptance.assess_suite('media_policy', report, 'a' * 64, '152.0.7977.82')[0]
 
 
+@pytest.mark.parametrize('key', ('encoding', 'decoding'))
+def test_missing_media_capabilities_result_is_explicit_and_does_not_abort_other_checks(key):
+    report = media_report()
+    for run in report['runs']:
+        run['observation']['families']['h264'][key] = None
+    errors, gaps = media.assess(report)
+    assert any('h264: missing MediaCapabilities result: ' + key in error for error in errors)
+    assert not any("NoneType" in error for error in errors)
+    assert gaps == []
+
+
+def test_missing_media_capabilities_retains_disabled_operation_failures_and_gaps():
+    report = media_report()
+    report['runs'][1]['observation']['families']['h264']['encoding'] = None
+    report['runs'][1]['observation']['families']['h264']['encoded'] = {'status': 'encoded', 'config': {'codec': 'h264'},
+        'chunks': [{'data': 'eHg=', 'type': 'key', 'timestamp': 0}]}
+    errors, gaps = media.assess(report)
+    assert any('disabled codec still advertised' in error for error in errors) is False
+    assert any('disabled encoded operation was not rejected' in error for error in errors)
+    assert any('missing MediaCapabilities result: encoding' in error for error in errors)
+
+
+def test_missing_media_capabilities_does_not_hide_native_fixture_gaps():
+    report = media_report()
+    for run in report['runs']:
+        row = run['observation']['families']['hevc']
+        row['encoding'] = None
+        if run['name'] == 'native':
+            row.update(**dict.fromkeys(media.API_KEYS, False), canPlay='', rtcSend=0, rtcReceive=0,
+                       encoded={'status': 'unavailable'}, recorded={'status': 'unavailable'})
+        row.update(decoded={'status': 'unavailable'}, playback={'status': 'unavailable'}, mse={'status': 'unavailable'})
+    errors, gaps = media.assess(report)
+    assert any('missing MediaCapabilities result: encoding' in error for error in errors)
+    assert 'native.hevc.native_encoder' in gaps
+    assert 'disabled.hevc.decoded.no_native_fixture' in gaps
+
+
 def test_missing_hardware_codec_is_a_gap_not_fabricated_operation_coverage():
     report = media_report()
     for run in report['runs']:

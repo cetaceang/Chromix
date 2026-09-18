@@ -18,6 +18,20 @@ globalThis.canvasChainProbe = async ({taint = true} = {}) => {
       return read(ctx, colorSpace);
     } finally { bitmap.close(); }
   };
+  const exportFor = async (canvas, colorSpace, type, quality = 0.92) => {
+    const blob = await blobFor(canvas, type, quality), bytes = new Uint8Array(await blob.arrayBuffer());
+    require(blob.type === type, 'encoder silently fell back: ' + type + ' -> ' + blob.type);
+    const repeat = new Uint8Array(await (await blobFor(canvas, type, quality)).arrayBuffer());
+    let urlMatches = null;
+    if (canvas.toDataURL) {
+      const url = canvas.toDataURL(type, quality);
+      require(url.startsWith(`data:${type};base64,`), 'data URL MIME fallback');
+      urlMatches = url.split(',')[1] === bytes64(bytes) && url === canvas.toDataURL(type, quality);
+    }
+    return {type, quality, bytes:bytes64(bytes), repeat:equal(bytes, repeat), urlMatches,
+      decoded:await bitmapRead(blob, colorSpace), decodedSrgb:await bitmapRead(blob, 'srgb'),
+      decodedNoPremultiply:await bitmapRead(blob, colorSpace, {premultiplyAlpha:'none'})};
+  };
   const rows = [], errors = [], unavailable = [];
   const kinds = typeof document === 'undefined' ? ['offscreen'] : ['html', 'offscreen'];
   for (const kind of kinds) for (const colorSpace of ['srgb', 'display-p3']) for (const alpha of [true, false]) {
@@ -28,7 +42,7 @@ globalThis.canvasChainProbe = async ({taint = true} = {}) => {
       if (ctx.getContextAttributes().colorSpace !== colorSpace) {
         unavailable.push({id, reason:'requested color space unavailable'}); continue;
       }
-      // Flat aligned bands permit meaningful lossy-codec bounds without text/font dependencies.
+      // Sharp bands exercise pixel transfer; subsampled codecs need separate quality evidence.
       const colors = [[48,96,160,255],[160,80,48,128],[40,200,100,64],[200,30,160,0]];
       const data = ctx.createImageData(width, height, {colorSpace});
       for (let y = 0; y < height; y++) for (let x = 0; x < width; x++)
@@ -63,19 +77,24 @@ globalThis.canvasChainProbe = async ({taint = true} = {}) => {
       }
       const exports = [];
       for (const type of ['image/png', 'image/jpeg', 'image/webp']) {
-        const blob = await blobFor(canvas, type), bytes = new Uint8Array(await blob.arrayBuffer());
-        require(blob.type === type, 'encoder silently fell back: ' + type + ' -> ' + blob.type);
-        const repeat = new Uint8Array(await (await blobFor(canvas, type)).arrayBuffer());
-        let urlMatches = null;
-        if (canvas.toDataURL) {
-          const url = canvas.toDataURL(type, 0.92);
-          require(url.startsWith(`data:${type};base64,`), 'data URL MIME fallback');
-          urlMatches = url.split(',')[1] === bytes64(bytes) && url === canvas.toDataURL(type, 0.92);
-        }
-        exports.push({type, bytes:bytes64(bytes), repeat:equal(bytes, repeat), urlMatches,
-          decoded:await bitmapRead(blob, colorSpace), decodedSrgb:await bitmapRead(blob, 'srgb'),
-          decodedNoPremultiply:await bitmapRead(blob, colorSpace, {premultiplyAlpha:'none'})});
+        const item = await exportFor(canvas, colorSpace, type);
+        if (type !== 'image/png') item.fullQuality = await exportFor(canvas, colorSpace, type, 1);
+        exports.push(item);
       }
+      const qualityCanvas = make(kind), qualityContext = qualityCanvas.getContext('2d', {colorSpace, alpha});
+      const qualityData = qualityContext.createImageData(width, height, {colorSpace});
+      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+        const position = Math.max(0, Math.min(3, (x - 4) / 8));
+        const left = Math.floor(position), right = Math.min(3, left + 1), fraction = position - left;
+        for (let k = 0; k < 4; k++) qualityData.data[(y * width + x) * 4 + k] =
+          Math.round(colors[left][k] * (1 - fraction) + colors[right][k] * fraction);
+      }
+      qualityContext.putImageData(qualityData, 0, 0);
+      const lossyQuality = {input:Array.from(qualityData.data), reference:read(qualityContext, colorSpace),
+        srgb:read(qualityContext, 'srgb'), attributes:qualityContext.getContextAttributes(), exports:[]};
+      for (const type of ['image/jpeg', 'image/webp'])
+        lossyQuality.exports.push(await exportFor(qualityCanvas, colorSpace, type));
+      lossyQuality.finalRead = read(qualityContext, colorSpace);
       const fallback = await blobFor(canvas, 'image/x-chromix-unsupported');
       const invalidRead = await errorName(() => ctx.getImageData(0, 0, 0, 1));
       const finalRead = read(ctx, colorSpace), sourceStable = equal(reference, finalRead);
@@ -90,7 +109,7 @@ globalThis.canvasChainProbe = async ({taint = true} = {}) => {
       }
       rows.push({id, kind, colorSpace, alpha, width, height, attributes:ctx.getContextAttributes(),
         input:Array.from(data.data), reference, srgb, direct, premultiply, noConversion, float16,
-        exports, crop:Array.from(crop), padded:Array.from(padded), cropMatches, paddingMatches,
+        exports, lossyQuality, crop:Array.from(crop), padded:Array.from(padded), cropMatches, paddingMatches,
         invalidRead, sourceStable, finalRead, fallback:fallback.type, transfer});
     } catch (e) { errors.push({id, name:e.name, message:e.message}); }
   }
@@ -108,7 +127,7 @@ globalThis.canvasChainProbe = async ({taint = true} = {}) => {
     if (explicit) args.push({colorSpace:'srgb'});
     edges.push({id:`${kind}/${history}/${explicit}`, pixels:Array.from(ctx.getImageData(...args).data)});
   }
-  const result = {version:1, rows, errors, unavailable, zeroBlob, edges};
+  const result = {version:2, rows, errors, unavailable, zeroBlob, edges};
   if (typeof document !== 'undefined') {
     const empty = make('html'); empty.width = 0;
     result.zeroURL = empty.toDataURL();

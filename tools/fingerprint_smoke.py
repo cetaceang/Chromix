@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Smoke-test an existing Chromix executable against a private loopback HTTPServer.
 
-No downloads, browser discovery, UA/locale emulation, or permission grants are
-performed. Run this file with --help for the matrix and output options.
+No downloads, browser discovery or UA/locale emulation are performed. Identity
+profiles receive no permission grants; a separate fake-device profile tests
+media permission enforcement. Run --help for the matrix and output options.
 """
 from __future__ import annotations
 
@@ -40,9 +41,11 @@ ACCEPT_CH = ", ".join(["sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform",
 SCOPES = ("window", "iframe", "worker")
 LIMITATIONS = [
     "A smoke pass is behavioral evidence, not a signed attestation of a Chromix build.",
-    "No real media permission is requested or granted; device counts are observations only.",
+    "Identity profiles have no fake media devices or permission grants; their device counts are observations only.",
     "No GPU/physical audio device is required; unsupported optional probes are reported.",
     "Surface probes cover bounded Canvas/GPU/offline audio/codec paths, not all P0-P2 backlog items; optional skips are not coverage passes.",
+    "Worker HTTP Client Hints must be absent under Chromium's worker fetch contract; its JS UAData still matches window/iframe. Codec capabilities cover file decoding and WebRTC encoding, not experimental record encoding.",
+    "Each scenario uses an additional fresh fake-device-only profile with camera/microphone grants: live positive captures bracket policy-only rejection. These controls are not physical hardware identity samples.",
     "Loopback fetch/ResourceTiming and context offline/online events are tested; network/storage dynamic values are not restart-stability fingerprints. Disk enforcement and storage-bucket isolation are not tested.",
     "No TLS/HTTP2/HTTP3, external service, WebRTC/STUN, or host-isolation proof is tested.",
     "Routing and browser network flags are defense in depth, not an OS network sandbox.",
@@ -157,7 +160,9 @@ SIGNAL_PROBE = r"""async () => {
   });
   return {canvas:canvasResult, audio};
 }"""
-MEDIA_PROBE = r"""async (denied) => {
+MEDIA_PROBE = r"""async (options) => {
+  const denied = typeof options === 'object' ? options.denied : options;
+  const captureDenied = typeof options === 'object' ? options.capture : options;
   const permissions = {};
   for (const name of ['camera', 'microphone', 'notifications']) {
     if (!navigator.permissions || typeof navigator.permissions.query !== 'function') {
@@ -179,7 +184,7 @@ MEDIA_PROBE = r"""async (denied) => {
     } catch (e) { devicesError = {name:e.name, message:e.message}; }
   }
   const capture = {};
-  if (denied && navigator.mediaDevices) {
+  if (denied && captureDenied && navigator.mediaDevices) {
     for (const [name, constraints] of [['camera', {video:true}], ['microphone', {audio:true}]]) {
       // Never call getUserMedia unless document policy explicitly forbids it.
       if (policyAllows[name] !== false) { capture[name] = {notRun:'policy denial unconfirmed'}; continue; }
@@ -196,10 +201,36 @@ MEDIA_PROBE = r"""async (denied) => {
     }
   }
   return {permissions, policyAllows, devices, devicesError,
+    origin:globalThis.origin, secureContext:globalThis.isSecureContext,
     deviceProbe:navigator.mediaDevices ? (devicesError ? {error:devicesError} : {available:true}) :
       {available:false, reason:'mediaDevices unavailable'}, capture,
     notificationPermission:typeof Notification === 'undefined' ? null : Notification.permission,
     permissionGrantsByRunner:0, deniedDocument:denied};
+}"""
+
+
+MEDIA_CONTROL_PROBE = r"""async () => {
+  const policy = document.permissionsPolicy || document.featurePolicy;
+  const result = {origin:globalThis.origin, secureContext:globalThis.isSecureContext,
+    permissions:{}, policyAllows:{}, capture:{}};
+  for (const [name, constraints] of [['camera', {video:true}], ['microphone', {audio:true}]]) {
+    result.policyAllows[name] = policy ? policy.allowsFeature(name) : null;
+    result.permissions[name] = (await navigator.permissions.query({name})).state;
+    let timer;
+    try {
+      result.capture[name] = await Promise.race([
+        navigator.mediaDevices.getUserMedia(constraints).then(stream => {
+          const tracks = stream.getTracks();
+          const observed = tracks.map(track => ({kind:track.kind, readyState:track.readyState,
+            enabled:track.enabled}));
+          tracks.forEach(track => track.stop());
+          return {success:true, tracks:observed, stopped:tracks.every(track => track.readyState === 'ended')};
+        }, error => ({exception:{name:error.name, message:error.message}})),
+        new Promise(resolve => { timer = setTimeout(() => resolve({timeout:true}), 5000); })
+      ]);
+    } finally { clearTimeout(timer); }
+  }
+  return result;
 }"""
 
 
@@ -340,12 +371,12 @@ class LocalHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("Accept-CH", ACCEPT_CH)
-        self.send_header("Content-Security-Policy",
-                         f"default-src {self.server.origin}; connect-src {self.server.origin}; "
-                         f"worker-src {self.server.origin}; frame-src {self.server.origin}; "
-                         "object-src 'none'; base-uri 'none'; form-action 'none'")
+        csp = (f"default-src {self.server.origin}; connect-src {self.server.origin}; "
+               f"worker-src {self.server.origin}; frame-src {self.server.origin}; "
+               "object-src 'none'; base-uri 'none'; form-action 'none'")
         if path == "/denied":
             self.send_header("Permissions-Policy", "camera=(), microphone=()")
+        self.send_header("Content-Security-Policy", csp)
         self.end_headers()
         self.wfile.write(body)
 
@@ -492,13 +523,23 @@ def evaluate_scope(scope: dict, spec: dict, name: str, phase: str = "initial") -
     add_check(checks, f"{name}.ua_data_available", bool(low and high) and not data.get("highError"), True, data)
     mappings = {"brands": "sec-ch-ua", "mobile": "sec-ch-ua-mobile",
                 "platform": "sec-ch-ua-platform", **HIGH_HEADERS}
+    if name == "worker":
+        # Chromium's worker fetch context does not add HTTP Client Hints.
+        hints = {key: value for key, value in headers.items() if key.startswith("sec-ch-ua")}
+        add_check(checks, "worker.ch.absent", not hints, {}, hints)
     for field, header in mappings.items():
         js = low if field in ("brands", "mobile", "platform") else high
         expected = js.get(field)
         try:
             expected = brand_pairs(expected) if field in ("brands", "fullVersionList") else expected
-            observed = parse_ch(headers[header], field)
-            passed = field in js and type(expected) is type(observed) and expected == observed
+            if name == "worker":
+                observed = {"js": js.get(field), "header": headers.get(header)}
+                kind = list if field in ("brands", "fullVersionList") else bool if field in ("mobile", "wow64") else str
+                passed = field in js and type(js[field]) is kind and header not in headers
+                expected = {"js": js.get(field), "header": None}
+            else:
+                observed = parse_ch(headers[header], field)
+                passed = field in js and type(expected) is type(observed) and expected == observed
         except (ValueError, KeyError, TypeError) as error:
             observed, passed = {"error": str(error), "header": headers.get(header)}, False
         add_check(checks, f"{name}.ch.{field}", passed, expected, observed)
@@ -919,7 +960,7 @@ def evaluate_signals(signals: dict) -> list:
     return checks
 
 
-def evaluate_media(media: dict, denied: bool) -> list:
+def evaluate_media(media: dict, denied: bool, capture_required: bool = True) -> list:
     checks = []
     label = "media.denied" if denied else "media.pristine"
     if not isinstance(media, dict):
@@ -928,6 +969,11 @@ def evaluate_media(media: dict, denied: bool) -> list:
     add_check(checks, label + ".permission_grants", type(media.get("permissionGrantsByRunner")) is int
               and media["permissionGrantsByRunner"] == 0, 0, media.get("permissionGrantsByRunner"))
     add_check(checks, label + ".document_policy", media.get("deniedDocument") is denied, denied, media.get("deniedDocument"))
+    if denied:
+        add_check(checks, label + ".nonopaque_secure_context", isinstance(media.get("origin"), str)
+                  and media["origin"].startswith("http://127.0.0.1:")
+                  and media.get("secureContext") is True, "secure loopback origin, no sandbox", {
+                      "origin": media.get("origin"), "secureContext": media.get("secureContext")})
     permissions = media.get("permissions")
     if not isinstance(permissions, dict):
         permissions = {}
@@ -936,6 +982,9 @@ def evaluate_media(media: dict, denied: bool) -> list:
         if probe_available(checks, f"{label}.{name}.query", value):
             add_check(checks, f"{label}.{name}.not_granted", value.get("state") in ("prompt", "denied"),
                       "no authorization was granted", value)
+            if denied and name in ("camera", "microphone"):
+                add_check(checks, f"{label}.{name}.policy_denied", value.get("state") == "denied",
+                          "denied", value.get("state"))
     notification = media.get("notificationPermission")
     if notification is not None:
         state = permissions.get("notifications", {}).get("state")
@@ -950,7 +999,13 @@ def evaluate_media(media: dict, denied: bool) -> list:
         if valid:
             exposed = [device for device in devices if device.get("label")]
             add_check(checks, label + ".labels_hidden", not exposed, [], exposed)
-    if denied and devices_available:
+    if denied:
+        for name in ("camera", "microphone"):
+            add_check(checks, f"{label}.{name}.policy_disabled", media.get("policyAllows", {}).get(name) is False,
+                      False, media.get("policyAllows", {}).get(name))
+    if denied and not capture_required:
+        add_check(checks, label + ".identity_capture_not_requested", media.get("capture") == {}, {}, media.get("capture"))
+    if denied and devices_available and capture_required:
         for name in ("camera", "microphone"):
             result = media.get("capture", {}).get(name, {})
             if media.get("policyAllows", {}).get(name) is not False:
@@ -959,6 +1014,106 @@ def evaluate_media(media: dict, denied: bool) -> list:
                 add_check(checks, f"{label}.{name}.capture_rejected",
                           (result.get("exception") or {}).get("name") in ("NotAllowedError", "SecurityError"),
                           "permission/policy rejection, no successful stream", result)
+    return checks
+
+
+def execution_contract_errors(execution, profile, expected_args: list[str], identity_profile=None) -> list[str]:
+    command = execution.get("command_line") if isinstance(execution, dict) else None
+    if not isinstance(command, list) or not command or not all(isinstance(arg, str) for arg in command):
+        return ["missing executed command line"]
+    if not isinstance(profile, (str, Path)) or not str(profile):
+        return ["missing expected profile"]
+    switches = {}
+    for arg in command[1:]:
+        if arg == "--":
+            return ["unexpected command-line switch terminator"]
+        if arg.startswith("-"):
+            key, _, value = arg.lstrip("-").partition("=")
+            switches.setdefault(key, []).append(value)
+    errors = []
+    expected_profile = str(Path(profile).resolve())
+    if switches.get("user-data-dir") != [expected_profile]:
+        errors.append("executed user-data-dir differs from the canonical profile or is duplicated")
+    if identity_profile is not None and expected_profile == str(Path(identity_profile).resolve()):
+        errors.append("media control reuses the identity profile")
+    if "use-fake-ui-for-media-stream" in switches:
+        errors.append("fake media UI is forbidden")
+    fake = switches.get("use-fake-device-for-media-stream", [])
+    if fake != ([""] if identity_profile is not None else []):
+        errors.append("unexpected, missing or duplicated fake capture device switch")
+    expected = {arg[2:].partition("=")[0]: arg[2:].partition("=")[2] for arg in expected_args}
+    critical = {key for key in switches.keys() | expected.keys()
+                if key.startswith("fingerprint") or key == "uxr-synthetic-device-tests"}
+    for key in sorted(critical):
+        if switches.get(key, []) != ([expected[key]] if key in expected else []):
+            errors.append(f"unexpected, conflicting or duplicated scenario switch: {key}")
+    # Chromium may append the same derived locale twice; conflicting values are not valid.
+    for key, values in switches.items():
+        if key.startswith("uxr-") and len(set(values)) != 1:
+            errors.append(f"conflicting derived scenario switch: {key}")
+    if not all(arg in command for arg in expected_args):
+        errors.append("executed command line omits requested arguments")
+    return errors
+
+
+def evaluate_media_control(control, identity_profile: str, expected_args: list[str], origin: str) -> list:
+    checks = []
+    label = "media.control"
+    if not isinstance(control, dict):
+        add_check(checks, label + ".completed", False, "isolated fake-device permission control", control)
+        return checks
+    add_check(checks, label + ".fake_only", control.get("fake_only") is True, True, control.get("fake_only"))
+    add_check(checks, label + ".profile_isolated", bool(control.get("profile"))
+              and control["profile"] != identity_profile and control.get("profile_fresh") is True,
+              "new profile distinct from identity samples", control.get("profile"))
+    add_check(checks, label + ".args", control.get("args") == [*expected_args, "--use-fake-device-for-media-stream"],
+              [*expected_args, "--use-fake-device-for-media-stream"], control.get("args"))
+    execution_errors = execution_contract_errors(control.get("execution"), control.get("profile"),
+                                                  expected_args, identity_profile)
+    add_check(checks, label + ".executed_fake_device", not execution_errors,
+              "isolated canonical profile, exact scenario switches, fake devices without fake UI", execution_errors)
+    add_check(checks, label + ".permission_grants", type(control.get("grant_calls")) is int
+              and control["grant_calls"] == 1
+              and control.get("granted_permissions") == ["camera", "microphone"],
+              {"calls": 1, "permissions": ["camera", "microphone"]},
+              {"calls": control.get("grant_calls"), "permissions": control.get("granted_permissions")})
+    for field in ("permissions_cleared", "closed"):
+        add_check(checks, label + "." + field, control.get(field) is True, True, control.get(field))
+    rows = control.get("rows", {})
+    for phase, path, denied in (("before", "/frame", False), ("denied", "/denied", True),
+                                ("after", "/frame", False)):
+        row = rows.get(phase, {})
+        headers, probe = row.get("headers", {}), row.get("probe", {})
+        prefix = label + "." + phase
+        add_check(checks, prefix + ".document", row.get("url") == origin + path and row.get("status") == 200
+                  and probe.get("origin") == origin and probe.get("secureContext") is True
+                  and isinstance(headers.get("content-security-policy"), str)
+                  and "sandbox" not in headers["content-security-policy"].lower(),
+                  "same secure nonopaque origin, no sandbox", row)
+        policy = headers.get("permissions-policy")
+        add_check(checks, prefix + ".header", policy == ("camera=(), microphone=()" if denied else None),
+                  "camera=(), microphone=()" if denied else None, policy)
+        for name, kind in (("camera", "video"), ("microphone", "audio")):
+            add_check(checks, prefix + "." + name + ".policy", probe.get("policyAllows", {}).get(name) is (not denied),
+                      not denied, probe.get("policyAllows", {}).get(name))
+            state = probe.get("permissions", {}).get(name)
+            # CDP permission overrides may report granted even when policy blocks capture.
+            add_check(checks, prefix + "." + name + ".permission", state in ("granted", "denied") if denied
+                      else state == "granted", "granted or policy-denied" if denied else "granted", state)
+            capture = probe.get("capture", {}).get(name, {})
+            if denied:
+                add_check(checks, "media.denied." + name + ".capture_rejected",
+                          (capture.get("exception") or {}).get("name") in ("NotAllowedError", "SecurityError")
+                          and not capture.get("success") and not capture.get("timeout"),
+                          "policy rejection with live controls before and after", capture)
+            else:
+                tracks = capture.get("tracks")
+                add_check(checks, prefix + "." + name + ".live", capture.get("success") is True
+                          and capture.get("stopped") is True and isinstance(tracks, list) and len(tracks) == 1
+                          and tracks[0] == {"kind": kind, "readyState": "live", "enabled": True},
+                          "one live enabled fake track, stopped after observation", capture)
+    add_check(checks, label + ".failures", control.get("failures") == [], [], control.get("failures"))
+    add_check(checks, label + ".network", control.get("blocked_requests") == [], [], control.get("blocked_requests"))
     return checks
 
 
@@ -974,7 +1129,7 @@ def evaluate_observation(observation: dict, spec: dict) -> list:
     checks.extend(evaluate_surfaces(observation.get("surfaces")))
     checks.extend(evaluate_network_events(observation.get("network_events")))
     checks.extend(evaluate_media(observation.get("media", {}), False))
-    checks.extend(evaluate_media(observation.get("media_denied", {}), True))
+    checks.extend(evaluate_media(observation.get("media_denied", {}), True, capture_required=False))
     return checks
 
 
@@ -1087,6 +1242,86 @@ def collect_network_events(context, page, origin: str, timeout_ms: int) -> dict:
     return result
 
 
+def run_media_control(playwright, spec: dict, identity: dict, server: LocalServer, args, profile: Path,
+                      identity_profile: Path) -> dict:
+    result = {"fake_only": True, "profile": str(profile), "profile_fresh": not profile.exists(),
+              "args": [*browser_args(spec, server.origin, args.no_sandbox), "--use-fake-device-for-media-stream"],
+              "grant_calls": 0, "granted_permissions": [], "permissions_cleared": False, "closed": False,
+              "rows": {}, "execution": None, "blocked_requests": [], "failures": []}
+    context = None
+    closing = False
+    start = len(server.snapshot())
+    try:
+        if not result["profile_fresh"]:
+            raise SmokeError("media control profile must be new")
+        context = playwright.chromium.launch_persistent_context(
+            user_data_dir=str(profile), executable_path=identity["path"], args=result["args"],
+            headless=not args.headed, chromium_sandbox=not args.no_sandbox,
+            accept_downloads=False, service_workers="block", timeout=args.timeout_ms)
+        context.set_default_timeout(args.timeout_ms)
+        context.set_default_navigation_timeout(args.timeout_ms)
+
+        def guard(route):
+            previous = route.request.redirected_from
+            if allowed_url(route.request.url, server.origin) and (previous is None or allowed_url(previous.url, server.origin)):
+                route.continue_()
+            else:
+                result["blocked_requests"].append(route.request.url)
+                route.abort("blockedbyclient")
+
+        def block_websocket(socket):
+            result["blocked_requests"].append(socket.url)
+            socket.close()
+
+        def watch_page(page):
+            page.on("crash", lambda *_: result["failures"].append({"name": "page_crash"}))
+            page.on("pageerror", lambda error: result["failures"].append({"name": "page_error", "message": str(error)}))
+
+        def disconnected(*_):
+            if not closing:
+                result["failures"].append({"name": "unexpected_browser_disconnect"})
+
+        context.route("**/*", guard)
+        context.route_web_socket("**/*", block_websocket)
+        context.on("request", lambda request: None if allowed_url(request.url, server.origin)
+                   else result["blocked_requests"].append(request.url))
+        context.on("page", watch_page)
+        context.on("close", disconnected)
+        if context.browser is not None:
+            context.browser.on("disconnected", disconnected)
+        page = context.new_page()
+        result["execution"] = verify_execution(context.new_cdp_session(page), identity, not args.no_sandbox)
+        execution_errors = execution_contract_errors(result["execution"], profile,
+                                                      browser_args(spec, server.origin, args.no_sandbox), identity_profile)
+        if execution_errors:
+            raise SmokeError("media pre-grant execution contract: " + "; ".join(execution_errors))
+        result["grant_calls"] += 1
+        context.grant_permissions(["camera", "microphone"], origin=server.origin)
+        result["granted_permissions"] = ["camera", "microphone"]
+        for phase, path in (("before", "/frame"), ("denied", "/denied"), ("after", "/frame")):
+            response = page.goto(server.origin + path, wait_until="load")
+            result["rows"][phase] = {"url": response.url, "status": response.status,
+                                      "headers": response.all_headers(),
+                                      "probe": evaluate(page, MEDIA_CONTROL_PROBE, None, args.timeout_ms)}
+    except Exception as error:
+        result["failures"].append({"name": type(error).__name__, "message": str(error)})
+    finally:
+        closing = True
+        if context is not None:
+            try:
+                context.clear_permissions()
+                result["permissions_cleared"] = True
+            except Exception as error:
+                result["failures"].append({"name": "clear_permissions", "message": str(error)})
+            try:
+                context.close()
+                result["closed"] = True
+            except Exception as error:
+                result["failures"].append({"name": "browser_close", "message": str(error)})
+        result["requests"] = server.snapshot()[start:]
+    return result
+
+
 def run_scenario(playwright, spec: dict, identity: dict, server: LocalServer, args, profile: Path) -> dict:
     result = {**spec, "args": browser_args(spec, server.origin, args.no_sandbox),
               "profile": str(profile), "profile_fresh": not profile.exists(),
@@ -1141,6 +1376,11 @@ def run_scenario(playwright, spec: dict, identity: dict, server: LocalServer, ar
             watch_page(existing)
         page = context.new_page()
         result["execution"] = verify_execution(context.new_cdp_session(page), identity, not args.no_sandbox)
+        execution_errors = execution_contract_errors(result["execution"], profile, result["args"])
+        add_check(result["checks"], "identity.execution_contract", not execution_errors,
+                  "canonical profile and scenario switches; no fake media", execution_errors)
+        if execution_errors:
+            raise SmokeError("identity execution contract: " + "; ".join(execution_errors))
         observation = collect_page(page, server.origin, args.timeout_ms, spec, "initial")
         result["observation"] = observation
         observation["network_events"] = collect_network_events(context, page, server.origin, args.timeout_ms)
@@ -1154,7 +1394,7 @@ def run_scenario(playwright, spec: dict, identity: dict, server: LocalServer, ar
         result["checks"].extend(evaluate_surfaces(reload_observation.get("surfaces")))
         denied = context.new_page()
         denied.goto(server.origin + "/denied", wait_until="load")
-        observation["media_denied"] = evaluate(denied, MEDIA_PROBE, True, args.timeout_ms)
+        observation["media_denied"] = evaluate(denied, MEDIA_PROBE, {"denied": True, "capture": False}, args.timeout_ms)
         result["checks"].extend(evaluate_observation(observation, spec))
     except Exception as error:
         result["failures"].append({"name": type(error).__name__, "message": str(error)})
@@ -1166,6 +1406,9 @@ def run_scenario(playwright, spec: dict, identity: dict, server: LocalServer, ar
             except Exception as error:
                 result["failures"].append({"name": "browser_close", "message": str(error)})
         result["requests"] = server.snapshot()[start:]
+    control_profile = profile.parent / ("media-" + spec["name"])
+    result["media_control"] = run_media_control(playwright, spec, identity, server, args, control_profile, profile)
+    result["checks"].extend(evaluate_media_control(result["media_control"], str(profile), result["args"], server.origin))
     add_check(result["checks"], "network.only_local_origin", not result["blocked_requests"], [], result["blocked_requests"])
     result["failures"].extend(check for check in result["checks"] if check["status"] == "failed")
     result["status"] = "failed" if result["failures"] else "passed"
@@ -1218,7 +1461,7 @@ def run(args) -> dict:
             raise SmokeError("--seed and --other-seed must differ")
         specs = scenario_matrix(args)
         if len(specs) > 34:
-            raise SmokeError("matrix limited to eight platform/locale cells (34 launches)")
+            raise SmokeError("matrix limited to eight platform/locale cells (34 identity scenarios plus isolated media controls)")
         sync_playwright = load_playwright()
         report["verification"]["playwright_version"] = importlib.metadata.version("playwright")
         with tempfile.TemporaryDirectory(prefix="chromix-smoke-") as profiles, local_server() as server, sync_playwright() as playwright:
