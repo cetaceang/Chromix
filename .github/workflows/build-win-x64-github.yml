@@ -40,6 +40,9 @@ on:
       - 'sdk/python/pyproject.toml'
       - '.github/workflows/build-win-x64-github.yml'
       - 'CHROMIUM_VERSION'
+      - 'CHROMIUM_WINDOWS_VERSION'
+      - 'tools/platform_pins.py'
+      - 'tools/tests/test_windows_platform_pins.py'
       - 'UNGOOGLED_VERSION'
       - 'UNGOOGLED_WINDOWS_VERSION'
   workflow_call:

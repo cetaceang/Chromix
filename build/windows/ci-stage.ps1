@@ -19,7 +19,7 @@ param(
 $ErrorActionPreference = "Stop"
 if ($Arch -cnotin @("x64", "arm64")) { throw "Arch/CHROMIX_TARGET_ARCH must be x64 or arm64" }
 $Repo = (Resolve-Path "$PSScriptRoot\..\..").Path
-$Revisions = Import-PowerShellDataFile (Join-Path $Repo "build\ungoogled-revisions.psd1")
+$Revisions = & "$PSScriptRoot\read-platform-pins.ps1" -Repo $Repo
 $BuildProfile = if ($env:CHROMIX_BUILD_PROFILE) { $env:CHROMIX_BUILD_PROFILE } else { "native" }
 if ($BuildProfile -notin @("native", "fast", "release")) { throw "invalid CHROMIX_BUILD_PROFILE" }
 
@@ -532,6 +532,7 @@ function Assert-CiScripts {
     "$PSScriptRoot\assert-target-arch.ps1",
     "$PSScriptRoot\assert-arm64-toolchain.ps1",
     "$PSScriptRoot\ensure-windows-sdk.ps1",
+    "$PSScriptRoot\read-platform-pins.ps1",
     "$PSScriptRoot\prepare-ungoogled.ps1",
     "$PSScriptRoot\update-restored-source.ps1",
     "$PSScriptRoot\package-win.ps1"

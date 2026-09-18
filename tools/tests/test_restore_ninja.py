@@ -13,6 +13,7 @@ import unittest
 from unittest import mock
 
 from tools import restore_ninja as guard
+from tools.platform_pins import load_pins
 
 REPO = Path(__file__).resolve().parents[2]
 BASH32 = Path("/root/.local/bash-3.2-for-ci/bash")
@@ -508,7 +509,7 @@ class DirectWindowsRestoredBuildTest(unittest.TestCase):
     def run_builder(self, *, restored=True, bindgen_present=False, fail="", ninja_rc=0, resume=False,
                     product_version=None, metadata_present=True, chrome_present=True):
         if product_version is None:
-            product_version = (REPO / "CHROMIUM_VERSION").read_text().strip()
+            product_version = load_pins(REPO, "windows")["ChromiumVersion"]
         temporary = tempfile.TemporaryDirectory(prefix="direct windows restored ")
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
@@ -534,13 +535,16 @@ class DirectWindowsRestoredBuildTest(unittest.TestCase):
                 path.chmod(0o755)
 
         for relative in ("build/windows/build.ps1", "build/windows/assert-target-arch.ps1",
-                         "build/ungoogled-revisions.psd1",
+                         "build/windows/read-platform-pins.ps1", "build/ungoogled-revisions.psd1",
+                         "CHROMIUM_VERSION", "CHROMIUM_WINDOWS_VERSION", "tools/platform_pins.py",
                          "tools/merge_gn_args.py", "tools/upstream_script_identity.py"):
             destination = repo / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(REPO / relative, destination)
         # Native Node execution is covered by test_windows_node.py.
         put(repo / "build/windows/configure-node.ps1", 'param($NodePath)\n')
+        # Native SDK provisioning is covered by test_windows_sdk.py.
+        put(repo / "build/windows/ensure-windows-sdk.ps1", 'param($Arch, $ChromiumVersion)\n')
         put(repo / "build/args.windows.gn", "symbol_level = 0\n")
         for directory, name in (("ungoogled-chromium", "flags.gn"), ("ungoogled-chromium-windows", "flags.windows.gn")):
             put(work / "tooling" / directory / name, "symbol_level = 1\n")
@@ -694,7 +698,7 @@ function Get-Item {
         self.assertEqual((src / "tools/clang/scripts/update.py").read_text(), "# commondatastorage.googleapis.com\n")
         self.assertNotIn("chromium.9oo91esource.qjz9zk", (src / "tools/rust/build_bindgen.py").read_text())
         self.assertFalse((src / "out/Chromix").exists())
-        version = (REPO / "CHROMIUM_VERSION").read_text().strip()
+        version = load_pins(REPO, "windows")["ChromiumVersion"]
         self.assertIn(f"Windows PE product version verified: {version}", result.stdout)
         self.assertIn("metadata only; not a runtime smoke test", result.stdout)
 
@@ -751,9 +755,13 @@ function Get-Item {
                                      {'exit_code': 19})
 
     def test_numeric_product_version_mismatch_rejects_completion(self):
-        pinned = [int(part) for part in (REPO / "CHROMIUM_VERSION").read_text().strip().split(".")]
+        version = load_pins(REPO, "windows")["ChromiumVersion"]
+        pinned = [int(part) for part in version.split(".")]
         versions = [".".join(str(value + (index == changed)) for index, value in enumerate(pinned))
                     for changed in range(4)] + ["0.0.0.0"]
+        shared_version = (REPO / "CHROMIUM_VERSION").read_text().strip()
+        if shared_version != version:
+            versions.append(shared_version)
         for restored in (False, True):
             for version in versions:
                 with self.subTest(restored=restored, version=version):

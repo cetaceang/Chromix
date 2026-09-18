@@ -16,19 +16,22 @@ and GN arguments, not a different official Chromium checkout.
 
 | Layer | Version | Commit |
 |---|---|---|
-| Chromium (shared/Linux/Windows) | `153.0.8010.36` | source archive selected by ungoogled-chromium |
-| ungoogled-chromium (shared/Linux/Windows) | `153.0.8010.36-1` | `dd8fb9b5c837982faf41ba58cd30a5664e77c329` |
+| Chromium (shared/Linux) | `153.0.8010.36` | source archive selected by ungoogled-chromium |
+| ungoogled-chromium (shared/Linux) | `153.0.8010.36-1` | `dd8fb9b5c837982faf41ba58cd30a5664e77c329` |
+| Chromium (Windows override) | `153.0.8010.47` | source archive selected by ungoogled-chromium |
+| ungoogled-chromium (Windows override) | `153.0.8010.47-1` | `31e6f2dd3bb2f113800d25ae359f024684addb51` |
 | Chromium (macOS override) | `152.0.7977.82` | source archive selected by ungoogled-chromium |
 | ungoogled-chromium (macOS override) | `152.0.7977.82-1` | `e71b91c6e336d0f25cfc6b9ef09298a9d2506e24` |
-| ungoogled-chromium-windows | `153.0.8010.36-1.1` | `d99843ca7c336a61f482844d31385a53e9970979` |
+| ungoogled-chromium-windows | `153.0.8010.47-1.1` | `657b9731b68aae35d4ee02428684ab8bdceb9181` |
 | ungoogled-chromium-portablelinux | `153.0.8010.36-1` | `a5ffa5e4a9fb722b97a5cf7966e29450a150c3dd` |
 | ungoogled-chromium-macos | `152.0.7977.82-1.1` | `038db2b41f7aeb00bbceb2f5a56912b26eb5b284` |
 | Chromix patches | `patches/series` | content hash stored in source markers |
 
 The machine-readable pins are in `build/ungoogled-revisions.psd1`.
-`CHROMIUM_VERSION` and `UNGOOGLED_VERSION` describe the shared 153 baseline;
-Windows preparation reads those common fields and the matching Windows platform
-pin. `CHROMIUM_LINUX_VERSION` retains the Linux selection, and
+`CHROMIUM_VERSION` and `UNGOOGLED_VERSION` describe the shared 153 baseline.
+`CHROMIUM_WINDOWS_VERSION` and the three `Windows*` common-field overrides
+select Windows `.47`; all Windows entrypoints use the validated platform resolver.
+`CHROMIUM_LINUX_VERSION` retains the Linux selection, and
 `CHROMIUM_MACOS_VERSION` plus the three `MacOS*` common-field overrides retain
 the complete macOS 152 Chromium/core/platform identity.
 
@@ -40,14 +43,23 @@ core 153 or advertise it as a 153 build. The existing macOS cache is explicitly
 platform version. The rebased Chromix patch stack still requires separate
 application/build/runtime validation on macOS 152 before any build is claimed.
 
-Windows tag `153.0.8010.36-1.1` was verified to embed core
-`dd8fb9b5c837982faf41ba58cd30a5664e77c329`. At the same check, its exact-tag x64
-run `34926228177` was not complete; no exact successful full-source/object
-snapshot was verified. The Windows source in `build/upstream-cache.json` is
-therefore `available: false`, with explicit 153 pins and no run/artifact fields.
-The old 152 cache is not reused or relabeled. Cache-required builds must wait
-for a verified matching snapshot; explicit cold preparation remains a separate
-choice. This source-only preparation does not launch or establish a 153 build.
+Windows x64 cache builds use successful upstream
+[run 35059013905](https://github.com/ungoogled-software/ungoogled-chromium-windows/actions/runs/35059013905),
+Windows commit `657b9731b68aae35d4ee02428684ab8bdceb9181`, and its embedded core
+`31e6f2dd3bb2f113800d25ae359f024684addb51`. This core is one development-utility
+commit after the `.47-1` tag; the exact embedded commit, not the tag commit, is pinned.
+The full-source/object `build-artifact` is `10523508661` (15,713,545,950 bytes),
+containing `artifacts.zip`, with SHA-256
+`d5ae2b64ba9f819613482a9321107946b60b8d44bc2adad13ee9206c9dab238c`.
+Its recorded expiry is `2026-09-21T22:53:13Z`. The separate `chromium` artifact
+is a finished upstream browser, not the reusable build cache.
+
+Dispatch `build-win-x64-github.yml` on `main` with `use_upstream_cache=true`,
+`upstream_run_id=35059013905`, `build_profile=native`, and `compile_jobs=auto`;
+leave all snapshot-resume identity inputs empty. Cache provenance, checksum,
+source version and `out/Default` are verified before patching or compilation.
+A required cache miss fails rather than falling back to cold preparation.
+These pins and instructions do not themselves establish a completed Chromix build.
 
 ## Linux x64/arm64 builds
 

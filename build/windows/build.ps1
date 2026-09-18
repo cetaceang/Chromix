@@ -18,7 +18,7 @@ param(
 $ErrorActionPreference = "Stop"
 if ($Arch -cnotin @("x64", "arm64")) { throw "Arch/CHROMIX_TARGET_ARCH must be x64 or arm64" }
 $Repo = (Resolve-Path "$PSScriptRoot\..\..").Path
-$Revisions = Import-PowerShellDataFile (Join-Path $Repo "build\ungoogled-revisions.psd1")
+$Revisions = & "$PSScriptRoot\read-platform-pins.ps1" -Repo $Repo
 $WorkDir = [IO.Path]::GetFullPath($WorkDir)
 $Src = Join-Path $WorkDir "src"
 $Out = Join-Path $Src "out\Chromix"

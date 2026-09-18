@@ -17,7 +17,7 @@ param(
 $ErrorActionPreference = "Stop"
 if ($Arch -cnotin @("x64", "arm64")) { throw "Arch/CHROMIX_TARGET_ARCH must be x64 or arm64" }
 
-$Revisions = Import-PowerShellDataFile (Join-Path $Repo "build\ungoogled-revisions.psd1")
+$Revisions = & "$PSScriptRoot\read-platform-pins.ps1" -Repo $Repo
 $Tooling = Join-Path $Root "tooling"
 $Ungoogled = Join-Path $Tooling "ungoogled-chromium"
 $Windows = Join-Path $Tooling "ungoogled-chromium-windows"

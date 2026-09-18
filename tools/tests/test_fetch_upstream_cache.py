@@ -262,20 +262,46 @@ class FetchUpstreamCacheTest(unittest.TestCase):
                     with self.assertRaisesRegex(cache.CacheMiss, "pin_mismatch"):
                         cache.load_manifest(target, "x64", root=self.root)
 
-    def test_checked_in_windows_cache_is_unavailable_without_network(self):
+    def test_checked_in_windows_cache_matches_exact_production_metadata(self):
         manifest = json.loads(cache.MANIFEST.read_text())
+        self.assertEqual(manifest["schema_version"], 1)
         self.assertEqual(manifest["chromium_version"], "153.0.8010.36")
+        self.assertEqual(manifest["ungoogled_commit"], "dd8fb9b5c837982faf41ba58cd30a5664e77c329")
         source = manifest["sources"]["windows"]
-        self.assertIs(source["available"], False)
-        self.assertEqual(set(source), cache.UNAVAILABLE_SOURCE_FIELDS)
-        self.assertEqual(source["chromium_version"], "153.0.8010.36")
-        self.assertEqual(source["head_sha"], "d99843ca7c336a61f482844d31385a53e9970979")
-        for arch in ("x64", "arm64"):
-            client = mock.Mock()
-            result = cache.fetch("windows", arch, self.destination, root=cache.ROOT, client=client)
-            self.assertEqual(result["reason"], "source_unavailable")
-            self.assertEqual(result["download_bytes"], 0)
-            self.assertEqual(client.mock_calls, [])
+        self.assertEqual(source, {
+            "chromium_version": "153.0.8010.47",
+            "ungoogled_commit": "31e6f2dd3bb2f113800d25ae359f024684addb51",
+            "repository": "ungoogled-software/ungoogled-chromium-windows",
+            "repository_id": 177210827,
+            "head_sha": "657b9731b68aae35d4ee02428684ab8bdceb9181",
+            "head_branch": "153.0.8010.47-1.1",
+            "event": "push", "workflow_path": ".github/workflows/build-x64.yml",
+            "run_id": 35059013905, "source_roots": ["src", "build/src"],
+            "artifacts": {"x64": {
+                "id": 10523508661, "name": "build-artifact", "size_in_bytes": 15713545950,
+                "digest": "sha256:d5ae2b64ba9f819613482a9321107946b60b8d44bc2adad13ee9206c9dab238c",
+                "expires_at": "2026-09-21T22:53:13Z", "inner_archive": "artifacts.zip",
+            }},
+        })
+        pin, identity = cache.load_manifest("windows", "x64", 35059013905, root=cache.ROOT)
+        self.assertEqual(pin, {**{key: value for key, value in source.items() if key != "artifacts"},
+                               "artifact": source["artifacts"]["x64"]})
+        self.assertEqual({key: identity[key] for key in (
+            "chromium_version", "head_sha", "run_id", "artifact_id", "artifact_digest")}, {
+            "chromium_version": "153.0.8010.47", "head_sha": source["head_sha"],
+            "run_id": 35059013905, "artifact_id": 10523508661,
+            "artifact_digest": source["artifacts"]["x64"]["digest"],
+        })
+        self.assert_metadata_provenance(pin, datetime(2026, 9, 19, tzinfo=timezone.utc))
+        for arch, run_id, reason in (("arm64", None, "unsupported_target"),
+                                     ("x64", 34806882978, "run_id_mismatch"),
+                                     ("x64", 33898278106, "run_id_mismatch")):
+            with self.subTest(arch=arch, run_id=run_id):
+                client = mock.Mock()
+                result = cache.fetch("windows", arch, self.destination, run_id, root=cache.ROOT, client=client)
+                self.assertEqual(result["reason"], reason)
+                self.assertEqual(result["download_bytes"], 0)
+                self.assertEqual(client.mock_calls, [])
 
     def test_macos_identity_requires_explicit_152_source_under_shared_153(self):
         pin, _ = cache.load_manifest("macos", "x64", root=self.root)
@@ -583,29 +609,36 @@ class FetchUpstreamCacheTest(unittest.TestCase):
                         cache.load_manifest("windows", "x64", root=self.root)
                 self.manifest["sources"]["windows"][field] = saved
 
-    def test_run_and_artifact_provenance(self):
-        run, artifact = metadata(self.pin)
-        cache.validate_metadata(self.pin, run, artifact, NOW)
+    def assert_metadata_provenance(self, pin, now):
+        run, artifact = metadata(pin)
+        artifact["expires_at"] = pin["artifact"]["expires_at"]
+        cache.validate_metadata(pin, run, artifact, now)
         for key, value in (("id", 1), ("head_sha", "0" * 40), ("head_branch", "main"),
                            ("event", "pull_request"), ("path", "other.yml"),
                            ("conclusion", "failure"), ("status", "in_progress")):
-            with self.subTest(key=key), self.assertRaises(cache.CacheMiss):
-                cache.validate_metadata(self.pin, {**run, key: value}, artifact, NOW)
+            with self.subTest(key=key), self.assertRaisesRegex(cache.CacheMiss, "untrusted_run"):
+                cache.validate_metadata(pin, {**run, key: value}, artifact, now)
         for field in ("repository", "head_repository"):
             for key, value in (("id", 1), ("full_name", "attacker/fork"), ("private", True)):
                 changed = copy.deepcopy(run)
                 changed[field][key] = value
-                with self.subTest(field=field, key=key), self.assertRaises(cache.CacheMiss):
-                    cache.validate_metadata(self.pin, changed, artifact, NOW)
+                with self.subTest(field=field, key=key), self.assertRaisesRegex(cache.CacheMiss, "untrusted_repository"):
+                    cache.validate_metadata(pin, changed, artifact, now)
         for key, value in (("id", 1), ("name", "wrong"), ("digest", digest(b"wrong")),
                            ("size_in_bytes", 1)):
-            with self.subTest(key=key), self.assertRaises(cache.CacheMiss):
-                cache.validate_metadata(self.pin, run, {**artifact, key: value}, NOW)
+            with self.subTest(key=key), self.assertRaisesRegex(cache.CacheMiss, "artifact_mismatch"):
+                cache.validate_metadata(pin, run, {**artifact, key: value}, now)
         for key in artifact["workflow_run"]:
             changed = copy.deepcopy(artifact)
             changed["workflow_run"][key] = "wrong"
-            with self.subTest(workflow=key), self.assertRaises(cache.CacheMiss):
-                cache.validate_metadata(self.pin, run, changed, NOW)
+            with self.subTest(workflow=key), self.assertRaisesRegex(cache.CacheMiss, "artifact_provenance"):
+                cache.validate_metadata(pin, run, changed, now)
+        for patch in ({"expired": True}, {"expires_at": now.isoformat()}, {"expires_at": None}):
+            with self.subTest(patch=patch), self.assertRaises(cache.CacheMiss):
+                cache.validate_metadata(pin, run, {**artifact, **patch}, now)
+
+    def test_run_and_artifact_provenance(self):
+        self.assert_metadata_provenance(self.pin, NOW)
 
     def test_expiry_flag_and_timestamp(self):
         run, artifact = metadata(self.pin)

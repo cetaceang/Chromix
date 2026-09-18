@@ -19,6 +19,7 @@ import zipfile
 import pytest
 
 from tools import verify_windows_bundle as verify
+from tools.tests.test_windows_platform_pins import repository
 
 
 VERSION = "152.0.7977.82"
@@ -1009,3 +1010,58 @@ def test_cli_errors_return_nonzero_and_failed_report(tmp_path, problem):
     assert report["runtime"]["status"] == "not_run"
     assert report["error"]
     assert json.loads(report_path.read_text()) == report
+
+
+def test_cli_default_native_version_uses_resolved_windows_override(repository, runtime_fixture, monkeypatch):
+    fixture = runtime_fixture
+    monkeypatch.setattr(verify, "REPO", repository)
+    fixture.version.return_value = "153.0.8010.47"
+    output = io.StringIO()
+    with redirect_stdout(output):
+        code = verify.main(["--bundle", str(fixture.bundle), "--arch", "arm64", "--native",
+                            "--report", str(fixture.logs / "report.json")])
+    assert code == 0, output.getvalue()
+    assert json.loads(output.getvalue())["runtime"]["version"] == "153.0.8010.47"
+    assert fixture.version.call_count == 2
+    fixture.smoke.assert_called_once()
+
+
+@pytest.mark.parametrize("version", [VERSION, "", "153", "153.0.8010.47\n"])
+def test_cli_explicit_version_bypasses_pins_but_preserves_validation(runtime_fixture, monkeypatch, version):
+    fixture = runtime_fixture
+    resolver = mock.Mock(side_effect=AssertionError("explicit version must not resolve repository pins"))
+    monkeypatch.setattr(verify, "load_pins", resolver)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        code = verify.main(["--bundle", str(fixture.bundle), "--arch", "arm64", "--native",
+                            "--version", version, "--report", str(fixture.logs / "report.json")])
+    resolver.assert_not_called()
+    report = json.loads(output.getvalue())
+    if version == VERSION:
+        assert code == 0
+        assert report["runtime"]["version"] == VERSION
+        fixture.smoke.assert_called_once()
+    else:
+        assert code == 1
+        assert report["runtime"]["status"] == "failed"
+        assert "invalid expected Chromium version" in report["error"]
+        fixture.version.assert_not_called()
+        fixture.smoke.assert_not_called()
+
+
+def test_cli_invalid_default_pins_fail_with_report_before_archive_extraction(repository, tmp_path, monkeypatch):
+    (repository / "CHROMIUM_WINDOWS_VERSION").write_text("153.0.8010.36\n")
+    monkeypatch.setattr(verify, "REPO", repository)
+    archive, manifest, dest = archive_fixture(tmp_path)
+    report_path = tmp_path / "failed-pins.json"
+    output = io.StringIO()
+    with redirect_stdout(output):
+        code = verify.main(["--archive", str(archive), "--sha256-file", str(manifest), "--dest", str(dest),
+                            "--arch", "arm64", "--report", str(report_path)])
+    assert code == 1
+    report = json.loads(output.getvalue())
+    assert "CHROMIUM_WINDOWS_VERSION" in report["error"]
+    assert report["static"]["status"] == "failed"
+    assert report["runtime"]["status"] == "not_run"
+    assert json.loads(report_path.read_text()) == report
+    assert not dest.exists()

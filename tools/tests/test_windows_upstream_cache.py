@@ -10,6 +10,8 @@ import textwrap
 import unittest
 from pathlib import Path
 
+from tools.platform_pins import load_pins
+
 
 REPO = Path(__file__).resolve().parents[2]
 STAGE = REPO / "build/windows/ci-stage.ps1"
@@ -426,7 +428,8 @@ class WindowsRequiredCacheTest(unittest.TestCase):
 
         self.fixture.pin_repo = self.fixture.repo
         for relative in ("CHROMIUM_VERSION", "CHROMIUM_LINUX_VERSION", "CHROMIUM_MACOS_VERSION",
-                         "build/ungoogled-revisions.psd1", "build/upstream-cache.json"):
+                         "CHROMIUM_WINDOWS_VERSION", "build/ungoogled-revisions.psd1", "build/upstream-cache.json",
+                         "build/windows/read-platform-pins.ps1"):
             self.fixture.put(self.fixture.repo / relative, (REPO / relative).read_bytes())
         for source in (REPO / "tools").glob("*.py"):
             self.fixture.put(self.fixture.repo / "tools" / source.name, source.read_bytes())
@@ -446,7 +449,7 @@ $WorkDir = $env:TEST_WORK
 $Src = Join-Path $WorkDir "src"
 $OutDir = Join-Path $Src "out/Chromix"
 $UpstreamCacheDir = $env:TEST_CACHE
-$Revisions = Import-PowerShellDataFile (Join-Path $Repo "build/ungoogled-revisions.psd1")
+$Revisions = & (Join-Path $Repo "build/windows/read-platform-pins.ps1") -Repo $Repo
 $RestoredUpstream = $false
 $StageIndex = [int]$env:TEST_STAGE
 $FromArtifact = $env:TEST_RESUME -eq "1"
@@ -663,13 +666,13 @@ class WindowsRestoredPreparationFixture:
         self.repo.mkdir()
         self.src.mkdir(parents=True)
         self.calls = self.root / "calls"
-        self.pins = dict(re.findall(r'^\s*(\w+) = "([^"\n]+)"',
-                                   (REPO / "build/ungoogled-revisions.psd1").read_text(), re.M))
         from tools.tests.test_fetch_upstream_cache import synthetic_windows_source
 
         for relative in ("CHROMIUM_VERSION", "CHROMIUM_LINUX_VERSION", "CHROMIUM_MACOS_VERSION",
-                         "build/ungoogled-revisions.psd1", "build/upstream-cache.json"):
+                         "CHROMIUM_WINDOWS_VERSION", "build/ungoogled-revisions.psd1", "build/upstream-cache.json",
+                         "build/windows/read-platform-pins.ps1"):
             self.put(self.repo / relative, (REPO / relative).read_text())
+        self.pins = load_pins(self.repo, "windows")
         path = self.repo / "build/upstream-cache.json"
         manifest = json.loads(path.read_text())
         manifest["sources"]["windows"] = synthetic_windows_source(self.repo)
@@ -680,7 +683,7 @@ class WindowsRestoredPreparationFixture:
         self.put(self.src / "sample.cc", "blocked.test upstream\n")
         self.put(self.src / ".chromix-upstream-restored.json", '{"valid": true}')
         self.put(self.src / "out/Default/obj/retained.obj", "cached object")
-        for name in ("apply_restored_patches.py", "verify_patch_stack.py"):
+        for name in ("apply_restored_patches.py", "verify_patch_stack.py", "platform_pins.py"):
             self.put(self.repo / "tools" / name, (REPO / "tools" / name).read_text())
         self.put(self.repo / "tools/restore_upstream_cache.py", '''import json, os, sys
 from pathlib import Path
@@ -713,6 +716,8 @@ assert json.loads((src / '.chromix-upstream-restored.json').read_text()).get('va
         source = source.replace('Get-Command patch.exe -ErrorAction SilentlyContinue', 'Get-Command patch -ErrorAction SilentlyContinue')
         self.script = self.root / "prepare.ps1"
         self.put(self.script, source)
+        self.put(self.root / "read-platform-pins.ps1",
+                 (self.repo / "build/windows/read-platform-pins.ps1").read_text())
         self.wrapper = self.root / "run.ps1"
         self.put(self.wrapper, r'''
 $ErrorActionPreference = "Stop"
@@ -1024,7 +1029,7 @@ $UseUpstreamCache = $true
 $UpstreamRunId = ""
 $Deadline = (Get-Date).AddMinutes(250)
 $PackReserveMin = 40
-$Revisions = Import-PowerShellDataFile (Join-Path $Repo "build/ungoogled-revisions.psd1")
+$Revisions = & (Join-Path $Repo "build/windows/read-platform-pins.ps1") -Repo $Repo
 function Get-RemainingMin { return [int]$env:MOCK_MINUTES }
 function Save-Handoff { param($Mode); Add-Content -LiteralPath $env:MOCK_CALLS -Value "handoff:$Mode" }
 function Write-OutVar($key, $value) { Write-Host "$key=$value" }

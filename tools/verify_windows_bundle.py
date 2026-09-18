@@ -18,6 +18,11 @@ import tempfile
 import time
 import zipfile
 
+try:
+    from .platform_pins import load_pins
+except ImportError:
+    from platform_pins import load_pins
+
 MACHINES = {'x64': 0x8664, 'arm64': 0xAA64}
 REQUIRED = ('chromix.cmd', 'chrome.exe', 'chrome.dll', 'chrome_elf.dll', 'libEGL.dll',
             'libGLESv2.dll', 'chrome_100_percent.pak', 'chrome_200_percent.pak',
@@ -25,7 +30,7 @@ REQUIRED = ('chromix.cmd', 'chrome.exe', 'chrome.dll', 'chrome_elf.dll', 'libEGL
 MAX_EXPANDED = 2 * 1024 ** 3
 MAX_OUTPUT = 1024 * 1024
 DOM_MARKER = '<p>chromix-smoke-ok</p>'
-VERSION_FILE = Path(__file__).resolve().parents[1] / 'CHROMIUM_VERSION'
+REPO = Path(__file__).resolve().parents[1]
 
 
 class VerificationError(ValueError):
@@ -308,11 +313,13 @@ def main(argv=None):
     parser.add_argument('--sha256-file', type=Path)
     parser.add_argument('--dest', type=Path)
     parser.add_argument('--native', action='store_true')
-    parser.add_argument('--version', default=VERSION_FILE.read_text().strip())
+    parser.add_argument('--version', help='expected Chromium version (default: resolved Windows pins)')
     parser.add_argument('--report', type=Path)
     args = parser.parse_args(argv)
     report = {'arch': args.arch, 'static': {'status': 'failed'}, 'runtime': {'status': 'not_run'}}
     try:
+        if args.version is None:
+            args.version = load_pins(REPO, 'windows')['ChromiumVersion']
         if args.archive:
             if not args.sha256_file or not args.dest:
                 raise VerificationError('--archive requires --sha256-file and --dest')

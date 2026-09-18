@@ -36,6 +36,9 @@ name: build-win-arm64-github
     - sdk/python/pyproject.toml
     - .github/workflows/build-win-arm64-github.yml
     - CHROMIUM_VERSION
+    - CHROMIUM_WINDOWS_VERSION
+    - tools/platform_pins.py
+    - tools/tests/test_windows_platform_pins.py
     - UNGOOGLED_VERSION
     - UNGOOGLED_WINDOWS_VERSION
     - .github/workflows/build-win-x64-github.yml
@@ -1382,7 +1385,9 @@ jobs:
 
         $hash = (Get-FileHash -LiteralPath $browser -Algorithm SHA256).Hash.ToLowerInvariant()
 
-        $version = (Get-Content CHROMIUM_VERSION -Raw).Trim()
+        $pins = & build/windows/read-platform-pins.ps1 -Repo $env:GITHUB_WORKSPACE
+
+        $version = $pins.ChromiumVersion
 
         python -X utf8 tools/fingerprint_acceptance.py --browser $browser --expected-sha256 $hash --expected-version $version
         --source-report source-receipt/source-verification.json --output-dir diagnostics/fingerprint

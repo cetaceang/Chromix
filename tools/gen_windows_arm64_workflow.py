@@ -115,7 +115,8 @@ def workflow():
             {'name': 'Verify native ARM64 fingerprint behavior', 'shell': 'pwsh', 'timeout-minutes': 40,
              'run': '$browser = (Resolve-Path smoke/chromix/chrome.exe).Path\n'
                     '$hash = (Get-FileHash -LiteralPath $browser -Algorithm SHA256).Hash.ToLowerInvariant()\n'
-                    '$version = (Get-Content CHROMIUM_VERSION -Raw).Trim()\n'
+                    '$pins = & build/windows/read-platform-pins.ps1 -Repo $env:GITHUB_WORKSPACE\n'
+                    '$version = $pins.ChromiumVersion\n'
                     'python -X utf8 tools/fingerprint_acceptance.py --browser $browser '
                     '--expected-sha256 $hash --expected-version $version '
                     '--source-report source-receipt/source-verification.json '

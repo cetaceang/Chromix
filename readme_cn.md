@@ -45,7 +45,7 @@ Crashpad 默认禁用的说明和外部调试器取证方法；修复需要重�
 
 Windows ARM64 在 `windows-2022`（x64）上交叉编译，再由 `windows-11-arm` 执行原生验证。**构建完成不等于已验收或已发布**，请以 Release 的 Assets 为准。下方 Windows 示例使用 x64；下载已发布的 ARM64 包时，将示例中的 `win-x64` 全部替换为 `win-arm64`。
 
-当前共享源码基线及 Linux/Windows 固定到 Chromium **`153.0.8010.36`**。截至 2026-09-17，macOS 上游尚无 153 标签或分支，因此通过 `CHROMIUM_MACOS_VERSION` 和平台覆盖字段保留 **`152.0.7977.82`**。Linux x64/ARM64 原构建包已发布为 [`Chromix 153.0.8010.36`](https://github.com/xiaozhou26/Chromix/releases/tag/v153.0.8010.36)，并设为 GitHub Latest。本次合并后的 216 补丁源码尚未完成新的浏览器构建；已发布的 Linux 包不代表这套合并源码已通过原生验收。现有 [`v152.0.7977.82`](https://github.com/xiaozhou26/Chromix/releases/tag/v152.0.7977.82) 发布保持不变。
+当前共享源码基线及 Linux 保持 Chromium **`153.0.8010.36`**；Windows 通过 `CHROMIUM_WINDOWS_VERSION` 独立固定到 **`153.0.8010.47`**，匹配[上游缓存 35059013905](https://github.com/ungoogled-software/ungoogled-chromium-windows/actions/runs/35059013905)。截至 2026-09-17 的检查，macOS 上游尚无 153 标签或分支，因此通过 `CHROMIUM_MACOS_VERSION` 和平台覆盖字段保留 **`152.0.7977.82`**。Linux x64/ARM64 原构建包已发布为 [`Chromix 153.0.8010.36`](https://github.com/xiaozhou26/Chromix/releases/tag/v153.0.8010.36)，并设为 GitHub Latest。本次合并后的 216 补丁源码尚未完成新的浏览器构建；已发布的 Linux 包不代表这套合并源码已通过原生验收。现有 [`v152.0.7977.82`](https://github.com/xiaozhou26/Chromix/releases/tag/v152.0.7977.82) 发布保持不变。
 
 同一 Chromium 版本的各平台通过构建、校验、解压、版本和无界面运行检查后，可以追加到同一发布标签。不同平台可能来自不同源码提交，具体来源以发布说明中的提交 SHA、工作流和运行记录为准。已有归档不会被同名但内容不同的文件替换。
 

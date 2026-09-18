@@ -125,16 +125,18 @@ current availability; this transition does not require another Windows build.
 | `152.0.7977.75` | Windows x64 | [`v152.0.7977.75`](https://github.com/xiaozhou26/Chromix/releases/tag/v152.0.7977.75) |
 | `151.0.7922.173` | Windows x64 | [`v151.0.7922.173`](https://github.com/xiaozhou26/Chromix/releases/tag/v151.0.7922.173) |
 
-The shared source baseline and Linux/Windows targets are pinned to Chromium
-`153.0.8010.36`. macOS remains explicitly pinned to `152.0.7977.82` because
-upstream has no 153 platform tag or branch as of 2026-09-17. The original Linux
+The shared source baseline and Linux targets remain pinned to Chromium
+`153.0.8010.36`. Windows is independently pinned to `153.0.8010.47` to match
+[upstream cache run 35059013905](https://github.com/ungoogled-software/ungoogled-chromium-windows/actions/runs/35059013905).
+macOS remains explicitly pinned to `152.0.7977.82` because
+upstream had no 153 platform tag or branch at the 2026-09-17 check. The original Linux
 x64/ARM64 packages are published as `Chromix 153.0.8010.36` and marked GitHub
 Latest. This merged 216-patch source stack has not completed a new browser build;
 the published Linux packages do not establish native acceptance for this stack.
 Machine-readable source pins are in `build/ungoogled-revisions.psd1`, with
-`CHROMIUM_MACOS_VERSION` selecting the macOS exception. Legacy version files
-remain available for tooling compatibility. SDK package versions and release
-channels are unchanged.
+`CHROMIUM_WINDOWS_VERSION` and `CHROMIUM_MACOS_VERSION` selecting their platform
+versions. Legacy version files remain available for tooling compatibility. SDK
+package versions and release channels are unchanged.
 
 ### Verify and run on Windows
 
