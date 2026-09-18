@@ -212,3 +212,6 @@ patches/0210-display-widget-orientation-dispatch.patch
 patches/0211-display-testing-orientation-refresh.patch
 patches/0212-display-orientation-local-root.patch
 patches/0213-display-emulator-reentry.patch
+patches/0214-animation-clock-quantization.patch
+patches/0215-document-timeline-clock-origin.patch
+patches/0216-display-native-emulated-regressions.patch

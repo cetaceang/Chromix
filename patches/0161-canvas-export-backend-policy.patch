@@ -11,15 +11,3 @@ diff --git a/third_party/blink/renderer/platform/graphics/image_data_buffer.cc b
        seed_text.find_first_not_of("0123456789") == std::string::npos &&
        base::StringToUint64(seed_text, &seed64) && seed64 != 0u &&
        (ct == kRGBA_8888_SkColorType || ct == kBGRA_8888_SkColorType);
-@@ -152,7 +151,10 @@
-       colorType = kN32_SkColorType;  // Work around for bug with JPEG encoder
-     const SkImageInfo info =
-         SkImageInfo::Make(paint_image_info.width(), paint_image_info.height(),
--                          paint_image_info.colorType(), kUnpremul_SkAlphaType,
-+                          paint_image_info.colorType(),
-+                          paint_image_info.alphaType() == kOpaque_SkAlphaType
-+                              ? kOpaque_SkAlphaType
-+                              : kUnpremul_SkAlphaType,
-                           paint_image_info.refColorSpace());
-     const size_t rowBytes = info.minRowBytes();
-     size_t size = info.computeByteSize(rowBytes);

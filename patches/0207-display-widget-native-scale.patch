@@ -88,12 +88,14 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
    gfx::Rect new_compositor_viewport_pixel_rect =
        visual_properties.compositor_viewport_pixel_rect;
    gfx::Size new_size;
-@@ -2151,15 +2198,22 @@
+@@ -2151,15 +2198,24 @@
          device_scale_factor_for_testing_ / non_testing_device_scale_factor_);
    }
  
 +  if (!ForTopMostMainFrame()) {
 +    inherited_emulated_screen_infos_ = visual_properties.emulated_screen_infos;
++  } else {
++    inherited_emulated_screen_infos_.reset();
 +  }
 +
    if (ForMainFrame()) {
@@ -112,7 +114,7 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
      }
  
      if (AutoResizeMode()) {
-@@ -2171,9 +2225,13 @@
+@@ -2171,9 +2227,13 @@
  
    SetViewportSegments(visual_properties.root_widget_viewport_segments);
  
@@ -126,7 +128,7 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
  
    // Store this even when auto-resizing, it is the size of the full viewport
    // used for clipping, and this value is propagated down the Widget
-@@ -2194,6 +2252,9 @@
+@@ -2194,6 +2254,9 @@
            visual_properties.browser_controls_params);
      }
  
@@ -136,7 +138,7 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
      LocalRootImpl()->GetFrame()->UpdateWindowControlsOverlay(
          visual_properties.window_controls_overlay_rect);
  
-@@ -2210,8 +2271,12 @@
+@@ -2210,8 +2273,12 @@
        View()->Resize(widget_base_->VisibleViewportSize());
      }
  
@@ -149,7 +151,7 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
  }
  
  bool WebFrameWidgetImpl::DidChangeFullscreenState(
-@@ -2472,8 +2537,14 @@
+@@ -2472,8 +2539,14 @@
    // Remote viewports are only applicable to local frames with remote ancestors.
    DCHECK(ForSubframe() || !LocalRootImpl()->GetFrame()->IsOutermostMainFrame());
  
@@ -165,7 +167,7 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
    ApplyViewportIntersection(std::move(intersection_state));
  }
  
-@@ -2518,10 +2589,11 @@
+@@ -2518,10 +2591,11 @@
  }
  
  void WebFrameWidgetImpl::DisableDeviceEmulation() {
@@ -180,7 +182,7 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
  }
  
  void WebFrameWidgetImpl::SetIsInertForSubFrame(bool inert) {
-@@ -2779,6 +2851,7 @@
+@@ -2779,6 +2853,7 @@
                              ->widget_base_.get()
                        : nullptr);
  
@@ -188,7 +190,7 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
    probe::DidInitializeFrameWidget(local_root_->GetFrame());
    local_root_->GetFrame()->NotifyFrameWidgetCreated();
  
-@@ -3696,14 +3769,32 @@
+@@ -3696,14 +3771,32 @@
        new_local_surface_id, compositor_viewport_pixel_rect, new_screen_infos);
  }
  
@@ -221,7 +223,7 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
    widget_base_->UpdateSurfaceAndCompositorRect(new_local_surface_id,
                                                 compositor_viewport_pixel_rect);
  }
-@@ -3714,11 +3805,44 @@
+@@ -3714,11 +3807,44 @@
  }
  
  const display::ScreenInfo& WebFrameWidgetImpl::GetScreenInfo() {
@@ -268,7 +270,7 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
  }
  
  const display::ScreenInfo& WebFrameWidgetImpl::GetOriginalScreenInfo() {
-@@ -5297,7 +5421,13 @@
+@@ -5297,7 +5423,13 @@
    // Emulation happens on regular main frames which don't use auto-resize mode.
    DCHECK(!AutoResizeMode());
  
@@ -282,7 +284,7 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
    widget_base_->SetVisibleViewportSize(visible_viewport_size);
    Resize(widget_base_->DIPsToCeiledBlinkSpace(widget_size_in_dips));
  }
-@@ -5480,14 +5610,40 @@
+@@ -5480,14 +5612,40 @@
  #endif  // BUILDFLAG(IS_WIN)
  
  void WebFrameWidgetImpl::OrientationChanged() {
@@ -327,7 +329,7 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
  
    if (ShouldAutoDetermineCompositingToLCDTextSetting()) {
      // This causes compositing state to be modified which dirties the
-@@ -5507,11 +5663,12 @@
+@@ -5507,11 +5665,12 @@
    if (previous_original_screen_infos.current().device_scale_factor !=
        original_screen_infos.current().device_scale_factor) {
      View()->CancelPagePopup();
@@ -345,7 +347,7 @@ diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/th
    const display::ScreenInfos web_screen_infos = GetScreenInfos();
    const display::ScreenInfos previous_web_screen_infos =
        last_web_exposed_screen_infos_.value_or(previous_original_screen_infos);
-@@ -5528,36 +5685,52 @@
+@@ -5528,36 +5687,52 @@
        color_space_utilities::GetColorSpaceGamut(
            web_screen_infos.current());
  

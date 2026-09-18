@@ -18,7 +18,7 @@ import threading
 import time
 from urllib.parse import urlsplit
 
-from device_p0_audit import font_sources, font_sample_errors, launch
+from device_p0_audit import FONT_NODES, font_sample_errors, launch
 
 PROBE = Path(__file__).with_name('fingerprint_backend_probe.js')
 AUTHOR_FONT = Path(__file__).resolve().parents[1] / 'assets/fonts/Arial-Regular.ttf'
@@ -28,7 +28,10 @@ QUERY_KEYS = ('dark', 'contrast', 'forced', 'motion', 'transparency', 'inverted'
 BASE_ARGS = [arg for arg in launch.NATIVE_ARGS
              if arg not in ('--fingerprint=off', '--uxr-disable-fingerprint-noise')]
 BASE_ARGS += ['--uxr-timezone=America/New_York', '--uxr-languages=en-US',
+              '--enable-blink-features=InvertedColors',
               '--autoplay-policy=no-user-gesture-required', '--site-per-process']
+IGNORED_DEFAULT_ARGS = ['--disable-back-forward-cache',
+    '--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4']
 WORKERS = {
     '/clock-dedicated.js': "onmessage=async()=>postMessage(await chromixBackendProbe.clocks());",
     '/clock-shared.js': "onconnect=e=>{const p=e.ports[0];p.onmessage=async()=>p.postMessage(await chromixBackendProbe.clocks());p.start();};",
@@ -66,7 +69,7 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/author.ttf':
             body, content_type = AUTHOR_FONT.read_bytes(), 'font/ttf'
         elif path in ('/', '/child', '/next'):
-            body = b'<!doctype html><meta charset="utf-8"><title>Backend audit</title><body>Owned backend fixture</body>'
+            body = b'<!doctype html><meta charset="utf-8"><title>Backend audit</title><script src="/probe.js"></script><body>Owned backend fixture</body>'
             content_type = 'text/html; charset=utf-8'
         else:
             self.send_error(404)
@@ -97,23 +100,23 @@ def server():
 
 def case_args(name, family, native_capabilities):
     if name == 'native':
-        return [*BASE_ARGS, '--fingerprint-audio-render=native', '--fingerprint-timer-resolution=0']
+        return [*BASE_ARGS, '--uxr-audio-render=native', '--uxr-timer-resolution=0']
     mixed = name in ('isolated', 'restart')
     uvpaa = native_capabilities.get('uvpaa', {}).get('value', False)
     return [*BASE_ARGS,
-        '--fingerprint-audio-render=isolated', '--fingerprint-audio-seed=' + ('12345' if mixed else '67890'),
-        '--fingerprint-timer-resolution=' + ('7' if mixed else '11'),
-        '--fingerprint-font-policy=restricted', '--fingerprint-font-whitelist=' + family,
-        '--fingerprint-color-scheme=' + ('dark' if mixed else 'light'),
-        '--fingerprint-preferred-contrast=' + ('more' if mixed else 'no-preference'),
-        '--fingerprint-forced-colors=' + ('active' if mixed else 'none'),
-        '--fingerprint-reduced-motion=' + str(mixed).lower(),
-        '--fingerprint-reduced-transparency=' + str(mixed).lower(),
-        '--fingerprint-inverted-colors=' + str(mixed).lower(),
-        '--fingerprint-pointer=' + ('fine' if mixed else 'none'),
-        '--fingerprint-hover=' + ('hover' if mixed else 'none'),
-        '--fingerprint-max-touch-points=' + ('5' if mixed else '0'),
-        '--fingerprint-keyboard-layout=native', '--uxr-plugins=chrome', '--uxr-voices=windows',
+        '--uxr-audio-render=isolated', '--uxr-audio-seed=' + ('12345' if mixed else '67890'),
+        '--uxr-timer-resolution=' + ('7' if mixed else '11'),
+        '--uxr-font-policy=restricted', '--uxr-font-whitelist=' + family,
+        '--uxr-color-scheme=' + ('dark' if mixed else 'light'),
+        '--uxr-preferred-contrast=' + ('more' if mixed else 'no-preference'),
+        '--uxr-forced-colors=' + ('active' if mixed else 'none'),
+        '--uxr-reduced-motion=' + str(mixed).lower(),
+        '--uxr-reduced-transparency=' + str(mixed).lower(),
+        '--uxr-inverted-colors=' + str(mixed).lower(),
+        '--uxr-pointer=' + ('fine' if mixed else 'none'),
+        '--uxr-hover=' + ('hover' if mixed else 'none'),
+        '--uxr-max-touch-points=' + ('5' if mixed else '0'),
+        '--uxr-keyboard-layout=native', '--uxr-plugins=chrome', '--uxr-voices=windows',
         '--uxr-webauthn-uvpaa=' + str(not uvpaa).lower()]
 
 
@@ -236,7 +239,8 @@ def assess(report):
     try:
         return _assess(report)
     except (ValueError, TypeError, KeyError, AttributeError, IndexError, OverflowError, struct.error) as error:
-        return ['malformed backend evidence: ' + str(error)], []
+        primary = report.get('errors', []) if isinstance(report, dict) else []
+        return [*primary, 'malformed backend evidence: ' + str(error)], []
 
 
 def _assess(report):
@@ -350,71 +354,227 @@ def _assess(report):
     return sorted(set(errors)), sorted(set(gaps))
 
 
+class FixtureProtocolError(RuntimeError):
+    def __init__(self, method, error):
+        super().__init__(method + ': ' + json.dumps(error))
+        self.code = error.get('code')
+        self.message = error.get('message')
+
+
+class FixtureSession:
+    """CDP target session in a context Playwright does not own or emulate."""
+    def __init__(self, root, target):
+        self.root = root
+        self.responses = {}
+        self.sequence = 0
+        self.session_id = root.send('Target.attachToTarget', {'targetId': target, 'flatten': False})['sessionId']
+        self.listener = self._received
+        root.on('Target.receivedMessageFromTarget', self.listener)
+
+    def _received(self, event):
+        if event['sessionId'] == self.session_id:
+            message = json.loads(event['message'])
+            if 'id' in message:
+                self.responses[message['id']] = message
+
+    def send(self, method, params=None):
+        self.sequence += 1
+        sequence = self.sequence
+        self.root.send('Target.sendMessageToTarget', {'sessionId': self.session_id,
+            'message': json.dumps({'id': sequence, 'method': method, 'params': params or {}})})
+        deadline = time.monotonic() + 30
+        while sequence not in self.responses:
+            if time.monotonic() >= deadline:
+                raise TimeoutError('CDP fixture timed out: ' + method)
+            # A protocol round trip pumps Playwright's synchronous event dispatcher.
+            self.root.send('Browser.getVersion')
+            time.sleep(0.01)
+        response = self.responses.pop(sequence)
+        if 'error' in response:
+            raise FixtureProtocolError(method, response['error'])
+        return response.get('result', {})
+
+    def evaluate(self, expression, argument=None):
+        if argument is not None:
+            expression = '(' + expression + ')(' + json.dumps(argument) + ')'
+        elif expression.lstrip().startswith(('()', 'async ()')):
+            expression = '(' + expression + ')()'
+        result = self.send('Runtime.evaluate', {'expression': expression,
+            'awaitPromise': True, 'returnByValue': True, 'userGesture': True})
+        if 'exceptionDetails' in result:
+            raise RuntimeError('fixture JavaScript: ' + json.dumps(result['exceptionDetails']))
+        return result['result'].get('value')
+
+    def wait_for(self, expression):
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                if self.evaluate(expression):
+                    return
+            except FixtureProtocolError as error:
+                # Navigation may replace the default execution context mid-poll.
+                if error.code != -32000 or error.message not in (
+                        'Execution context was destroyed.',
+                        'Cannot find context with specified id'):
+                    raise
+            if time.monotonic() >= deadline:
+                raise TimeoutError('fixture condition: ' + expression)
+            time.sleep(0.01)
+
+    def ready(self, url):
+        self.wait_for('location.href === ' + json.dumps(url) +
+                      ' && document.readyState === "complete" && !!globalThis.chromixBackendProbe')
+
+    def goto(self, url):
+        response = self.send('Page.navigate', {'url': url})
+        if response.get('errorText'):
+            raise RuntimeError('fixture navigation: ' + response['errorText'])
+        self.ready(url)
+
+    def freeze_resume(self):
+        self.send('Emulation.setFocusEmulationEnabled', {'enabled': False})
+        self.send('Page.setWebLifecycleState', {'state': 'frozen'})
+        failed = False
+        try:
+            time.sleep(0.08)
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            try:
+                self.send('Page.setWebLifecycleState', {'state': 'active'})
+            except Exception:
+                if not failed:
+                    raise
+        # CDP active unfreezes without undoing WasHidden; RAF needs visibility.
+        self.send('Emulation.setFocusEmulationEnabled', {'enabled': True})
+        self.wait_for('document.visibilityState === "visible"')
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        try:
+            self.detach()
+        except Exception:
+            if exc_type is None:
+                raise
+
+    def detach(self):
+        try:
+            self.root.remove_listener('Target.receivedMessageFromTarget', self.listener)
+        finally:
+            self.root.send('Target.detachFromTarget', {'sessionId': self.session_id})
+
+
+@contextmanager
+def clean_fixture(instance):
+    root = instance.new_browser_cdp_session()
+    context_id = None
+    page = None
+    failed = False
+    try:
+        context_id = root.send('Target.createBrowserContext', {'disposeOnDetach': True})['browserContextId']
+        target = root.send('Target.createTarget', {'url': 'about:blank', 'browserContextId': context_id})['targetId']
+        page = FixtureSession(root, target)
+        page.send('Page.enable')
+        page.send('Runtime.enable')
+        # No Playwright page session has installed media, touch or focus overrides.
+        page.send('Emulation.setFocusEmulationEnabled', {'enabled': False})
+        yield page, root, context_id
+    except BaseException:
+        failed = True
+        raise
+    finally:
+        cleanup_errors = []
+        cleanup = [page.detach] if page is not None else []
+        if context_id is not None:
+            cleanup.append(lambda: root.send('Target.disposeBrowserContext', {'browserContextId': context_id}))
+        for close in [*cleanup, root.detach]:
+            try:
+                close()
+            except Exception as error:
+                cleanup_errors.append(error)
+        if cleanup_errors and not failed:
+            raise cleanup_errors[0]
+
+
 def evaluate(page, method):
     return page.evaluate('async method => await chromixBackendProbe[method]()', method)
 
 
-def collect(context, page, origin, name):
-    session = context.new_cdp_session(page)
+def collect(page, root, context_id, origin, name):
+    session = page
     out = {'name': name, 'clocks': {}}
-    try:
-        out['preferences'] = evaluate(page, 'preferences')
-        page.locator('#backend-input').click()
-        page.keyboard.press('a')
-        if name in ('isolated', 'restart'):
-            session.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': [{'x': 30, 'y': 30}]})
-            session.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
-        out['input_events'] = page.evaluate('backendInputEvents')
-        out['clocks']['window'] = evaluate(page, 'clocks')
-        session.send('Page.setWebLifecycleState', {'state': 'frozen'})
-        try:
-            time.sleep(0.08)
-        finally:
-            session.send('Page.setWebLifecycleState', {'state': 'active'})
-        out['clocks']['after_freeze'] = evaluate(page, 'clocks')
-        out['lifecycle_events'] = page.evaluate('chromixBackendProbe.lifecycle')
-        page.goto(origin + '/next')
-        page.go_back(wait_until='commit')
-        out['clocks']['history'] = evaluate(page, 'clocks')
-        out['history_events'] = page.evaluate('chromixBackendProbe.lifecycle')
-        page.reload()
-        out['clocks']['reloaded'] = evaluate(page, 'clocks')
-        out['preferences_reloaded'] = evaluate(page, 'preferences')
-        page.evaluate("() => {const f=document.createElement('iframe'); f.src='/child'; document.body.append(f);}")
-        page.wait_for_function("""url => {
-          const frame = document.querySelector('iframe');
-          return frame?.contentWindow.location.href === url && frame.contentDocument?.readyState === 'complete';
-        }""", arg=origin + '/child')
-        frame = page.frame(url=origin + '/child')
-        out['clocks']['iframe'] = evaluate(frame, 'clocks')
-        page.evaluate("document.querySelector('iframe').remove()")
-        cross_site = origin.replace('127.0.0.1', 'localhost') + '/child'
-        with page.expect_event('frameattached') as attached:
-            page.evaluate("url => {const f=document.createElement('iframe'); f.src=url; document.body.append(f);}", cross_site)
-        frame = attached.value
-        frame.wait_for_url(cross_site)
-        frame.wait_for_function('innerWidth > 0 && innerHeight > 0')
+    out['preferences'] = evaluate(page, 'preferences')
+    page.evaluate("document.querySelector('#backend-input').focus()")
+    session.send('Input.dispatchKeyEvent', {'type': 'keyDown', 'key': 'a', 'code': 'KeyA',
+                                          'text': 'a', 'windowsVirtualKeyCode': 65})
+    session.send('Input.dispatchKeyEvent', {'type': 'keyUp', 'key': 'a', 'code': 'KeyA',
+                                          'windowsVirtualKeyCode': 65})
+    if name in ('isolated', 'restart'):
+        session.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': [{'x': 30, 'y': 30}]})
+        session.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
+    out['input_events'] = page.evaluate('backendInputEvents')
+    out['clocks']['window'] = evaluate(page, 'clocks')
+    session.freeze_resume()
+    out['clocks']['after_freeze'] = evaluate(page, 'clocks')
+    out['lifecycle_events'] = page.evaluate('chromixBackendProbe.lifecycle')
+    history = session.send('Page.getNavigationHistory')
+    entry = history['entries'][history['currentIndex']]['id']
+    page.goto(origin + '/next')
+    session.send('Page.navigateToHistoryEntry', {'entryId': entry})
+    page.ready(origin + '/')
+    out['clocks']['history'] = evaluate(page, 'clocks')
+    out['history_events'] = page.evaluate('chromixBackendProbe.lifecycle')
+    page.evaluate('globalThis.backendReloadMarker = true')
+    session.send('Page.reload')
+    page.wait_for('!globalThis.backendReloadMarker && document.readyState === "complete"'
+                  ' && !!globalThis.chromixBackendProbe')
+    out['clocks']['reloaded'] = evaluate(page, 'clocks')
+    out['preferences_reloaded'] = evaluate(page, 'preferences')
+    page.evaluate("() => {const f=document.createElement('iframe'); f.src='/child'; document.body.append(f);}")
+    page.wait_for("!!document.querySelector('iframe')?.contentWindow.chromixBackendProbe")
+    out['clocks']['iframe'] = page.evaluate("document.querySelector('iframe').contentWindow.chromixBackendProbe.clocks()")
+    page.evaluate("document.querySelector('iframe').remove()")
+    cross_site = origin.replace('127.0.0.1', 'localhost') + '/child'
+    page.evaluate("url => {const f=document.createElement('iframe'); f.src=url; document.body.append(f);}", cross_site)
+    deadline = time.monotonic() + 30
+    while True:
+        targets = root.send('Target.getTargets')['targetInfos']
+        target = next((t for t in targets if t['type'] == 'iframe' and t['url'] == cross_site
+                       and t.get('browserContextId') == context_id), None)
+        if target:
+            break
+        if time.monotonic() >= deadline:
+            raise TimeoutError('cross-site frame process boundary was not observed')
+        time.sleep(0.01)
+    with FixtureSession(root, target['targetId']) as frame:
+        frame.ready(cross_site)
         out['clocks']['oopif'] = evaluate(frame, 'clocks')
-        out['oopif_observed'] = any(t['type'] == 'iframe' and t['url'] == cross_site
-                                   for t in session.send('Target.getTargets')['targetInfos'])
-        page.evaluate("document.querySelector('iframe').remove()")
-        out['clocks'].update(evaluate(page, 'workers'))
-        out['audio'] = evaluate(page, 'audio')
-        out['capabilities'] = evaluate(page, 'capabilities')
-        out['fonts'] = font_sources(context, page)
-        target = session.send('Target.getTargetInfo')['targetInfo']
-        session.send('Browser.grantPermissions', {'permissions': ['localFonts'], 'origin': origin,
-                                               'browserContextId': target['browserContextId']})
-        out['local_fonts'] = evaluate(page, 'localFonts')
-        out['author_font'] = evaluate(page, 'authorFont')
-        session.send('DOM.enable')
-        session.send('CSS.enable')
-        root = session.send('DOM.getDocument')['root']['nodeId']
-        node = session.send('DOM.querySelector', {'nodeId': root, 'selector': '#backend-author-font'})['nodeId']
-        out['author_font']['platformFonts'] = session.send('CSS.getPlatformFontsForNode', {'nodeId': node})['fonts']
-        return out
-    finally:
-        session.detach()
+        out['oopif_observed'] = True
+    page.evaluate("document.querySelector('iframe').remove()")
+    out['clocks'].update(evaluate(page, 'workers'))
+    out['audio'] = evaluate(page, 'audio')
+    out['capabilities'] = evaluate(page, 'capabilities')
+    session.send('DOM.enable')
+    session.send('CSS.enable')
+    out['fonts'] = page.evaluate(FONT_NODES)
+    document = session.send('DOM.getDocument')['root']['nodeId']
+    nodes = session.send('DOM.querySelectorAll', {'nodeId': document, 'selector': '#p0-fonts > span'})['nodeIds']
+    if len(nodes) != len(out['fonts']):
+        raise ValueError('font source node count differs')
+    for sample, node in zip(out['fonts'], nodes):
+        sample['platformFonts'] = session.send('CSS.getPlatformFontsForNode', {'nodeId': node})['fonts']
+    page.evaluate("document.querySelector('#p0-fonts').remove()")
+    root.send('Browser.grantPermissions', {'permissions': ['localFonts'], 'origin': origin,
+                                          'browserContextId': context_id})
+    out['local_fonts'] = evaluate(page, 'localFonts')
+    out['author_font'] = evaluate(page, 'authorFont')
+    document = session.send('DOM.getDocument')['root']['nodeId']
+    node = session.send('DOM.querySelector', {'nodeId': document, 'selector': '#backend-author-font'})['nodeId']
+    out['author_font']['platformFonts'] = session.send('CSS.getPlatformFontsForNode', {'nodeId': node})['fonts']
+    return out
 
 
 def run(browser, headed=False):
@@ -431,16 +591,13 @@ def run(browser, headed=False):
             for name in CASES:
                 args = case_args(name, report['restricted_family'], capabilities)
                 instance = pw.chromium.launch(executable_path=str(browser.resolve()), headless=not headed,
-                    chromium_sandbox=True, args=args, ignore_default_args=['--disable-back-forward-cache'])
+                    chromium_sandbox=True, args=args, ignore_default_args=IGNORED_DEFAULT_ARGS)
                 try:
                     if report.setdefault('browser_version', instance.version) != instance.version:
                         raise ValueError('browser version changed across restarts')
-                    context = instance.new_context(no_viewport=True)
-                    try:
-                        context.add_init_script(path=str(PROBE))
-                        page = context.new_page()
-                        page.goto(origin, timeout=30000)
-                        observation = collect(context, page, origin, name)
+                    with clean_fixture(instance) as (page, root, context_id):
+                        page.goto(origin + '/')
+                        observation = collect(page, root, context_id, origin, name)
                         observation['launch_args'] = args
                         report['runs'].append(observation)
                         if name == 'native':
@@ -448,10 +605,11 @@ def run(browser, headed=False):
                             sample = next(s for s in observation['fonts'] if s['family'] == 'sans-serif' and s['text'] == 'Aa09')
                             report['restricted_family'] = next(f['familyName'] for f in sample['platformFonts']
                                 if f['glyphCount'] > 0 and f['familyName'] and ',' not in f['familyName'])
-                    finally:
-                        context.close()
                 finally:
-                    instance.close()
+                    try:
+                        instance.close()
+                    except Exception as error:
+                        report['errors'].append('browser close: ' + str(error))
     except Exception as error:
         report['errors'].append(type(error).__name__ + ': ' + str(error))
     if launch.pool.file_hash(browser) != report['browser_sha256']:

@@ -406,6 +406,76 @@ def test_legacy_codec_quality_failure_not_reclassified(codec_v2_template):
     assert any(error.endswith(': codec-quality mismatch') for error in audit.evaluate(data)['errors'])
 
 
+@pytest.fixture(scope='module')
+def codec_v3_template(codec_v2_template):
+    data = deepcopy(codec_v2_template)
+    for scope in data.values():
+        scope['version'] = 3
+        for sample in scope['rows']:
+            items = [*sample['exports'], *sample['lossyQuality']['exports'],
+                     *(item['fullQuality'] for item in sample['exports'][1:])]
+            for item in items:
+                url = 'data:' + item['type'] + ';base64,' + item['bytes'] if sample['kind'] == 'html' else None
+                item.update(repeatBytes=item['bytes'], dataURL=url, repeatDataURL=url,
+                            urlRepeat=True if url else None, urlBlobMatches=True if url else None)
+    return data
+
+
+def test_raw_export_evidence_passes_without_mutation(codec_v3_template):
+    data = deepcopy(codec_v3_template)
+    assert audit.evaluate(data)['errors'] == []
+    assert data == codec_v3_template
+
+
+@pytest.mark.parametrize('group', ['sharp', 'full', 'quality'])
+@pytest.mark.parametrize('field,value', [
+    ('repeatBytes', None), ('repeatBytes', 'YQ=='), ('dataURL', None),
+    ('dataURL', 'data:image/png;base64,YQ=='), ('repeatDataURL', 'data:image/jpeg;base64,YQ=='),
+    ('urlRepeat', False), ('urlRepeat', 1), ('urlBlobMatches', False), ('urlMatches', False),
+])
+def test_raw_exports_cannot_trust_reported_flags(codec_v3_template, group, field, value):
+    data = deepcopy(codec_v3_template)
+    sample = data['window']['rows'][1]
+    item = {'sharp':sample['exports'][1], 'full':sample['exports'][1]['fullQuality'],
+            'quality':sample['lossyQuality']['exports'][0]}[group]
+    item[field] = value
+    assert audit.evaluate(data, check_cross_context=False)['errors']
+
+
+def test_dataurl_repeat_and_blob_mismatch_are_distinct(codec_v3_template):
+    from chromix._canvas_chain import export_evidence_errors
+    item = deepcopy(codec_v3_template['window']['rows'][1]['exports'][0])
+    # Different bytes can decode to identical pixels and must still fail.
+    image = Image.frombytes('RGBA', (32, 24), bytes(audit.input_pixels(False)))
+    buffer = BytesIO()
+    image.save(buffer, format='PNG', compress_level=0)
+    alternate = base64.b64encode(buffer.getvalue()).decode('ascii')
+    assert alternate != item['bytes']
+    assert audit.decode(alternate, 'image/png')['rgba'] == item['decoded']
+    item.update(dataURL='data:image/png;base64,' + alternate,
+                repeatDataURL='data:image/png;base64,' + alternate,
+                urlRepeat=True, urlBlobMatches=False, urlMatches=False)
+    errors = export_evidence_errors(item, 'html', raw_payloads=True)
+    assert 'DataURL/Blob payload mismatch' in errors
+    assert 'DataURL repeat payload mismatch' not in errors
+    item.update(dataURL='data:image/png;base64,' + item['bytes'],
+                urlRepeat=False, urlBlobMatches=True)
+    errors = export_evidence_errors(item, 'html', raw_payloads=True)
+    assert 'DataURL repeat payload mismatch' in errors
+    assert 'DataURL/Blob payload mismatch' not in errors
+
+
+def test_offscreen_raw_evidence_requires_blob_repeat_and_null_urls(codec_v3_template):
+    from chromix._canvas_chain import export_evidence_errors
+    item = deepcopy(codec_v3_template['worker']['rows'][0]['exports'][0])
+    assert export_evidence_errors(item, 'offscreen', raw_payloads=True) == []
+    item['urlRepeat'] = True
+    assert export_evidence_errors(item, 'offscreen', raw_payloads=True)
+    item['urlRepeat'] = None
+    del item['repeatBytes']
+    assert export_evidence_errors(item, 'offscreen', raw_payloads=True)
+
+
 def test_native_smoke_does_not_enable_synthetic_paths():
     from test_fingerprint_smoke import smoke, scenario
     for mode in ('native', 'on', 'off'):

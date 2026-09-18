@@ -108,6 +108,23 @@ def test_partial_and_oversized_snapshots(snapshot_binary):
         assert call(snapshot_binary, *args) == ['0'] * 10
 
 
+DISPLAY_TRANSPORT_NUMBERS = tuple(f'{number:04d}' for number in range(192, 209))
+# 0211 expects WebViewImpl after the 0170 preferences patch.
+DISPLAY_STACK_NUMBERS = ('0125', '0126', '0127', '0128', '0170',
+                         *DISPLAY_TRANSPORT_NUMBERS,
+                         *(f'{number:04d}' for number in range(209, 214)), '0216')
+
+
+def display_patches(numbers):
+    return [next((ROOT / 'patches').glob(number + '-*.patch')) for number in numbers]
+
+
+def display_patch_postimage(number):
+    patch, = display_patches((number,))
+    return '\n'.join(line[1:] for line in patch.read_text().splitlines()
+                     if line.startswith((' ', '+')) and not line.startswith('+++'))
+
+
 def test_getters_no_longer_override_native_layout():
     for number in ('0012', '0018', '0037', '0055', '0056', '0058'):
         added = '\n'.join(line for line in next((ROOT / 'patches').glob(number + '-*.patch')).read_text().splitlines()
@@ -115,15 +132,114 @@ def test_getters_no_longer_override_native_layout():
         assert 'GetInstance()' not in added
         assert 'ScreenMetricsEmulator' in added
     screen = (ROOT / 'patches/0125-display-emulation-backend.patch').read_text()
-    widget = (ROOT / 'patches/0126-display-widget-initialization.patch').read_text()
+    widget = display_patch_postimage('0126')
+    transport = display_patch_postimage('0207')
     assert 'screen_infos.assign(1, current)' in screen
     assert 'gfx::Size(display.available_width,' in screen
     assert 'ForTopMostMainFrame() && !uxr_display_initialized_' in widget
     assert 'display.enabled() && !AutoResizeMode() && !DeviceEmulator()' in widget
     assert 'last_web_exposed_screen_infos_' in widget
-    assert 'remote_frame->DidChangeScreenInfos(web_screen_infos)' in widget
+    assert 'remote_frame->DidChangeScreenInfos(original_screen_infos,' in transport
+    assert 'emulated_screen_infos);' in transport
+    assert 'remote_frame->DidChangeScreenInfos(web_screen_infos)' not in transport
     assert 'current.is_extended = false' in screen
     assert 'EnableDeviceEmulation(params,' in widget
+
+
+def test_complete_display_stack_matches_series():
+    patches = display_patches(DISPLAY_STACK_NUMBERS)
+    series = [ROOT / line for line in (ROOT / 'patches/series').read_text().splitlines()
+              if line.startswith('patches/')]
+    assert [path for path in series if path in patches] == patches
+    assert {path for path in series if '-display-' in path.name} <= set(patches)
+
+
+def test_native_and_emulated_display_transport_contract():
+    transport_patches = display_patches(DISPLAY_TRANSPORT_NUMBERS)
+    assert all(path.read_text().count('diff --git ') == 1 for path in transport_patches)
+    patch = ''.join(path.read_text() for path in transport_patches)
+    widget = display_patch_postimage('0207')
+    remote = display_patch_postimage('0208')
+    assert patch.count('+      !data.ReadEmulatedScreenInfos(&out->emulated_screen_infos) ||') == 2
+    assert patch.count('+  display.mojom.ScreenInfos? emulated_screen_infos;') == 2
+    assert '+         emulated_screen_infos == other.emulated_screen_infos &&' in patch
+    assert '+      sent_visual_properties_->emulated_screen_infos !=' in patch
+    assert '+         old_visual_properties->emulated_screen_infos !=' in patch
+    assert 'properties_from_parent_local_root_.emulated_screen_infos' in patch
+    assert 'visual_properties.emulated_screen_infos);' in patch
+    assert patch.count('+    return r.emulated_screen_infos;') == 2
+    assert 'visual_properties.screen_infos = ancestor_widget->GetOriginalScreenInfos();' in remote
+    assert 'ancestor_widget->GetEmulatedScreenInfos();' in remote
+    assert 'visual_properties.screen_infos = ancestor_widget->GetScreenInfos();' not in remote
+    assert 'inherited_emulated_screen_infos_ = visual_properties.emulated_screen_infos;' in widget
+    assert 'inherited_emulated_screen_infos_.reset();' in widget
+    assert 'SetCompositorDeviceScaleFactorOverride(' in widget
+    assert '? GetOriginalScreenInfo().device_scale_factor' in widget
+    assert '!ForSubframe() || !View()->MainFrameImpl()' in widget
+    assert widget.index('  device_emulator_ = nullptr;') < widget.index('    emulator->DisableAndApply();')
+    regressions = display_patch_postimage('0209')
+    for name in ('EmulatedScreenPreservesNativeLayoutAndInputScale',
+                 'EmulatedScreenMojoRoundTripAndClear',
+                 'EmulatedScreenInitialNestedPropagationAndClear'):
+        assert name in regressions
+    assert 'check(300, 150, 1.25f, 1.f);' in regressions
+    nested = regressions.split('EmulatedScreenInitialNestedPropagationAndClear) {', 1)[1].split('\n}', 1)[0]
+    assert nested.count('  widget->EnableDeviceEmulation(\n'
+                        '      params, mojom::blink::DeviceEmulationCacheBehavior::kClearCache);') == 3
+    assert nested.count('  widget->DisableDeviceEmulation();') == 1
+    assert nested.count('  check(true);') == 3
+    assert '  check(false);' in nested
+    assert 'EXPECT_EQ(native_screens, properties.screen_infos);' in nested
+    assert 'EXPECT_EQ(emulated, properties.emulated_screen_infos.has_value());' in nested
+    assert 'EXPECT_EQ(widget->GetScreenInfos(), *properties.emulated_screen_infos);' in nested
+    clear_regressions = display_patch_postimage('0216')
+    for statement in ('EXPECT_FALSE(decoded_frame.emulated_screen_infos);',
+                      'EXPECT_EQ(frame.screen_infos, decoded_frame.screen_infos);',
+                      'frame_copy = decoded_frame;',
+                      'EXPECT_EQ(frame.emulated_screen_infos, frame_copy.emulated_screen_infos);',
+                      'widget.screen_infos = decoded_frame.screen_infos;',
+                      'widget.emulated_screen_infos = decoded_frame.emulated_screen_infos;',
+                      'mojo::test::SerializeAndDeserialize<mojom::blink::VisualProperties>(',
+                      'EXPECT_EQ(widget, decoded_widget);',
+                      'decoded_widget.emulated_screen_infos = display::ScreenInfos(emulated_screen);',
+                      'EXPECT_FALSE(widget == decoded_widget);'):
+        assert statement in clear_regressions
+
+
+def test_complete_display_stack_exact_apply_reverse(tmp_path):
+    import hashlib
+    import re
+    baseline = os.environ.get('CHROMIX_DISPLAY_BASELINE_ROOT')
+    if not baseline:
+        pytest.skip('exact Chromium 152.0.7977.82 source root is required')
+    patches = display_patches(DISPLAY_STACK_NUMBERS)
+    targets = {p for patch in patches for p in re.findall(r'^\+\+\+ b/(.+)$', patch.read_text(), re.M)}
+    originals = {}
+    for relative in targets:
+        original = Path(baseline) / relative
+        assert original.is_file(), relative
+        originals[relative] = (original.read_bytes(), original.stat().st_mtime_ns)
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(originals[relative][0])
+    assert hashlib.sha256(originals['third_party/blink/renderer/core/frame/web_frame_widget_impl.cc'][0]).hexdigest() == (
+        '34a84b9210fcedad78b63a533e4e620868da0ea60d4230099914f06549539c05')
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
+    for reverse, ordered in ((False, patches), (True, list(reversed(patches)))):
+        for patch in ordered:
+            command = ['git', 'apply', '--verbose', '--whitespace=error']
+            if reverse:
+                command.append('--reverse')
+            result = subprocess.run([*command, str(patch)], cwd=tmp_path, text=True, capture_output=True)
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert 'offset' not in result.stderr and 'fuzz' not in result.stderr
+        if not reverse:
+            for relative, (data, _) in originals.items():
+                assert (tmp_path / relative).read_bytes() != data
+    for relative, (data, timestamp) in originals.items():
+        assert (tmp_path / relative).read_bytes() == data
+        original = Path(baseline) / relative
+        assert original.read_bytes() == data and original.stat().st_mtime_ns == timestamp
 
 
 @pytest.mark.parametrize('number,relative', [

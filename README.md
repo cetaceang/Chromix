@@ -72,7 +72,7 @@ The [backend policies](docs/backend-policy.md) make shared native GPU behavior
 the ordinary default and add optional graph audio isolation, restricted font
 pools, codec restrictions, effective CSS/input preferences and clock resolution.
 New acceptance probes cover these policies, TLS resumption and owned-loopback H3.
-The 213-patch stack still requires matching native browser acceptance.
+The 216-patch stack still requires matching native browser acceptance.
 
 The GPU pool contains Windows/Linux/macOS identity templates, not a measured
 full-device dataset. Screen/layout, font provenance, CPU/memory capabilities,
@@ -129,7 +129,7 @@ The shared source baseline and Linux/Windows targets are pinned to Chromium
 `153.0.8010.36`. macOS remains explicitly pinned to `152.0.7977.82` because
 upstream has no 153 platform tag or branch as of 2026-09-17. The original Linux
 x64/ARM64 packages are published as `Chromix 153.0.8010.36` and marked GitHub
-Latest. This merged 213-patch source stack has not completed a new browser build;
+Latest. This merged 216-patch source stack has not completed a new browser build;
 the published Linux packages do not establish native acceptance for this stack.
 Machine-readable source pins are in `build/ungoogled-revisions.psd1`, with
 `CHROMIUM_MACOS_VERSION` selecting the macOS exception. Legacy version files
@@ -379,7 +379,7 @@ Chromix packages Windows x64, Linux x64/arm64, and macOS x64/arm64. The pinned l
 | ungoogled-chromium-portablelinux | `153.0.8010.36-1` |
 | Chromium / ungoogled-chromium (macOS override) | `152.0.7977.82` / `152.0.7977.82-1` |
 | ungoogled-chromium-macos | `152.0.7977.82-1.1` |
-| Chromix | 213 patches listed in `patches/series` |
+| Chromix | 216 patches listed in `patches/series` |
 
 Requirements include Visual Studio 2022 with Desktop development with C++, the
 Windows 11 SDK 10.0.28000.0 headers, libraries and Debugging Tools, Python 3, Git, PowerShell 7, 7-Zip,
@@ -409,6 +409,11 @@ D:\chromix-build\src\out\Chromix\chrome.exe
 
 Read [`BUILDING.md`](BUILDING.md) for source revisions, GitHub Actions cache
 reuse, domain substitution, packaging, and patch-maintenance details.
+
+For reload crashes and `Crashpad_NotConnectedToHandler`, see
+[Windows crash diagnostics and issue #3](docs/windows-crash-diagnostics.md).
+It explains the timing fixes, disabled Crashpad behavior, and external dump
+capture; using the fixes requires a matching rebuilt browser.
 
 ## Repository layout
 

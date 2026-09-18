@@ -111,6 +111,7 @@ def pinned_api(request, tmp_path_factory):
 #include <cstring>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -212,9 +213,10 @@ def test_native_pinned_api_compilation(tmp_path, native_sources, pinned_api, mut
     helper = block(native_sources["0152"], "String ComputePlatformFontTableHash(")
     condition = re.search(r"if \((!value\.table_hash\.[^\n]+)\) \{", native_sources["0152"])[1]
     source = helper + "\nstruct Usage { String table_hash; };\nbool publish(const Usage& value) { return " + condition + "; }\n"
+    table_tags = re.search(r"readTableTags\((?:SkSpan<SkFontTableTag>\(tags\.data\(\), tags\.size\(\)\)|tags)\)", helper)[0]
     replacements = {
-        "getTableTags": ("readTableTags(tags)", "getTableTags(tags.data())"),
-        "raw-pointer": ("readTableTags(tags)", "readTableTags(tags.data())"),
+        "getTableTags": (table_tags, "getTableTags(tags.data())"),
+        "raw-pointer": (table_tags, "readTableTags(tags.data())"),
         "FromUTF8": ("String::FromUtf8", "String::FromUTF8"),
         "byte-span": ("String::FromUtf8(base::HexEncodeLower(result))", "String::FromUtf8(base::span<const uint8_t>(base::HexEncodeLower(result)))"),
         "IsEmpty": ("table_hash.empty()", "table_hash.IsEmpty()"),
@@ -233,6 +235,7 @@ def test_native_pinned_api_compilation(tmp_path, native_sources, pinned_api, mut
 @pytest.fixture(scope="module")
 def native_digest_binary(tmp_path_factory, native_sources, pinned_api):
     helper = block(native_sources["0152"], "String ComputePlatformFontTableHash(")
+    protocol = block(native_sources["0152"], "if (!value.table_hash.")
     # Collect every digest input byte, independently of Python's encoder and SHA256.
     bodies = r'''
 String String::FromUtf8(base::span<const uint8_t> bytes){String out;out.text.assign(bytes.begin(),bytes.end());return out;}
@@ -253,7 +256,14 @@ int SkTypeface::readTableTags(SkSpan<SkFontTableTag> tags)const{
 }
 size_t SkTypeface::getTableSize(SkFontTableTag tag)const{return mode==2?65*1024*1024:tables.at(tag).size();}
 size_t SkTypeface::getTableData(SkFontTableTag tag,size_t,size_t n,void* out)const{if(mode==3)return 0;std::memcpy(out,tables.at(tag).data(),n);return n;}
+struct InspectorPlatformFontUsage {String table_hash;};
+struct PlatformFontUsage {
+  std::optional<String> table_hash, algorithm;
+  void setFontTableHash(const String& value){table_hash=value;}
+  void setFontTableHashAlgorithm(const char* value){algorithm=String::FromUtf8(value);}
+};
 '''
+    emit = "\nvoid EmitHash(const InspectorPlatformFontUsage& value, PlatformFontUsage* usage) {\n" + protocol + "\n}\n"
     main = r'''
 int main(int argc,char**argv){
   SkTypeface face;face.mode=argc>1?std::stoi(argv[1]):0;
@@ -264,21 +274,32 @@ int main(int argc,char**argv){
   if(face.mode==9)face.tables[SkSetFourByteTag('h','e','a','d')].resize(11);
   if(face.mode==10){auto& head=face.tables[SkSetFourByteTag('h','e','a','d')];std::fill(head.begin()+8,head.begin()+12,255);face.tables.erase(SkSetFourByteTag('D','S','I','G'));}
   if(face.mode==11)face.tables[SkSetFourByteTag('g','l','y','f')]={'o','t','h','e','r'};
-  std::cout<<ComputePlatformFontTableHash(face).text;
+  if(face.mode==12)face.tables.clear();
+  if(face.mode==14)face.tables[SkSetFourByteTag('D','S','I','G')]={'o','t','h','e','r'};
+  InspectorPlatformFontUsage value{ComputePlatformFontTableHash(face)};
+  if(face.mode==13)value.table_hash=String();
+  PlatformFontUsage usage;
+  EmitHash(value,&usage);
+  std::cout<<value.table_hash.text<<'\n'
+           <<(usage.table_hash?usage.table_hash->text:"absent")<<'\n'
+           <<(usage.algorithm?usage.algorithm->text:"absent")<<'\n';
 }
 '''
-    result, binary = compile_api(tmp_path_factory.mktemp("font-digest-" + pinned_api[0]), pinned_api, bodies + helper + main, link=True)
+    result, binary = compile_api(tmp_path_factory.mktemp("font-digest-" + pinned_api[0]), pinned_api, bodies + helper + emit + main, link=True)
     assert result.returncode == 0, result.stdout + result.stderr
     return binary
 
 
-@pytest.mark.parametrize("mode", range(12))
+@pytest.mark.parametrize("mode", range(15))
 def test_native_digest_byte_contract(native_digest_binary, mode):
     result = subprocess.run([str(native_digest_binary), str(mode)], capture_output=True, text=True, timeout=10, env=sanitizer_env())
     assert result.returncode == 0, result.stderr
+    digest, table_hash, algorithm = result.stdout.splitlines()
     tables = {b"head": bytes(range(16)), b"glyf": b"other" if mode == 11 else b"shape", b"DSIG": b"sig"}
-    expected = b"" if 1 <= mode <= 9 else b"".join(font.canonical_table_bytes(tables))
-    assert bytes.fromhex(result.stdout) == expected
+    expected = b"" if 1 <= mode <= 9 or mode in (12, 13) else b"".join(font.canonical_table_bytes(tables))
+    assert bytes.fromhex(digest) == expected
+    assert table_hash == (expected.hex() if expected else "absent")
+    assert algorithm == (font.ALGORITHM if expected else "absent")
 
 
 def test_native_protocol_uses_typeface_content_not_names(native_sources):

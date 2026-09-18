@@ -475,9 +475,14 @@ def test_real_series_parses_without_donor_execution():
         transformed, entries = arp.transform_patch(raw, set(), [])
         assert transformed == raw
         assert entries
-    assert len(names) == 213
-    assert [Path(name).name[:4] for name in names] == [f"{i:04d}" for i in range(1, 214)]
-    assert all(Path(name).name[5:].startswith("display-") for name in names[191:])
+    assert len(names) == 216
+    assert [Path(name).name[:4] for name in names] == [f"{i:04d}" for i in range(1, 217)]
+    assert all(Path(name).name[5:].startswith("display-") for name in names[191:213])
+    assert [Path(name).name for name in names[213:]] == [
+        "0214-animation-clock-quantization.patch",
+        "0215-document-timeline-clock-origin.patch",
+        "0216-display-native-emulated-regressions.patch",
+    ]
 
 
 @pytest.mark.parametrize("version", ["152", "153"])

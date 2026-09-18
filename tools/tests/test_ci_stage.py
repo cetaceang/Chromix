@@ -891,7 +891,7 @@ class DomainSubstitutionRegressionTest(unittest.TestCase):
     def setUp(self):
         self.stage = CI_STAGE.read_text(encoding="utf-8")
         guard_start = self.stage.index('$domainProgress = Join-Path $Src')
-        guard_end = self.stage.index('\n$MigrateRestoredSource =', guard_start)
+        guard_end = self.stage.index('\n$VerifyRestoredSource =', guard_start)
         self.guard = self.stage[guard_start:guard_end]
         start = self.stage.index('  if (-not (Test-Path $domainMarker)) {')
         end = self.stage.index('  & $gn gen $OutDir', start)
@@ -916,11 +916,12 @@ class DomainSubstitutionRegressionTest(unittest.TestCase):
         self.assertNotIn('$ValidateOnly', self.substitution)
         self.assertNotIn('$ImportUpstreamCache', self.substitution)
 
-    def test_interrupted_restore_is_rejected_before_source_migration_or_import(self):
+    def test_interrupted_restore_is_rejected_before_source_verification_or_import(self):
         guard = self.stage.index(self.guard)
         restore = self.stage.index('& $sevenZip x "C:\\restore\\tree.7z.001"')
         self.assertLess(restore, guard)
-        self.assertLess(guard, self.stage.index('update-restored-source.ps1', restore))
+        self.assertNotIn('& "$PSScriptRoot\\update-restored-source.ps1"', self.stage)
+        self.assertLess(guard, self.stage.index('verify_patch_stack.py', restore))
         self.assertLess(guard, self.stage.index('prepare-ungoogled.ps1', restore))
         self.assertLess(guard, self.stage.index('--phase restore'))
         self.assertIn('if (Test-Path $domainProgress)', self.guard)
@@ -1135,7 +1136,15 @@ class ResumeWorkflowRegressionTest(unittest.TestCase):
     def test_resume_uses_official_cross_run_artifact_download(self):
         self.assertIn("actions: read", self.source)
         self.assertEqual(self.source.count("github-token: ${{ github.token }}"), 11)
-        self.assertEqual(self.source.count("run-id: ${{ inputs.resume_run_id }}"), 11)
+        import yaml
+        jobs = yaml.safe_load(self.source)["jobs"]
+        downloads = [step for job in jobs.values() for step in job["steps"]
+                     if step.get("name") == "Download tree from previous run"]
+        self.assertEqual(len(downloads), 11)
+        for step in downloads:
+            self.assertEqual(step["uses"], "actions/download-artifact@v4")
+            self.assertEqual(step["with"]["run-id"], "${{ inputs.resume_run_id }}")
+            self.assertIn("inputs.resume_source_sha == ''", step["if"])
         self.assertEqual(self.source.count("merge-multiple: true"), 22)
         self.assertIn("resume_tree_stage:", self.source)
         self.assertIn(
@@ -1184,14 +1193,30 @@ class RestoredSourceUpdateRegressionTest(unittest.TestCase):
         update_source = RESTORED_SOURCE_UPDATE.read_text(encoding="utf-8")
         self.assertIn('$uaInternal += "`n"', update_source)
 
-    def test_resume_updates_stale_media_recorder_source(self):
-        stage_source = CI_STAGE.read_text(encoding="utf-8")
-        update_source = RESTORED_SOURCE_UPDATE.read_text(encoding="utf-8")
-        restore = stage_source.index('& $sevenZip x "C:\\restore\\tree.7z.001"')
-        update = stage_source.index('update-restored-source.ps1', restore)
-        prepare = stage_source.index('& "$PSScriptRoot\\prepare-ungoogled.ps1"', restore)
+    def test_resume_verifies_source_after_preparation_without_legacy_migration(self):
+        stage = CI_STAGE.read_text(encoding="utf-8")
+        restore = stage.index('& $sevenZip x "C:\\restore\\tree.7z.001"')
+        prepare = stage.index('& "$PSScriptRoot\\prepare-ungoogled.ps1"', restore)
+        verify = stage.index('if ($VerifyRestoredSource)', prepare)
+        merge = stage.index('tools\\merge_gn_args.py', verify)
+        check = stage[verify:merge]
         self.assertLess(restore, prepare)
-        self.assertLess(prepare, update)
+        self.assertLess(prepare, verify)
+        self.assertNotIn('& "$PSScriptRoot\\update-restored-source.ps1"', stage)
+        self.assertIn('tools\\verify_patch_stack.py', check)
+        self.assertIn('--src $Src --repo $Repo', check)
+        self.assertIn('--core $UngoogledTooling --platform-tooling $WindowsTooling --platform windows', check)
+        self.assertIn('--output $resumeSourceReport', check)
+        self.assertIn('if ($LASTEXITCODE -ne 0)', check)
+        self.assertIn('refusing legacy rewrites', check)
+        substitution = stage.index('Move-Item -LiteralPath $domainProgress -Destination $domainMarker', merge)
+        final_check = stage.index('tools\\verify_patch_stack.py', substitution)
+        gn = stage.index('& $gn gen $OutDir', final_check)
+        self.assertLess(substitution, final_check)
+        self.assertIn('if ($LASTEXITCODE -ne 0) { throw', stage[final_check:gn])
+
+    def test_legacy_update_repairs_stale_media_recorder_source(self):
+        update_source = RESTORED_SOURCE_UPDATE.read_text(encoding="utf-8")
         self.assertIn('$normalizedContent = $content.Replace("`r`n", "`n")', update_source)
         self.assertIn('$normalizedOldText = $OldText.Replace("`r`n", "`n")', update_source)
         self.assertIn('$normalizedNewText = $NewText.Replace("`r`n", "`n")', update_source)
@@ -1345,36 +1370,33 @@ class RestoredSourceUpdateRegressionTest(unittest.TestCase):
             update_source,
         )
 
-    def test_resume_preserves_cache_but_discards_incompatible_chromium_source(self):
+    def test_resume_rejects_incompatible_chromium_without_removing_source(self):
         stage = CI_STAGE.read_text(encoding="utf-8")
         self.assertIn('$unpackedMarker = Join-Path $Src ".chromix-source-unpacked"', stage)
         self.assertIn('$readyMarker = Join-Path $Src ".chromix-source-ready"', stage)
         self.assertIn('$restoredVersion -ne $Revisions.ChromiumVersion', stage)
-        self.assertIn(
-            'preserving tooling/download_cache and removing incompatible src/out',
-            stage,
-        )
-        self.assertIn('Remove-Item $Src -Recurse -Force', stage)
+        self.assertIn('use a new work directory for a cold build instead of a cross-version snapshot', stage)
+        self.assertNotIn('Remove-Item $Src', stage)
         self.assertRegex(
             stage,
-            r'(?s)if \(\$restoredVersion -and .*?\) \{.*?Remove-Item \$Src '
-            r'-Recurse -Force\s+\} elseif \(Test-Path \$readyMarker\) \{\s+'
-            r'\$MigrateRestoredSource = -not \$RestoredUpstream',
+            r'if \(\$restoredVersion -and .*?\) \{\s+throw "[^"\n]+"\s+'
+            r'\} elseif \(Test-Path \$readyMarker\) \{\s+'
+            r'\$VerifyRestoredSource = -not \$RestoredUpstream',
         )
 
-    def test_resume_defers_source_migrations_for_interrupted_patch_layers(self):
+    def test_resume_completes_interrupted_patch_preparation_before_verification(self):
         stage = CI_STAGE.read_text(encoding="utf-8")
         self.assertIn("elseif (Test-Path $readyMarker)", stage)
         self.assertIn(
-            "restored source is not ready; deferring migrations until patch preparation completes",
+            "restored source is not ready; completing patch preparation before verification",
             stage,
         )
         restore = stage.index('& $sevenZip x "C:\\restore\\tree.7z.001"')
         ready_gate = stage.index("elseif (Test-Path $readyMarker)", restore)
-        migration = stage.index("update-restored-source.ps1", ready_gate)
         prepare = stage.index('prepare-ungoogled.ps1', ready_gate)
+        verify = stage.index("verify_patch_stack.py", prepare)
         self.assertLess(ready_gate, prepare)
-        self.assertLess(prepare, migration)
+        self.assertLess(prepare, verify)
 
     def test_interrupted_chromix_patch_layer_resumes_without_discarding_source(self):
         prepare = PREPARE_UNGOOGLED.read_text(encoding="utf-8")
@@ -1467,10 +1489,9 @@ class RestoredSourceUpdateRegressionTest(unittest.TestCase):
         self.assertIn("workflow_call:", workflow)
         self.assertIn("name: chromix-win-x64", workflow)
 
-    def test_resume_passes_output_directory_and_invalidates_webgl_objects(self):
-        stage = CI_STAGE.read_text(encoding="utf-8")
+    def test_legacy_update_accepts_output_directory_and_invalidates_webgl_objects(self):
         update = RESTORED_SOURCE_UPDATE.read_text(encoding="utf-8")
-        self.assertIn('update-restored-source.ps1" -Src $Src -OutDir $OutDir', stage)
+        self.assertIn('[string]$OutDir', update)
         self.assertIn('chromix-renderer-objects-invalidated.txt', update)
         self.assertIn('removed $($staleObjects.Count) restored renderer object files', update)
         self.assertIn('SetLastWriteTimeUtc', update)

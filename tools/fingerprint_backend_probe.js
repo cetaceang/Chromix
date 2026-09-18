@@ -201,11 +201,11 @@
   'use strict';
   const {bounded, delay} = chromixBackendProbe;
   const specs = {
-    h264:{codec:'avc1.42001E', mime:'video/mp4;codecs=avc1.42001E'},
-    vp8:{codec:'vp8', mime:'video/webm;codecs=vp8'},
-    vp9:{codec:'vp09.00.10.08', mime:'video/webm;codecs=vp9'},
-    av1:{codec:'av01.0.04M.08', mime:'video/webm;codecs=av01.0.04M.08'},
-    hevc:{codec:'hvc1.1.6.L93.B0', mime:'video/mp4;codecs=hvc1.1.6.L93.B0'},
+    h264:{codec:'avc1.42001E', mime:'video/mp4;codecs=avc1.42001E', rtpMime:'video/H264'},
+    vp8:{codec:'vp8', mime:'video/webm;codecs=vp8', rtpMime:'video/VP8'},
+    vp9:{codec:'vp09.00.10.08', mime:'video/webm;codecs=vp9', rtpMime:'video/VP9'},
+    av1:{codec:'av01.0.04M.08', mime:'video/webm;codecs=av01.0.04M.08', rtpMime:'video/AV1'},
+    hevc:{codec:'hvc1.1.6.L93.B0', mime:'video/mp4;codecs=hvc1.1.6.L93.B0', rtpMime:'video/H265'},
   };
   const config = spec => ({codec:spec.codec, width:64, height:64, bitrate:200000, framerate:30});
   const b64 = bytes => {
@@ -216,6 +216,14 @@
   const canvas = () => {
     const c = document.createElement('canvas'); c.width = c.height = 64;
     c.getContext('2d').fillRect(0,0,64,64); return c;
+  };
+  const errorDetails = error => ({name:error.name || 'Error', message:error.message || String(error)});
+  const capability = async (method, configuration) => {
+    try {
+      const result = await bounded(navigator.mediaCapabilities[method](configuration));
+      return {status:'resolved', configuration, supported:result.supported,
+        smooth:result.smooth, powerEfficient:result.powerEfficient};
+    } catch (error) { return {status:'rejected', configuration, error:errorDetails(error)}; }
   };
   const supported = async (api, settings) => {
     try { return (await api.isConfigSupported(settings)).supported; } catch { return false; }
@@ -276,7 +284,11 @@
       recorder.stop(); await bounded(done);
       const blob = new Blob(chunks, {type:recorder.mimeType});
       if (blob.size > 1048576) throw new Error('recording fixture exceeded 1 MiB');
-      return {status:'recorded', bytes:blob.size, mime:recorder.mimeType, data:b64(new Uint8Array(await blob.arrayBuffer()))};
+      return {status:'recorded', bytes:blob.size, requestedMime:mime, mime:recorder.mimeType,
+        mimeSupported:MediaRecorder.isTypeSupported(recorder.mimeType),
+        canPlay:document.createElement('video').canPlayType(recorder.mimeType),
+        mseSupported:typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(recorder.mimeType),
+        chunkMimes:chunks.map(chunk => chunk.type), data:b64(new Uint8Array(await blob.arrayBuffer()))};
     } catch (e) { return {status:'rejected', bytes:chunks.reduce((n,b) => n+b.size,0), error:e.name + ':' + e.message}; }
     finally {
       if (recorder?.state === 'recording') recorder.stop();
@@ -284,9 +296,10 @@
     }
   }
 
-  async function play(fixture, mse = false) {
+  async function play(fixture, mseMime = null) {
     if (fixture?.status !== 'recorded' || !fixture.bytes) return {status:'unavailable'};
     const video = document.createElement('video'); video.muted = true;
+    const evidence = {mime:mseMime || fixture.mime, recorderMime:fixture.mime};
     let url, mediaSource;
     try {
       const loaded = new Promise((resolve, reject) => {
@@ -295,11 +308,12 @@
       });
       // Attach a rejection handler before the MSE setup can also fail.
       loaded.catch(() => {});
-      if (mse) {
+      if (mseMime) {
+        evidence.mimeSupported = MediaSource.isTypeSupported(mseMime);
         mediaSource = new MediaSource(); url = URL.createObjectURL(mediaSource);
         const opened = new Promise(resolve => mediaSource.addEventListener('sourceopen', resolve, {once:true}));
         video.src = url; await bounded(opened);
-        const buffer = mediaSource.addSourceBuffer(fixture.mime);
+        const buffer = mediaSource.addSourceBuffer(mseMime);
         const appended = new Promise((resolve, reject) => {
           buffer.addEventListener('updateend', resolve, {once:true});
           buffer.addEventListener('error', () => reject(new Error('MSE append failed')), {once:true});
@@ -310,45 +324,121 @@
         video.src = url; video.load();
       }
       await bounded(loaded);
-      return {status:'decoded', width:video.videoWidth, height:video.videoHeight};
-    } catch (error) { return {status:'rejected', error:error.name + ':' + error.message}; }
+      return {...evidence, status:'decoded', width:video.videoWidth, height:video.videoHeight};
+    } catch (error) { return {...evidence, status:'rejected', error:error.name + ':' + error.message}; }
     finally { video.removeAttribute('src'); video.load(); if (url) URL.revokeObjectURL(url); }
   }
 
   async function rtc(disabled) {
     const send = new RTCPeerConnection({iceServers:[]}), receive = new RTCPeerConnection({iceServers:[]});
     const c = canvas(), stream = c.captureStream(30), queuedSend = [], queuedReceive = [];
-    const errors = []; let timer;
+    const started = performance.now(), elapsed = () => performance.now() - started;
+    const diagnostics = {events:[], candidates:[], candidateErrors:[], stats:[], sdp:{},
+      play:{status:'not_called'}, cleanupErrors:[], drawRequests:0};
+    const result = {status:'failed', formats:[], errors:[], diagnostics};
+    let timer, cleaning = false, playPromise;
+    const pendingCandidates = [];
     const video = document.createElement('video'); video.muted = true; video.autoplay = true;
-    receive.ontrack = event => { video.srcObject = event.streams[0]; video.play().catch(e => errors.push(e.name)); };
-    const candidate = (peer, queue, value) => {
-      if (peer.remoteDescription) peer.addIceCandidate(value).catch(e => errors.push(e.name));
+    const state = peer => ({connection:peer.connectionState, iceConnection:peer.iceConnectionState,
+      iceGathering:peer.iceGatheringState, signaling:peer.signalingState});
+    const trackState = track => ({id:track.id, kind:track.kind, enabled:track.enabled,
+      muted:track.muted, readyState:track.readyState, settings:track.getSettings()});
+    const failure = (operation, error) => {
+      const detail = {operation, ...errorDetails(error), at:elapsed(), phase:cleaning ? 'cleanup' : 'transfer'};
+      (cleaning ? diagnostics.cleanupErrors : result.errors).push(detail);
+      return detail;
+    };
+    for (const [name, peer] of [['send', send], ['receive', receive]]) {
+      for (const event of ['connectionstatechange', 'iceconnectionstatechange', 'icegatheringstatechange', 'signalingstatechange'])
+        peer.addEventListener(event, () => diagnostics.events.push({peer:name, event, at:elapsed(), ...state(peer)}));
+      peer.addEventListener('icecandidateerror', event => diagnostics.candidateErrors.push({peer:name, at:elapsed(),
+        address:event.address, port:event.port, url:event.url, code:event.errorCode, text:event.errorText}));
+    }
+    for (const event of ['loadedmetadata', 'loadeddata', 'playing', 'waiting', 'stalled', 'pause', 'emptied', 'error'])
+      video.addEventListener(event, () => diagnostics.events.push({event:'video.' + event, at:elapsed(),
+        phase:cleaning ? 'cleanup' : 'transfer', readyState:video.readyState, mediaError:video.error?.code ?? null}));
+    receive.ontrack = event => {
+      diagnostics.events.push({event:'track', at:elapsed(), track:trackState(event.track), streams:event.streams.map(s => s.id)});
+      for (const name of ['mute', 'unmute', 'ended'])
+        event.track.addEventListener(name, () => diagnostics.events.push({event:'track.' + name, at:elapsed(), track:trackState(event.track)}));
+      video.srcObject = event.streams[0];
+      diagnostics.play = {status:'pending', calledAt:elapsed()};
+      playPromise = video.play().then(() => {
+        Object.assign(diagnostics.play, {status:'resolved', settledAt:elapsed(), phase:cleaning ? 'cleanup' : 'transfer'});
+      }, error => {
+        Object.assign(diagnostics.play, {status:'rejected', settledAt:elapsed(),
+          error:failure('video.play', error)});
+      });
+    };
+    const addCandidate = (name, peer, value) => {
+      const promise = peer.addIceCandidate(value).catch(error => failure(name + '.addIceCandidate', error));
+      pendingCandidates.push(promise); return promise;
+    };
+    const candidate = (name, peer, queue, value) => {
+      if (peer.remoteDescription) addCandidate(name, peer, value);
       else queue.push(value);
     };
-    send.onicecandidate = event => { if (event.candidate) candidate(receive, queuedReceive, event.candidate); };
-    receive.onicecandidate = event => { if (event.candidate) candidate(send, queuedSend, event.candidate); };
+    send.onicecandidate = event => {
+      diagnostics.candidates.push({peer:'send', at:elapsed(), candidate:event.candidate?.toJSON() ?? null});
+      if (event.candidate) candidate('receive', receive, queuedReceive, event.candidate);
+    };
+    receive.onicecandidate = event => {
+      diagnostics.candidates.push({peer:'receive', at:elapsed(), candidate:event.candidate?.toJSON() ?? null});
+      if (event.candidate) candidate('send', send, queuedSend, event.candidate);
+    };
+    const statsTypes = new Set(['transport', 'candidate-pair', 'local-candidate', 'remote-candidate',
+      'inbound-rtp', 'outbound-rtp', 'remote-inbound-rtp', 'remote-outbound-rtp', 'codec', 'media-source']);
+    const snapshot = async label => {
+      const reports = await bounded(Promise.all([send.getStats(), receive.getStats()]));
+      diagnostics.stats.push({label, at:elapsed(), send:Array.from(reports[0].values()).filter(row => statsTypes.has(row.type)),
+        receive:Array.from(reports[1].values()).filter(row => statsTypes.has(row.type))});
+      return reports[1];
+    };
     try {
       send.addTrack(stream.getVideoTracks()[0], stream);
-      const offer = await send.createOffer();
-      const formats = Array.from(offer.sdp.matchAll(/a=rtpmap:\d+ ([^/]+)/g), m => m[1].toLowerCase());
-      if (disabled) return {status:'offered', formats};
+      const offer = await send.createOffer(); diagnostics.sdp.offer = offer.sdp;
+      result.formats = Array.from(offer.sdp.matchAll(/a=rtpmap:\d+ ([^/]+)/g), m => m[1].toLowerCase());
+      if (disabled) { result.status = 'offered'; return result; }
       await send.setLocalDescription(offer); await receive.setRemoteDescription(offer);
-      const answer = await receive.createAnswer();
+      const answer = await receive.createAnswer(); diagnostics.sdp.answer = answer.sdp;
       await receive.setLocalDescription(answer); await send.setRemoteDescription(answer);
-      await Promise.all(queuedSend.map(c => send.addIceCandidate(c)));
-      await Promise.all(queuedReceive.map(c => receive.addIceCandidate(c)));
+      await Promise.all(queuedSend.splice(0).map(c => addCandidate('send', send, c)));
+      await Promise.all(queuedReceive.splice(0).map(c => addCandidate('receive', receive, c)));
       timer = setInterval(() => { c.getContext('2d').fillStyle = 'rgb(' + (Date.now()%255) + ',7,11)';
-        c.getContext('2d').fillRect(0,0,64,64); stream.getVideoTracks()[0].requestFrame(); }, 30);
+        c.getContext('2d').fillRect(0,0,64,64); stream.getVideoTracks()[0].requestFrame(); diagnostics.drawRequests++; }, 30);
       for (let i=0;i<80;i++) {
-        const stats = await receive.getStats();
+        const stats = i % 10 === 0 ? await snapshot('transfer') : await bounded(receive.getStats());
         const inbound = Array.from(stats.values()).find(row => row.type === 'inbound-rtp' && row.kind === 'video' && row.framesDecoded > 0);
-        if (inbound) return {status:'decoded', formats, frames:inbound.framesDecoded,
-          bytes:inbound.bytesReceived, codec:stats.get(inbound.codecId)?.mimeType, errors};
+        if (inbound) {
+          Object.assign(result, {status:'decoded', frames:inbound.framesDecoded,
+            bytes:inbound.bytesReceived, codec:stats.get(inbound.codecId)?.mimeType});
+          return result;
+        }
         await delay(100);
       }
-      return {status:'failed', formats, errors};
-    } catch (error) { return {status:'rejected', error:error.name}; }
-    finally { clearInterval(timer); video.srcObject = null; send.close(); receive.close(); stream.getTracks().forEach(track => track.stop()); }
+      diagnostics.failure = 'No inbound video RTP report with framesDecoded > 0 before transfer deadline';
+      return result;
+    } catch (error) {
+      result.status = 'rejected'; result.error = error.name + ':' + error.message;
+      failure('negotiation/transfer', error); return result;
+    } finally {
+      clearInterval(timer);
+      try { await snapshot('before_cleanup'); await bounded(Promise.all(pendingCandidates)); }
+      catch (error) { failure('final diagnostics', error); }
+      const quality = video.getVideoPlaybackQuality();
+      diagnostics.beforeCleanup = {at:elapsed(), send:state(send), receive:state(receive), play:{...diagnostics.play},
+        source:stream.getTracks().map(trackState), remote:receive.getReceivers().map(r => trackState(r.track)),
+        video:{readyState:video.readyState, paused:video.paused, currentTime:video.currentTime,
+          width:video.videoWidth, height:video.videoHeight, playbackQuality:{totalVideoFrames:quality.totalVideoFrames,
+            droppedVideoFrames:quality.droppedVideoFrames, corruptedVideoFrames:quality.corruptedVideoFrames}}};
+      for (const [name, peer] of [['send', send], ['receive', receive]])
+        diagnostics.sdp[name] = {local:peer.localDescription?.sdp ?? null, remote:peer.remoteDescription?.sdp ?? null};
+      cleaning = true; diagnostics.cleanupStartedAt = elapsed();
+      video.srcObject = null; send.close(); receive.close(); stream.getTracks().forEach(track => track.stop());
+      if (playPromise) {
+        try { await bounded(playPromise, 1000); } catch (error) { failure('cleanup play settlement', error); }
+      }
+    }
   }
 
   async function audioRecord() {
@@ -384,19 +474,19 @@
       const encoded = encoderSupported || forbidden ? await encode(spec) : {status:'unavailable'};
       const recorderSupported = MediaRecorder.isTypeSupported(spec.mime);
       const mseSupported = typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(spec.mime);
-      const encoding = await navigator.mediaCapabilities.encodingInfo({type:'record',
-        video:{contentType:spec.mime, width:64, height:64, bitrate:200000, framerate:30}}).catch(() => null);
-      const decoding = await navigator.mediaCapabilities.decodingInfo({type:'file',
-        video:{contentType:spec.mime, width:64, height:64, bitrate:200000, framerate:30}}).catch(() => null);
-      const rtcName = name === 'hevc' ? 'h265' : name;
+      const encoding = await capability('encodingInfo', {type:'webrtc',
+        video:{contentType:spec.rtpMime, width:64, height:64, bitrate:200000, framerate:30}});
+      const decoding = await capability('decodingInfo', {type:'file',
+        video:{contentType:spec.mime, width:64, height:64, bitrate:200000, framerate:30}});
+      const rtcName = spec.rtpMime.toLowerCase();
       const recorded = recorderSupported || forbidden ? await record(spec.mime) : {status:'unavailable'};
       const recording = forbidden ? fixtures[name]?.recorded : recorded;
-      out[name] = {encoderSupported, decoderSupported, recorderSupported, mseSupported,
+      out[name] = {encoderSupported, decoderSupported, recorderSupported, mseSupported, mime:spec.mime,
         canPlay:document.createElement('video').canPlayType(spec.mime), encoding, decoding, encoded,
         decoded:await decode(forbidden ? fixtures[name]?.encoded : encoded), recorded,
-        playback:await play(recording), mse:mseSupported || forbidden ? await play(recording, true) : {status:'unavailable'},
-        rtcSend:senders.filter(c => c.mimeType.toLowerCase() === 'video/' + rtcName).length,
-        rtcReceive:receivers.filter(c => c.mimeType.toLowerCase() === 'video/' + rtcName).length};
+        playback:await play(recording), mse:mseSupported || forbidden ? await play(recording, spec.mime) : {status:'unavailable'},
+        rtcSend:senders.filter(c => c.mimeType.toLowerCase() === rtcName).length,
+        rtcReceive:receivers.filter(c => c.mimeType.toLowerCase() === rtcName).length};
     }
     const defaultRecorder = await record('');
     defaultRecorder.playback = await play(defaultRecorder);

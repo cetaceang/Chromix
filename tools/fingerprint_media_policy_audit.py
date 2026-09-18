@@ -21,7 +21,9 @@ API_KEYS = ('encoderSupported', 'decoderSupported', 'recorderSupported', 'mseSup
 
 
 def case_args(name):
+    # Empty ICE servers need host UDP; the ungoogled default disables it.
     return [*BASE_ARGS, '--fingerprint-audio-render=native',
+            '--webrtc-ip-handling-policy=default_public_and_private_interfaces',
             *['--fingerprint-codec-' + family + '=disabled' for family in CASES[name]]]
 
 
@@ -50,9 +52,16 @@ def recorded_errors(value):
     if value['status'] != 'recorded':
         return ['supported recorder failed to record']
     if (type(value['bytes']) is not int or value['bytes'] != len(payload(value['data'])) or
-            not isinstance(value['mime'], str) or not value['mime'].startswith('video/')):
+            not isinstance(value['mime'], str) or not re.fullmatch(
+                r'video/(?:webm|mp4|x-matroska|matroska);codecs=[^;]+', value['mime'], re.I)):
         return ['invalid recording payload or MIME type']
-    return []
+    errors = []
+    if value.get('mimeSupported') is False:
+        errors.append('recorder rejected its serialized MIME type')
+    for mime in value.get('chunkMimes', []):
+        if mime.lower() != value['mime'].lower():
+            errors.append('recording chunk MIME differs from recorder MIME')
+    return errors
 
 
 def decoded_errors(value, frames=False):
@@ -111,12 +120,50 @@ def _assess(report):
                 prefix([family + ': malformed codec queries'])
             if any(type(row[key]) is not int or row[key] < 0 for key in ('rtcSend', 'rtcReceive')):
                 prefix([family + ': malformed RTC capabilities'])
+            capability_results = {}
             for key in ('encoding', 'decoding'):
-                if not isinstance(row[key], dict) or any(type(row[key].get(k)) is not bool for k in ('supported', 'smooth', 'powerEfficient')):
-                    prefix([family + ': missing MediaCapabilities result'])
+                result = row.get(key)
+                valid = isinstance(result, dict) and all(
+                    type(result.get(field)) is bool
+                    for field in ('supported', 'smooth', 'powerEfficient'))
+                if not valid:
+                    detail = result.get('error') if isinstance(result, dict) else None
+                    prefix([family + ': missing MediaCapabilities result: ' + key +
+                            (': ' + json.dumps(detail, sort_keys=True) if detail else '')])
+                elif result.get('error') or result.get('status', 'resolved') != 'resolved':
+                    prefix([family + ': inconsistent MediaCapabilities result: ' + key])
+                configuration = result.get('configuration') if isinstance(result, dict) else None
+                if configuration is not None:
+                    content_type = configuration.get('video', {}).get('contentType', '')
+                    expected = 'video/' + ('h265' if family == 'hevc' else family)
+                    if key == 'encoding' and (configuration.get('type') != 'webrtc' or
+                                              content_type.lower() != expected):
+                        prefix([family + ': encodingInfo did not query the RTP MIME with type webrtc'])
+                    if key == 'decoding' and (configuration.get('type') != 'file' or
+                                              content_type != row.get('mime')):
+                        prefix([family + ': decodingInfo MIME differs from the file query'])
+                capability_results[key] = result if valid else None
+            if row.get('mime') is not None:
+                recording = control['recorded'] if family in CASES[name] else row['recorded']
+                mse = row['mse']
+                if mse['status'] != 'unavailable' and (
+                        mse.get('mime') != row['mime'] or mse.get('mimeSupported') != row['mseSupported'] or
+                        mse.get('recorderMime') != recording.get('mime')):
+                    prefix([family + ': MSE did not use the queried codec MIME and original recording'])
+                if row['recorded']['status'] == 'recorded' and (
+                        row['recorded'].get('requestedMime') != row['mime'] or
+                        family_in_mime(row['recorded']['mime']) != family):
+                    prefix([family + ': recorder MIME does not match the requested codec'])
+                playback = row['playback']
+                if playback['status'] != 'unavailable' and playback.get('mime') != recording.get('mime'):
+                    prefix([family + ': playback replaced the serialized recorder MIME'])
             if family in CASES[name]:
+                advertised_capabilities = any(
+                    capability_results[key] is not None and any(capability_results[key][field]
+                        for field in ('supported', 'smooth', 'powerEfficient'))
+                    for key in ('encoding', 'decoding'))
                 if (any(row[key] for key in API_KEYS) or row['canPlay'] or row['rtcSend'] or row['rtcReceive'] or
-                        any(row[key]['supported'] or row[key]['smooth'] or row[key]['powerEfficient'] for key in ('encoding', 'decoding'))):
+                        advertised_capabilities):
                     prefix([family + ': disabled codec still advertised'])
                 for key in ('encoded', 'recorded'):
                     if not rejected(row[key]):
@@ -184,6 +231,8 @@ def run(browser, headed=False):
     report = {'schema_version': 1, 'collected_at': datetime.now(timezone.utc).isoformat(),
         'browser_sha256': launch.pool.file_hash(browser), 'probe_sha256': launch.pool.file_hash(PROBE),
         'runs': [], 'errors': [], 'qualification': {'rtc': 'owned local peer pair',
+            'rtc_transport': 'host UDP on default interfaces; no STUN/TURN servers',
+            'default_or_proxy_network_policy': 'not_tested',
             'physical_media': 'not_attested', 'drm_remote_decoders': 'not_tested',
             'codec_fixtures': 'generated by native control; missing codecs remain gaps'}}
     try:

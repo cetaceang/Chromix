@@ -75,7 +75,14 @@ def integrated_sources(tmp_path_factory):
         if target not in targets: continue
         number=patch.name[:4]
         if number in EVIDENCE['patches']:
-            assert hashlib.sha256((directory/target).read_bytes()).hexdigest() == EVIDENCE['patches'][number]['preimage_sha256']
+            item=EVIDENCE['patches'][number]
+            assert hashlib.sha256(patch.read_bytes()).hexdigest() == item['patch_sha256']
+            before=(directory/target).read_bytes()
+            assert hashlib.sha256(before).hexdigest() == item['preimage_sha256']
+            lines=before.decode('utf-8').splitlines(True)
+            for section in item['sections']:
+                start=section['line']-1
+                assert ''.join(lines[start:start+len(section['text'].splitlines())]) == section['text']
         apply(directory,patch,allow_offsets=int(number)<158)
         if number in EVIDENCE['patches']:
             assert hashlib.sha256((directory/target).read_bytes()).hexdigest() == EVIDENCE['patches'][number]['output_sha256']
@@ -253,6 +260,17 @@ def native_canvas_binary(tmp_path_factory,integrated_sources):
         auto encoded=ImageDataBuffer::Create(f.pm());assert(encoded);
         assert(encoded->pixmap_.addr()==f.bytes.data());assert(encoded->pixmap_.info().alphaType()==alpha);
         assert(f.bytes==before);
+        for(int mode:{0,1,2}) {
+          auto image_encoded=ImageDataBuffer::Create(f.image(mode));assert(image_encoded);
+          const auto& pixmap=image_encoded->pixmap_;
+          assert(pixmap.info().alphaType()==(alpha==kOpaque_SkAlphaType ? kOpaque_SkAlphaType : kUnpremul_SkAlphaType));
+          assert(pixmap.colorType()==type);
+          for(int y=0;y<f.info.h;++y)
+            assert(std::equal(f.bytes.begin()+size_t(y)*f.rb,
+                              f.bytes.begin()+size_t(y)*f.rb+f.info.minRowBytes(),
+                              static_cast<const uint8_t*>(pixmap.addr())+size_t(y)*pixmap.rowBytes()));
+          assert(f.bytes==before);
+        }
       }
     return 0;
   }''')

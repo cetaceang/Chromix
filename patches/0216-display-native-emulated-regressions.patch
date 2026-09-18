@@ -1,0 +1,21 @@
+diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_test.cc b/third_party/blink/renderer/core/frame/web_frame_widget_test.cc
+--- a/third_party/blink/renderer/core/frame/web_frame_widget_test.cc
++++ b/third_party/blink/renderer/core/frame/web_frame_widget_test.cc
+@@ -618,6 +618,17 @@
+       mojo::test::SerializeAndDeserialize<mojom::blink::FrameVisualProperties>(
+           frame, decoded_frame));
+   EXPECT_FALSE(decoded_frame.emulated_screen_infos);
++  EXPECT_EQ(frame.screen_infos, decoded_frame.screen_infos);
++  frame_copy = decoded_frame;
++  EXPECT_EQ(frame.emulated_screen_infos, frame_copy.emulated_screen_infos);
++  widget.screen_infos = decoded_frame.screen_infos;
++  widget.emulated_screen_infos = decoded_frame.emulated_screen_infos;
++  ASSERT_TRUE(
++      mojo::test::SerializeAndDeserialize<mojom::blink::VisualProperties>(
++          widget, decoded_widget));
++  EXPECT_EQ(widget, decoded_widget);
++  decoded_widget.emulated_screen_infos = display::ScreenInfos(emulated_screen);
++  EXPECT_FALSE(widget == decoded_widget);
+ }
+ 
+ TEST_F(WebFrameWidgetImplRemoteFrameSimTest,

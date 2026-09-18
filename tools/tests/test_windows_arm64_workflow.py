@@ -30,6 +30,7 @@ class WindowsArm64WorkflowTest(unittest.TestCase):
             self.assertEqual(workflow['env'][name], '0')
         self.assertEqual(workflow['env']['CHROMIX_TARGET_ARCH'], 'arm64')
         self.assertNotIn('resume_run_id', generator.render())
+        self.assertNotIn('CHROMIX_WINDOWS_MIGRATION_PROFILE', workflow['env'])
         self.assertNotIn('UPSTREAM_ACTIONS_TOKEN', generator.render())
 
     def test_twelve_stages_keep_snapshot_safety_and_target_names(self):

@@ -35,9 +35,8 @@ ADDITION_HASHES = {
     "0005": "c310d23ab0812382abb6d442ab00b1796453087e0e7dabf28a2a565d5d730810",
     # Geometry getter substitutions moved to the actual ScreenMetricsEmulator.
     "0018": "58f8f2333f3c674126bccca5bdeb7eb0eafcc738554ce9e3f2d275b385ae0b8f",
-    # 5271cf4 deliberately preserved native alpha/encoder bytes when noise is
-    # disabled; the old baseline still normalized premultiplied alpha here.
-    "0031": "d9bef4f0f8a23cf49f4271b4ac80f5a406cf18895e86eaf777a78902b82b19d1",
+    # Opaque image readback retains RGB PNG selection without changing noise.
+    "0031": "deba6cc5b4ee9f31231bf77099ed61f04833256f2a28cfb0e4f027dd42aa2669",
     "0033": "61b5b3ae456468cdf8ee6a901a1014d77dfef2880c9d64588bdd1f0a59980fce",
     "0047": "b9492169a125898f839ab5b614ef0844a36a0953594bade93e660b58fa6a50c7",
 }

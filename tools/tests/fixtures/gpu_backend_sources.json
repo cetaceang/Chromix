@@ -85,8 +85,8 @@
     },
     "0161": {
       "target": "third_party/blink/renderer/platform/graphics/image_data_buffer.cc",
-      "patch_sha256": "1f64ea6811755af65df6f88a9d3a553940e05d21d49d7820d60aa7f3171d4bde",
-      "preimage_sha256": "c5fc2d3bb10c70621e6cb5c5157893496b5480f7423c7fe37709bb6859079c29",
+      "patch_sha256": "b581c054fcbef76f5973ec32cadee3d6660382a05a37aeda4eb79d748ba058df",
+      "preimage_sha256": "48cdb6b8bcc758bb2e9892f069bf4a2d41fe108d5538a326d5a425bb64a521ae",
       "sections": [
         {
           "line": 58,
@@ -94,10 +94,10 @@
         },
         {
           "line": 152,
-          "text": "      colorType = kN32_SkColorType;  // Work around for bug with JPEG encoder\n    const SkImageInfo info =\n        SkImageInfo::Make(paint_image_info.width(), paint_image_info.height(),\n                          paint_image_info.colorType(), kUnpremul_SkAlphaType,\n                          paint_image_info.refColorSpace());\n    const size_t rowBytes = info.minRowBytes();\n    size_t size = info.computeByteSize(rowBytes);\n"
+          "text": "      colorType = kN32_SkColorType;  // Work around for bug with JPEG encoder\n    // Opaque exports must select the same PNG format as the pixmap/Blob path.\n    const SkAlphaType alpha_type =\n        paint_image_info.alphaType() == kOpaque_SkAlphaType\n            ? kOpaque_SkAlphaType\n            : kUnpremul_SkAlphaType;\n    const SkImageInfo info =\n        SkImageInfo::Make(paint_image_info.width(), paint_image_info.height(),\n                          paint_image_info.colorType(), alpha_type,\n                          paint_image_info.refColorSpace());\n    const size_t rowBytes = info.minRowBytes();\n    size_t size = info.computeByteSize(rowBytes);\n"
         }
       ],
-      "output_sha256": "7a878ce5790ddcf1ec78a375ef065f62731eb8bda658caff217e7ab2d1dda755",
+      "output_sha256": "7d0ea5ec0e53466b71b17b209909859f898f6c50b1ad3694c895c9a7fd4e95c5",
       "created_by_series": false
     },
     "0162": {

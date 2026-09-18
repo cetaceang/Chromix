@@ -126,9 +126,9 @@ def effective_inputs(original, substituted):
 def functional_additions():
     added = b"".join(line[1:] for line in PATCH.read_bytes().splitlines(keepends=True)
                      if line.startswith(b"+") and not line.startswith(b"+++"))
-    # Pin all 341 added lines from the reviewed pre-context-change patch.
+    # Pin all 370 added lines from the merged Windows normalization fix.
     assert hashlib.sha256(added).hexdigest() == (
-        "4ad7777994a5526ccc0bca820d5c103720a9c1cc75902369824610257836c87a")
+        "2462c51e2de20c2925873ee3b5f30e4a159c7a4bf0f16366497103a7b637c901")
     includes = b"#include <vector>\n" + BASE_INCLUDES
     assert added.startswith(includes)
     return added[len(includes):]
@@ -189,10 +189,10 @@ def test_chrome_main_patch_keeps_balanced_include_context():
     data = PATCH.read_bytes()
     arp.transform_patch(data, set(), [])
     assert re.findall(rb"^@@[^\n]*", data, flags=re.M) == [
-        b"@@ -8,4 +8,5 @@", b"@@ -13,4 +14,9 @@", b"@@ -196,6 +202,341 @@",
+        b"@@ -8,4 +8,5 @@", b"@@ -13,4 +14,9 @@", b"@@ -196,6 +202,370 @@",
     ]
     bodies = re.split(rb"^@@[^\n]*\n", data, flags=re.M)[1:]
-    for body, count, context in zip(bodies, (1, 5, 335), (2, 2, 3)):
+    for body, count, context in zip(bodies, (1, 5, 364), (2, 2, 3)):
         lines = body.splitlines()
         changed = [i for i, line in enumerate(lines) if line.startswith((b"+", b"-"))]
         assert changed == list(range(context, context + count))
@@ -204,12 +204,16 @@ def test_chrome_main_patch_keeps_balanced_include_context():
 
 def test_chrome_main_patch_preserves_functional_additions():
     added = functional_additions()
-    assert len(added.splitlines()) == 335
+    assert len(added.splitlines()) == 364
     assert b'if (!command_line->HasSwitch(switches::kProcessType)) {' in added
-    for feature in (b'"fingerprint-platform"', b'"uxr-fingerprint-seed"',
+    for feature in (b'base::CommandLine::FromArgvWithoutProgram({arg})',
+                    b'found->second != value', b'FILE_PATH_LITERAL("--")',
+                    b'command_line->AppendSwitchNative(key, value)',
+                    b'std::erase(features, "ForceThirdPartyCookieBlocking")',
+                    b'"fingerprint-platform"', b'"uxr-fingerprint-seed"',
                     b'"uxr-disable-fingerprint-noise"', b'"uxr-fingerprint-off"',
                     b'LanguageTagConverter::GetInstance().FromString(value)',
-                    b'AppendSwitchASCII(switches::kAcceptLang, normalized)',
+                    b'set_switch(switches::kAcceptLang, normalized)',
                     b'"window-size"', b'"window-position"', b'"uxr-allow-3p-cookies"'):
         assert feature in added
     assert added.index(b'"uxr-fingerprint-off"') < added.index(b'std::vector<std::string> languages;')

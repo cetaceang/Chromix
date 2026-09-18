@@ -22,13 +22,16 @@ globalThis.canvasChainProbe = async ({taint = true} = {}) => {
     const blob = await blobFor(canvas, type, quality), bytes = new Uint8Array(await blob.arrayBuffer());
     require(blob.type === type, 'encoder silently fell back: ' + type + ' -> ' + blob.type);
     const repeat = new Uint8Array(await (await blobFor(canvas, type, quality)).arrayBuffer());
-    let urlMatches = null;
+    let dataURL = null, repeatDataURL = null, urlRepeat = null, urlBlobMatches = null;
     if (canvas.toDataURL) {
-      const url = canvas.toDataURL(type, quality);
-      require(url.startsWith(`data:${type};base64,`), 'data URL MIME fallback');
-      urlMatches = url.split(',')[1] === bytes64(bytes) && url === canvas.toDataURL(type, quality);
+      dataURL = canvas.toDataURL(type, quality);
+      repeatDataURL = canvas.toDataURL(type, quality);
+      urlRepeat = dataURL === repeatDataURL;
+      urlBlobMatches = dataURL === `data:${type};base64,${bytes64(bytes)}`;
     }
-    return {type, quality, bytes:bytes64(bytes), repeat:equal(bytes, repeat), urlMatches,
+    return {type, quality, bytes:bytes64(bytes), repeatBytes:bytes64(repeat),
+      repeat:equal(bytes, repeat), dataURL, repeatDataURL, urlRepeat, urlBlobMatches,
+      urlMatches:urlRepeat === null ? null : urlRepeat && urlBlobMatches,
       decoded:await bitmapRead(blob, colorSpace), decodedSrgb:await bitmapRead(blob, 'srgb'),
       decodedNoPremultiply:await bitmapRead(blob, colorSpace, {premultiplyAlpha:'none'})};
   };
@@ -127,7 +130,7 @@ globalThis.canvasChainProbe = async ({taint = true} = {}) => {
     if (explicit) args.push({colorSpace:'srgb'});
     edges.push({id:`${kind}/${history}/${explicit}`, pixels:Array.from(ctx.getImageData(...args).data)});
   }
-  const result = {version:2, rows, errors, unavailable, zeroBlob, edges};
+  const result = {version:3, rows, errors, unavailable, zeroBlob, edges};
   if (typeof document !== 'undefined') {
     const empty = make('html'); empty.width = 0;
     result.zeroURL = empty.toDataURL();

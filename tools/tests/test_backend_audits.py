@@ -4,6 +4,7 @@ from copy import deepcopy
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import shutil
 import struct
@@ -91,6 +92,332 @@ def backend_report():
             run['input_events'].append({'name': 'pointerdown', 'pointerType': 'touch', 'trusted': True, 'timestamp': 21})
         result['runs'].append(run)
     return result
+
+
+def test_backend_launch_removes_only_conflicting_defaults():
+    assert backend.IGNORED_DEFAULT_ARGS == ['--disable-back-forward-cache',
+        '--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4']
+    for name in backend.CASES:
+        args = backend.case_args(name, 'Fixture Family', {})
+        assert '--enable-blink-features=InvertedColors' in args
+        assert '--enable-experimental-web-platform-features' not in args
+        assert not any(arg.startswith('--blink-settings=') for arg in args)
+
+
+class FixtureRoot:
+    def __init__(self, cleanup_failure=False, failure_at=None, delayed=False, response=None):
+        self.calls, self.listeners = [], {}
+        self.cleanup_failure = cleanup_failure
+        self.failure_at = failure_at
+        self.delayed = delayed
+        self.response = response
+        self.pending = []
+
+    def on(self, name, callback):
+        if self.failure_at == 'listener':
+            raise RuntimeError('listener failure')
+        self.listeners[name] = callback
+
+    def remove_listener(self, name, callback):
+        assert self.listeners.pop(name) == callback
+        if self.failure_at == 'remove_listener':
+            raise RuntimeError('remove_listener failure')
+
+    def detach(self):
+        self.calls.append(('detach', {}))
+        if self.cleanup_failure:
+            raise RuntimeError('root cleanup failure')
+
+    def send(self, method, params=None):
+        self.calls.append((method, params or {}))
+        if method == self.failure_at:
+            raise RuntimeError(method + ' failure')
+        if method == 'Target.createBrowserContext':
+            return {'browserContextId': 'clean-context'}
+        if method == 'Target.createTarget':
+            assert params['browserContextId'] == 'clean-context'
+            return {'targetId': 'clean-target'}
+        if method == 'Target.attachToTarget':
+            return {'sessionId': params['targetId']}
+        if method == 'Target.sendMessageToTarget':
+            message = json.loads(params['message'])
+            result = {'result': {'value': 42}} if message['method'] == 'Runtime.evaluate' else {}
+            response = self.response if self.response is not None else {'result': result}
+            if message['method'] == self.failure_at:
+                response = {'error': {'code': -32000, 'message': self.failure_at + ' failure'}}
+            event = {'sessionId': params['sessionId'],
+                'message': json.dumps({'id': message['id'], **response})}
+            if self.delayed:
+                self.pending.append(event)
+            else:
+                self.listeners['Target.receivedMessageFromTarget'](event)
+        if method == 'Browser.getVersion' and self.pending:
+            self.listeners['Target.receivedMessageFromTarget'](self.pending.pop(0))
+        if method == 'Target.disposeBrowserContext' and self.cleanup_failure:
+            raise RuntimeError('context cleanup failure')
+        return {}
+
+    def new_browser_cdp_session(self):
+        return self
+
+
+@pytest.mark.parametrize('failure', [False, True])
+def test_clean_cdp_fixture_has_no_playwright_media_or_focus_owner(failure):
+    root = FixtureRoot(cleanup_failure=failure)
+    def sample():
+        with backend.clean_fixture(root) as (page, actual_root, context):
+            assert actual_root is root and context == 'clean-context'
+            assert page.evaluate('async value => value', 'owned') == 42
+            if failure:
+                raise ValueError('primary clock contract failure')
+    if failure:
+        with pytest.raises(ValueError, match='primary clock contract failure'):
+            sample()
+    else:
+        sample()
+    messages = [json.loads(params['message']) for method, params in root.calls
+                if method == 'Target.sendMessageToTarget']
+    assert [m['method'] for m in messages] == ['Page.enable', 'Runtime.enable',
+        'Emulation.setFocusEmulationEnabled', 'Runtime.evaluate']
+    assert messages[2]['params'] == {'enabled': False}
+    assert messages[3]['params']['userGesture'] is True
+    assert messages[3]['params']['awaitPromise'] is True
+    assert root.calls[-2:] == [('Target.disposeBrowserContext', {'browserContextId': 'clean-context'}), ('detach', {})]
+    assert not root.listeners
+
+
+@pytest.mark.parametrize('failure', ['Target.createBrowserContext', 'Target.createTarget',
+    'Target.attachToTarget', 'listener', 'Page.enable', 'Runtime.enable',
+    'Emulation.setFocusEmulationEnabled'])
+def test_clean_fixture_disposes_partial_initialization_without_masking_error(failure):
+    root = FixtureRoot(cleanup_failure=True, failure_at=failure)
+    with pytest.raises(RuntimeError, match=failure + ' failure'):
+        with backend.clean_fixture(root):
+            pytest.fail('failed initialization must not yield')
+    assert root.calls[-1] == ('detach', {})
+    disposals = [params for method, params in root.calls if method == 'Target.disposeBrowserContext']
+    assert disposals == ([] if failure == 'Target.createBrowserContext' else
+                         [{'browserContextId': 'clean-context'}])
+    assert not root.listeners
+
+
+@pytest.mark.parametrize('primary_failure', [False, True])
+@pytest.mark.parametrize('failure', ['Target.detachFromTarget', 'remove_listener', 'context'])
+def test_clean_fixture_attempts_all_cleanup_and_preserves_primary(failure, primary_failure):
+    root = FixtureRoot(cleanup_failure=failure == 'context', failure_at=failure)
+    expected = 'primary contract failure' if primary_failure else (
+        'context cleanup failure' if failure == 'context' else failure + ' failure')
+    with pytest.raises(RuntimeError, match=expected):
+        with backend.clean_fixture(root):
+            if primary_failure:
+                raise RuntimeError('primary contract failure')
+    assert root.calls[-3:] == [
+        ('Target.detachFromTarget', {'sessionId': 'clean-target'}),
+        ('Target.disposeBrowserContext', {'browserContextId': 'clean-context'}), ('detach', {})]
+    assert not root.listeners
+
+
+@pytest.mark.parametrize('primary_failure', [False, True])
+def test_oopif_detach_preserves_primary_failure(primary_failure):
+    root = FixtureRoot(failure_at='Target.detachFromTarget')
+    expected = 'primary clock contract failure' if primary_failure else 'Target.detachFromTarget failure'
+    with pytest.raises(RuntimeError, match=expected):
+        with backend.FixtureSession(root, 'oopif'):
+            if primary_failure:
+                raise RuntimeError('primary clock contract failure')
+    assert not root.listeners
+    assert root.calls[-1] == ('Target.detachFromTarget', {'sessionId': 'oopif'})
+
+
+@pytest.mark.parametrize(('expression', 'argument', 'wrapped'), [
+    ('async value => value', {'owned': '"雪\\n'}, '(async value => value)({"owned": "\\\"\\u96ea\\\\n"})'),
+    ('async () => 42', None, '(async () => 42)()'),
+    ('() => 42', None, '(() => 42)()'),
+    ('Promise.resolve(42)', None, 'Promise.resolve(42)'),
+])
+def test_fixture_evaluate_awaits_delayed_cdp_response(monkeypatch, expression, argument, wrapped):
+    monkeypatch.setattr(backend.time, 'sleep', lambda _: None)
+    root = FixtureRoot(delayed=True)
+    with backend.FixtureSession(root, 'target') as page:
+        page._received({'sessionId': 'unrelated', 'message': '{"id": 1, "result": {}}'})
+        assert page.responses == {}
+        assert page.evaluate(expression, argument) == 42
+    message = json.loads(next(params['message'] for method, params in root.calls
+                              if method == 'Target.sendMessageToTarget'))
+    assert message['params'] == {'expression': wrapped, 'awaitPromise': True,
+                                 'returnByValue': True, 'userGesture': True}
+    assert ('Browser.getVersion', {}) in root.calls
+    assert not root.pending and not root.listeners
+
+
+@pytest.mark.parametrize('response', [
+    {'error': {'code': -32000, 'message': 'primary clock contract failure'}},
+    {'result': {'exceptionDetails': {'text': 'Uncaught (in promise)',
+                                   'exception': {'description': 'primary clock contract failure'}}}},
+])
+def test_fixture_evaluate_propagates_protocol_and_promise_errors(response):
+    with backend.FixtureSession(FixtureRoot(response=response), 'target') as page:
+        with pytest.raises(RuntimeError, match='primary clock contract failure'):
+            page.evaluate('Promise.reject(new Error("primary clock contract failure"))')
+
+
+@pytest.mark.parametrize('message', ['Execution context was destroyed.',
+                                    'Cannot find context with specified id'])
+def test_fixture_ready_retries_only_navigation_context_errors(monkeypatch, message):
+    monkeypatch.setattr(backend.time, 'sleep', lambda _: None)
+    responses = iter([backend.FixtureProtocolError('Runtime.evaluate', {'code': -32000, 'message': message}),
+                      False, True])
+    with backend.FixtureSession(FixtureRoot(), 'target') as page:
+        def evaluate(expression):
+            result = next(responses)
+            if isinstance(result, Exception):
+                raise result
+            assert 'location.href === "http://owned/"' in expression
+            return result
+        monkeypatch.setattr(page, 'evaluate', evaluate)
+        page.ready('http://owned/')
+        assert list(responses) == []
+
+
+@pytest.mark.parametrize('error', [RuntimeError('primary JavaScript contract failure'),
+    backend.FixtureProtocolError('Runtime.evaluate', {'code': -32000, 'message': 'Target closed'}),
+    backend.FixtureProtocolError('Runtime.evaluate', {'code': -32602, 'message': 'Execution context was destroyed.'})])
+def test_fixture_wait_does_not_hide_unrelated_errors(monkeypatch, error):
+    with backend.FixtureSession(FixtureRoot(), 'target') as page:
+        def evaluate(_):
+            raise error
+        monkeypatch.setattr(page, 'evaluate', evaluate)
+        with pytest.raises(RuntimeError) as observed:
+            page.wait_for('true')
+        assert observed.value is error
+
+
+@pytest.mark.parametrize('waiting', [False, True])
+def test_fixture_timeout_is_bounded(monkeypatch, waiting):
+    ticks = iter([0, 31])
+    monkeypatch.setattr(backend.time, 'monotonic', lambda: next(ticks))
+    with backend.FixtureSession(FixtureRoot(), 'target') as page:
+        if waiting:
+            monkeypatch.setattr(page, 'evaluate', lambda _: False)
+            with pytest.raises(TimeoutError, match='fixture condition'):
+                page.wait_for('false')
+        else:
+            page.root.listeners['Target.receivedMessageFromTarget'] = lambda _: None
+            with pytest.raises(TimeoutError, match='Runtime.evaluate'):
+                page.evaluate('new Promise(() => {})')
+            page.root.listeners['Target.receivedMessageFromTarget'] = page.listener
+
+
+def test_freeze_resume_releases_focus_capture_then_restores_visibility(monkeypatch):
+    calls = []
+    monkeypatch.setattr(backend.time, 'sleep', lambda seconds: calls.append(('sleep', seconds)))
+    with backend.FixtureSession(FixtureRoot(), 'target') as page:
+        monkeypatch.setattr(page, 'send', lambda method, params: calls.append((method, params)))
+        monkeypatch.setattr(page, 'wait_for', lambda expression: calls.append(('wait', expression)))
+        page.freeze_resume()
+        page.freeze_resume()
+    expected = [('Emulation.setFocusEmulationEnabled', {'enabled': False}),
+        ('Page.setWebLifecycleState', {'state': 'frozen'}), ('sleep', 0.08),
+        ('Page.setWebLifecycleState', {'state': 'active'}),
+        ('Emulation.setFocusEmulationEnabled', {'enabled': True}),
+        ('wait', 'document.visibilityState === "visible"')]
+    assert calls == expected * 2
+
+
+@pytest.mark.parametrize('interrupted', [False, True])
+def test_freeze_resume_cleanup_preserves_interrupt_or_reports_resume_failure(monkeypatch, interrupted):
+    calls = []
+    with backend.FixtureSession(FixtureRoot(), 'target') as page:
+        def send(method, params):
+            calls.append((method, params))
+            if params == {'state': 'active'}:
+                raise RuntimeError('resume failure')
+        def sleep(_):
+            if interrupted:
+                raise KeyboardInterrupt('primary interrupt')
+        monkeypatch.setattr(page, 'send', send)
+        monkeypatch.setattr(backend.time, 'sleep', sleep)
+        with pytest.raises(KeyboardInterrupt if interrupted else RuntimeError,
+                           match='primary interrupt' if interrupted else 'resume failure'):
+            page.freeze_resume()
+    assert calls[-1] == ('Page.setWebLifecycleState', {'state': 'active'})
+    assert ('Emulation.setFocusEmulationEnabled', {'enabled': True}) not in calls
+
+
+@pytest.mark.parametrize('primary_failure', [False, True])
+def test_clean_fixture_real_cdp_lifecycle_async_and_cleanup(primary_failure):
+    executable = os.environ.get('CHROMIX_BACKEND_TEST_BROWSER')
+    if not executable:
+        pytest.skip('explicit Chromium executable required for CDP fixture integration')
+    from playwright.sync_api import sync_playwright
+    with backend.server() as origin, sync_playwright() as pw:
+        instance = pw.chromium.launch(executable_path=executable, headless=True, chromium_sandbox=False,
+            args=backend.case_args('native', '', {}), ignore_default_args=backend.IGNORED_DEFAULT_ARGS)
+        try:
+            inspector = instance.new_browser_cdp_session()
+            try:
+                before = inspector.send('Target.getBrowserContexts')['browserContextIds']
+                def collect():
+                    with backend.clean_fixture(instance) as (page, root, context):
+                        assert context not in before
+                        page.goto(origin + '/')
+                        assert page.evaluate('async value => {await new Promise(r => setTimeout(r, 20)); return value;}',
+                                             {'owned': [42, '雪']}) == {'owned': [42, '雪']}
+                        with pytest.raises(RuntimeError, match='owned rejection'):
+                            page.evaluate('async () => {await Promise.resolve(); throw new Error("owned rejection");}')
+                        out = backend.collect(page, root, context, origin, 'native')
+                        assert set(out['clocks']) == {'window', 'after_freeze', 'history', 'reloaded',
+                                                     'iframe', 'oopif', 'dedicated', 'shared', 'service'}
+                        for name in ('window', 'after_freeze', 'history', 'reloaded', 'iframe', 'oopif'):
+                            assert backend.finite(out['clocks'][name]['callbacks']['raf']['timestamp'])
+                        lifecycle = [event for event in out['lifecycle_events'] if event['name'] in ('freeze', 'resume')]
+                        assert [event['name'] for event in lifecycle] == ['freeze', 'resume']
+                        assert all(event['trusted'] for event in lifecycle)
+                        assert any(event['name'] == 'pageshow' and event['persisted'] for event in out['history_events'])
+                        assert out['oopif_observed']
+                        page.freeze_resume()
+                        assert page.evaluate('document.visibilityState') == 'visible'
+                        assert backend.finite(backend.evaluate(page, 'clocks')['callbacks']['raf']['timestamp'])
+                        if primary_failure:
+                            raise ValueError('primary integration failure')
+                if primary_failure:
+                    with pytest.raises(ValueError, match='primary integration failure'):
+                        collect()
+                else:
+                    collect()
+                assert inspector.send('Target.getBrowserContexts')['browserContextIds'] == before
+            finally:
+                inspector.detach()
+        finally:
+            instance.close()
+
+
+def test_backend_malformed_evidence_keeps_primary_collection_error():
+    report = backend_report()
+    report['errors'] = ['primary clock contract failure']
+    report['runs'][1]['clocks'] = None
+    errors, _ = backend.assess(report)
+    assert errors[0] == 'primary clock contract failure'
+    assert errors[1].startswith('malformed backend evidence:')
+
+
+@pytest.mark.parametrize('fault', ['raf', 'untrusted', 'reversed', 'surrounding', 'css'])
+def test_stage9_failures_remain_strict_raw_contracts(fault):
+    report = backend_report()
+    run = report['runs'][1]
+    if fault == 'raf':
+        run['clocks']['window']['callbacks']['raf'] = {'timestamp': 288.996, 'now': 294}
+    elif fault == 'untrusted':
+        run['lifecycle_events'][0]['trusted'] = False
+    elif fault == 'reversed':
+        run['lifecycle_events'].reverse()
+    elif fault == 'surrounding':
+        run['lifecycle_events'][0]['now'] = 0
+    else:
+        run['preferences']['styles']['anyCoarse'] = False
+    before = deepcopy(report)
+    assert backend.assess(report)[0]
+    assert report == before
 
 
 def test_backend_recomputes_queries_clock_grids_samples_and_restarts():
@@ -282,6 +609,43 @@ def test_media_saved_pass_cannot_hide_operation_failures(mutate):
     mutate(report)
     assert media.assess(report)[0]
     assert acceptance.assess_suite('media_policy', report, 'a' * 64, '152.0.7977.82')[0]
+
+
+@pytest.mark.parametrize('key', ('encoding', 'decoding'))
+def test_missing_media_capabilities_result_is_explicit_and_does_not_abort_other_checks(key):
+    report = media_report()
+    for run in report['runs']:
+        run['observation']['families']['h264'][key] = None
+    errors, gaps = media.assess(report)
+    assert any('h264: missing MediaCapabilities result: ' + key in error for error in errors)
+    assert not any("NoneType" in error for error in errors)
+    assert gaps == []
+
+
+def test_missing_media_capabilities_retains_disabled_operation_failures_and_gaps():
+    report = media_report()
+    report['runs'][1]['observation']['families']['h264']['encoding'] = None
+    report['runs'][1]['observation']['families']['h264']['encoded'] = {'status': 'encoded', 'config': {'codec': 'h264'},
+        'chunks': [{'data': 'eHg=', 'type': 'key', 'timestamp': 0}]}
+    errors, gaps = media.assess(report)
+    assert any('disabled codec still advertised' in error for error in errors) is False
+    assert any('disabled encoded operation was not rejected' in error for error in errors)
+    assert any('missing MediaCapabilities result: encoding' in error for error in errors)
+
+
+def test_missing_media_capabilities_does_not_hide_native_fixture_gaps():
+    report = media_report()
+    for run in report['runs']:
+        row = run['observation']['families']['hevc']
+        row['encoding'] = None
+        if run['name'] == 'native':
+            row.update(**dict.fromkeys(media.API_KEYS, False), canPlay='', rtcSend=0, rtcReceive=0,
+                       encoded={'status': 'unavailable'}, recorded={'status': 'unavailable'})
+        row.update(decoded={'status': 'unavailable'}, playback={'status': 'unavailable'}, mse={'status': 'unavailable'})
+    errors, gaps = media.assess(report)
+    assert any('missing MediaCapabilities result: encoding' in error for error in errors)
+    assert 'native.hevc.native_encoder' in gaps
+    assert 'disabled.hevc.decoded.no_native_fixture' in gaps
 
 
 def test_missing_hardware_codec_is_a_gap_not_fabricated_operation_coverage():

@@ -130,7 +130,7 @@ def test_noise_disable_retains_persona_seed_but_disables_noise(tmp_path):
     noise = block(text, '    if (command_line->HasSwitch("fingerprint-noise")')
     compile_and_run(tmp_path, COMMAND_LINE_STUB + '''
 void Normalize(base::CommandLine* command_line) {
-''' + noise + r'''
+''' + block(text, '    const auto set_switch =') + ';\n' + noise + r'''
 }
 int main() {
   base::CommandLine cmd;
@@ -161,7 +161,7 @@ uint64_t RandUint64() { return random_value; }
 std::string NumberToString(uint64_t value) { return std::to_string(value); }
 }
 void Normalize(base::CommandLine* command_line) {
-''' + seed + '\n' + off + r'''
+''' + block(text, '    const auto set_switch =') + ';\n' + seed + '\n' + off + r'''
 }
 int main() {
   base::CommandLine cmd;
@@ -320,7 +320,7 @@ def test_locale_normalization_is_after_off_and_before_preferences():
     assert 'GetLanguageTagFromString(value)' not in text
     assert 'tag->language_subtag() == "und"' in text
     assert 'base::JoinString(languages, ",")' in text
-    assert 'AppendSwitchASCII(switches::kAcceptLang, normalized)' in text
+    assert 'set_switch(switches::kAcceptLang, normalized)' in text
     assert 'RemoveSwitch("uxr-languages")' in text
     assert '"X11; Linux x86_64"' in text
 
@@ -390,7 +390,7 @@ std::string ToLowerASCII(std::string value) {
 }
 }
 void Normalize(base::CommandLine* command_line) {
-''' + normalization + off + r'''
+''' + block(text, '    const auto set_switch =') + ';\n' + normalization + off + r'''
 }
 int host_reads = 0;
 std::string GetEffectiveBrowserBrandFullVersion() { return "153.1.2.3"; }
@@ -409,8 +409,13 @@ Metadata ReadHints() {
   return metadata;
 }
 void AssertOff(const base::CommandLine& cmd) {
+  assert(cmd.GetSwitchValueASCII("fingerprint") == "off");
+  assert(!cmd.HasSwitch("fingerprint-platform"));
+  assert(cmd.GetSwitchValueASCII("uxr-fingerprint-off") == "true");
   assert(cmd.HasSwitch("uxr-webgl-real"));
+  assert(cmd.GetSwitchValueASCII("uxr-webgl-real").empty());
   assert(cmd.HasSwitch("uxr-disable-fingerprint-noise"));
+  assert(cmd.GetSwitchValueASCII("uxr-disable-fingerprint-noise").empty());
   for (const auto& [key, value] : cmd.values)
     assert(key.compare(0, 4, "uxr-") != 0 || key == "uxr-webgl-real" ||
            key == "uxr-disable-fingerprint-noise" || key == "uxr-fingerprint-off");

@@ -1,9 +1,8 @@
 diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
-index b117581258bd79eb16b7fe48167522cfc6c78af7..01e9225274bb194520ddb5fb2cf732624d3ea428 100644
 --- a/chrome/app/chrome_main.cc
 +++ b/chrome/app/chrome_main.cc
-@@ -177,7 +177,10 @@
-   if (!command_line->HasSwitch(switches::kProcessType)) {
+@@ -201,7 +201,10 @@
+     }
      // Canonicalize public booleans identically for direct and SDK launches.
      for (const char* key : {"fingerprint-noise", "fingerprint-sapi-voices",
 -                            "fingerprint-allow-3p-cookies", "fingerprint-windows-font-metrics"}) {
@@ -14,7 +13,7 @@ index b117581258bd79eb16b7fe48167522cfc6c78af7..01e9225274bb194520ddb5fb2cf73262
        if (!command_line->HasSwitch(key))
          continue;
        const std::string value = base::ToLowerASCII(command_line->GetSwitchValueASCII(key));
-@@ -191,6 +194,23 @@
+@@ -215,6 +218,23 @@
  
      struct Alias { const char* fp; const char* uxr; };
      static constexpr Alias kAliases[] = {
@@ -38,7 +37,7 @@ index b117581258bd79eb16b7fe48167522cfc6c78af7..01e9225274bb194520ddb5fb2cf73262
        {"fingerprint-gpu-vendor",          "uxr-webgl-vendor"},
        {"fingerprint-gpu-renderer",         "uxr-webgl-renderer"},
        {"disable-gpu-fingerprint",           "uxr-disable-gpu-fingerprint"},
-@@ -220,8 +240,8 @@
+@@ -244,8 +264,8 @@
      for (const auto& a : kAliases) {
        if (command_line->HasSwitch(a.fp) &&
            !command_line->HasSwitch(a.uxr)) {
@@ -49,7 +48,7 @@ index b117581258bd79eb16b7fe48167522cfc6c78af7..01e9225274bb194520ddb5fb2cf73262
        }
      }
  
-@@ -503,6 +523,18 @@
+@@ -532,6 +552,18 @@
        disabled += "ForceThirdPartyCookieBlocking";
        command_line->AppendSwitchASCII(kDisableFeatures, disabled);
      }

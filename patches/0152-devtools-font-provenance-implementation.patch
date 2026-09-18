@@ -19,7 +19,7 @@ diff --git a/third_party/blink/renderer/core/inspector/inspector_css_agent.cc b/
  #include "third_party/blink/public/common/metrics/document_update_reason.h"
  #include "third_party/blink/renderer/core/animation/animation_utils.h"
  #include "third_party/blink/renderer/core/animation/css/css_animation.h"
-@@ -258,9 +265,64 @@
+@@ -258,9 +265,65 @@
    return uniq_rules;
  }
  
@@ -32,7 +32,8 @@ diff --git a/third_party/blink/renderer/core/inspector/inspector_css_agent.cc b/
 +    return String();
 +  }
 +  std::vector<SkFontTableTag> tags(count);
-+  if (typeface.readTableTags(tags) != count) {
++  if (typeface.readTableTags(SkSpan<SkFontTableTag>(tags.data(), tags.size())) !=
++      count) {
 +    return String();
 +  }
 +  std::sort(tags.begin(), tags.end());
@@ -85,7 +86,7 @@ diff --git a/third_party/blink/renderer/core/inspector/inspector_css_agent.cc b/
    for (const auto& run_font_data : run_font_data_list) {
      const auto* simple_font_data = run_font_data.font_data_.Get();
      String family_name = simple_font_data->PlatformData().FontFamilyName();
-@@ -271,14 +333,24 @@
+@@ -271,14 +334,24 @@
      if (postscript_name.IsNull()) {
        postscript_name = "";
      }
@@ -115,7 +116,7 @@ diff --git a/third_party/blink/renderer/core/inspector/inspector_css_agent.cc b/
      }
    }
  }
-@@ -2755,7 +2827,7 @@
+@@ -2755,7 +2828,7 @@
  
  void InspectorCSSAgent::CollectPlatformFontsForLayoutObject(
      LayoutObject* layout_object,
@@ -124,7 +125,7 @@ diff --git a/third_party/blink/renderer/core/inspector/inspector_css_agent.cc b/
      unsigned descendants_depth) {
    if (!layout_object->IsText()) {
      if (!descendants_depth)
-@@ -2807,9 +2879,9 @@
+@@ -2807,9 +2880,9 @@
    if (!response.IsSuccess())
      return response;
  
@@ -137,7 +138,7 @@ diff --git a/third_party/blink/renderer/core/inspector/inspector_css_agent.cc b/
    LayoutObject* root = node->GetLayoutObject();
    if (root) {
      // Iterate upto two layers deep.
-@@ -2819,16 +2891,18 @@
+@@ -2819,16 +2892,18 @@
    *platform_fonts =
        std::make_unique<protocol::Array<protocol::CSS::PlatformFontUsage>>();
    for (auto& font : font_stats) {

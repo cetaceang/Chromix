@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from types import SimpleNamespace
 from urllib.parse import urlencode
 
@@ -449,13 +450,30 @@ def test_launch_exception_is_failed_and_uses_persistent_profile(tmp_path):
     assert calls[0]["service_workers"] == "block"
 
 
+def identity_media(denied=False):
+    return {"permissions": {name: {"available": True, "state": "denied" if denied else "prompt"}
+                             for name in ("camera", "microphone", "notifications")},
+            "deviceProbe": {"available": True}, "devices": [], "devicesError": None,
+            "permissionGrantsByRunner": 0, "deniedDocument": denied,
+            "origin": "http://127.0.0.1:9876", "secureContext": True,
+            "policyAllows": {name: not denied for name in ("camera", "microphone")}, "capture": {}}
+
+
+@pytest.mark.parametrize("platform", ["native", "linux", "windows"])
 @pytest.mark.parametrize("fault", [None, "crash", "pageerror", "disconnect", "external", "close"])
-def test_persistent_context_without_browser_handle_and_runtime_failures(tmp_path, monkeypatch, fault):
+def test_persistent_context_without_browser_handle_and_runtime_failures(tmp_path, monkeypatch, fault, platform):
+    spec = scenario() if platform == "native" else {**scenario("off"), "platform": platform}
     events, page_events, routes = {}, {}, {}
     network_online, network_events, offline_calls = True, [], []
+    permission_calls = []
+    media_rows = media_control_fixture()[0]["rows"]
     frame = SimpleNamespace()
+    def goto(url, **kwargs):
+        page.url = url
+        row = media_rows["denied" if url.endswith("/denied") else "before"]
+        return SimpleNamespace(url=url, status=200, all_headers=lambda: deepcopy(row["headers"]))
     page = SimpleNamespace(on=lambda name, callback: page_events.update({name: callback}),
-                           goto=lambda *a, **kw: None, frame=lambda **kw: frame)
+                           goto=goto, frame=lambda **kw: frame)
     def set_offline(offline):
         nonlocal network_online
         offline_calls.append(offline)
@@ -468,11 +486,17 @@ def test_persistent_context_without_browser_handle_and_runtime_failures(tmp_path
             return {"online": network_online}
         if script == smoke.NETWORK_EVENT_READ:
             return {"online": network_online, "events": deepcopy(network_events)}
-        return {}
+        if script == smoke.MEDIA_PROBE:
+            assert argument == {"denied": True, "capture": False}
+            return identity_media(denied=True)
+        if script == smoke.MEDIA_CONTROL_PROBE:
+            assert argument is None
+            return deepcopy(media_rows["denied" if page.url.endswith("/denied") else "before"]["probe"])
+        raise AssertionError("unexpected probe")
     detached = []
     identity = {"path": "/explicit/chrome", "sha256": "a" * 64, "size": 100}
     cdp = SimpleNamespace(send=lambda method: {"arguments": normalized_command(
-                          smoke.browser_args(scenario(), "http://127.0.0.1:9876", False), tmp_path / "profile")}
+                          launches[-1]["args"], launches[-1]["user_data_dir"])}
                           if method == "Browser.getBrowserCommandLine" else {"product": "mock"},
                           detach=lambda: detached.append(True))
     def close():
@@ -488,7 +512,11 @@ def test_persistent_context_without_browser_handle_and_runtime_failures(tmp_path
                               route_web_socket=lambda pattern, callback: routes.update(ws=callback),
                               on=lambda name, callback: events.update({name: callback}),
                               new_page=new_page, new_cdp_session=lambda target: cdp, close=close,
-                              set_offline=set_offline)
+                              set_offline=set_offline,
+                              grant_permissions=lambda permissions, **kw: permission_calls.append(
+                                  ("grant", launches[-1]["user_data_dir"], permissions, kw)),
+                              clear_permissions=lambda: permission_calls.append(
+                                  ("clear", launches[-1]["user_data_dir"])))
     launches = []
     def launch(**kwargs):
         launches.append(kwargs)
@@ -508,23 +536,347 @@ def test_persistent_context_without_browser_handle_and_runtime_failures(tmp_path
             request = SimpleNamespace(url="https://external.invalid/", redirected_from=None)
             routes["http"](SimpleNamespace(request=request, abort=lambda reason: aborted.append(reason)))
             assert aborted == ["blockedbyclient"]
-        return observation(spec, phase)
+        return {**observation(spec, phase), "media": identity_media()}
     monkeypatch.setattr(smoke, "binary_identity", lambda path: identity)
     monkeypatch.setattr(smoke, "collect_page", collect)
     monkeypatch.setattr(smoke, "evaluate", mocked_evaluate)
-    monkeypatch.setattr(smoke, "evaluate_observation", lambda observation, *_: smoke.evaluate_network_events(observation["network_events"]))
-    monkeypatch.setattr(smoke, "run_media_control", lambda *_: {})
-    monkeypatch.setattr(smoke, "evaluate_media_control", lambda *_: [])
     profile = tmp_path / "profile"
-    first = smoke.run_scenario(playwright, scenario(), identity, server, options(), profile)
-    second = smoke.run_scenario(playwright, {**scenario(), "restart": 2}, identity, server, options(), profile)
-    assert first["status"] == ("passed" if fault is None else "failed")
-    assert second["status"] == first["status"]
+    first = smoke.run_scenario(playwright, spec, identity, server, options(), profile)
+    second = smoke.run_scenario(playwright, {**spec, "name": "sample-restart", "restart": 2},
+                                identity, server, options(), profile)
+    assert first["status"] == ("passed" if fault is None else "failed"), first["failures"]
+    assert second["status"] == first["status"], second["failures"]
     assert first["profile_fresh"] is True and second["profile_fresh"] is False
-    assert launches[0]["user_data_dir"] == launches[1]["user_data_dir"]
-    assert detached == [True, True]
+    assert len(launches) == 4
+    assert launches[0]["user_data_dir"] == launches[2]["user_data_dir"] == str(profile)
+    media_profiles = [launches[index]["user_data_dir"] for index in (1, 3)]
+    assert media_profiles == [str(tmp_path / ("media-" + result["name"])) for result in (first, second)]
+    assert len({str(profile), *media_profiles}) == 3
+    for index, result in enumerate((first, second)):
+        control = result["media_control"]
+        assert control["profile"] == media_profiles[index] and control["profile_fresh"] is True
+        assert control["permissions_cleared"] is True and control["closed"] is (fault != "close")
+        assert control["grant_calls"] == 1 and control["granted_permissions"] == ["camera", "microphone"]
+        assert control["args"] == [*result["args"], "--use-fake-device-for-media-stream"]
+        assert result["execution"]["command_line"] == normalized_command(result["args"], profile)
+        assert control["execution"]["command_line"] == normalized_command(control["args"], media_profiles[index])
+        expected_checks = {"external": {"network.only_local_origin"},
+                           "close": {"media.control.closed", "media.control.failures"}}.get(fault, set())
+        assert failures(result["checks"]) == expected_checks
+        expected_errors = {"crash": {"page_crash"}, "pageerror": {"page_error"},
+                           "disconnect": {"unexpected_browser_disconnect"}, "close": {"browser_close"}}.get(fault, set())
+        assert {failure["name"] for failure in result["failures"]} == expected_checks | expected_errors
+    assert permission_calls == [event for media_profile in media_profiles for event in (
+        ("grant", media_profile, ["camera", "microphone"], {"origin": server.origin}), ("clear", media_profile))]
+    assert detached == [True, True, True, True]
     assert offline_calls == [True, False, True, False]
     assert network_online is True
+
+
+def test_policy_control_requires_live_tracks_around_policy_only_denial():
+    control, args, origin = media_control_fixture()
+    check = lambda value: smoke.evaluate_media_control(value, "/fixture/identity", args, origin)
+    assert not failures(check(control))
+    for phase in ("before", "after"):
+        for name in ("camera", "microphone"):
+            for capture in ({"exception": {"name": "NotFoundError"}}, {"timeout": True},
+                            {"success": True, "tracks": [], "stopped": True},
+                            {"success": True, "tracks": [{"kind": "audio", "readyState": "ended", "enabled": True}], "stopped": True}):
+                broken = deepcopy(control)
+                broken["rows"][phase]["probe"]["capture"][name] = capture
+                assert f"media.control.{phase}.{name}.live" in failures(check(broken))
+    for name in ("camera", "microphone"):
+        for capture in ({"exception": {"name": "NotFoundError"}}, {"timeout": True}, {"success": True},
+                        {"exception": {"name": "NotAllowedError"}, "success": True},
+                        {"exception": {"name": "NotAllowedError"}, "timeout": True}):
+            broken = deepcopy(control)
+            broken["rows"]["denied"]["probe"]["capture"][name] = capture
+            assert f"media.denied.{name}.capture_rejected" in failures(check(broken))
+    for mutate in (
+            lambda c: c["rows"]["denied"]["headers"].pop("permissions-policy"),
+            lambda c: c["rows"]["denied"]["headers"].update({"content-security-policy": "sandbox allow-scripts"}),
+            lambda c: c["rows"]["denied"]["probe"].update(origin="null"),
+            lambda c: c["rows"]["denied"]["probe"]["policyAllows"].update(camera=True),
+            lambda c: c.update(fake_only=False), lambda c: c.update(profile="/fixture/identity"),
+            lambda c: c.update(profile_fresh=False), lambda c: c.update(grant_calls=0),
+            lambda c: c.update(permissions_cleared=False), lambda c: c.update(closed=False),
+            lambda c: c["args"].pop(), lambda c: c["execution"]["command_line"].pop()):
+        broken = deepcopy(control)
+        mutate(broken)
+        assert failures(check(broken))
+    assert failures(check(None))
+
+
+def test_no_grant_identity_denied_observation_cannot_supply_capture_proof():
+    media = identity_media(denied=True)
+    assert not failures(smoke.evaluate_media(media, True, capture_required=False))
+    media["capture"] = {"camera": {"exception": {"name": "NotFoundError"}}}
+    assert "media.denied.identity_capture_not_requested" in failures(
+        smoke.evaluate_media(media, True, capture_required=False))
+    media["capture"] = {}
+    media["permissionGrantsByRunner"] = 1
+    assert "media.denied.permission_grants" in failures(smoke.evaluate_media(media, True, capture_required=False))
+
+
+@pytest.fixture
+def stage10_execution():
+    path = ROOT / "tools/tests/fixtures/stage10_identity_execution.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def stage10_contract(sample, media):
+    spec = sample["scenario"]
+    row = spec["media_control"] if media else spec
+    return smoke.execution_contract_errors(row["execution"], row["profile"], spec["args"],
+                                           spec["profile"] if media else None)
+
+
+@pytest.mark.parametrize("media", [False, True], ids=["identity", "media"])
+def test_stage10_raw_off_execution_accepts_only_platform_removal(stage10_execution, media):
+    sample = stage10_execution
+    before = deepcopy(sample)
+    spec = sample["scenario"]
+    row = spec["media_control"] if media else spec
+    assert spec["args"] == smoke.browser_args(spec, sample["origin"], False)
+    assert [arg for arg in row["args"] if arg not in row["execution"]["command_line"]] == [
+        "--fingerprint-platform=Linux x86_64"]
+    assert sample["execution_check"]["observed"] == [
+        "unexpected, conflicting or duplicated scenario switch: fingerprint-platform",
+        "executed command line omits requested arguments"]
+    assert not stage10_contract(sample, media)
+    assert sample == before
+
+
+def test_stage10_execution_replay_does_not_fabricate_uncollected_probes(stage10_execution):
+    spec = stage10_execution["scenario"]
+    assert spec["status"] == "failed" and spec["observation"] is None
+    control = spec["media_control"]
+    checks = smoke.evaluate_media_control(control, spec["profile"], spec["args"], stage10_execution["origin"])
+    assert "media.control.executed_fake_device" not in failures(checks)
+    assert {"media.control.permission_grants", "media.control.before.camera.live",
+            "media.control.after.microphone.live", "media.control.failures"} <= failures(checks)
+    assert "matrix.all_scenarios_observed" in failures(smoke.evaluate_matrix([spec]))
+
+
+@pytest.mark.parametrize("media", [False, True], ids=["identity", "media"])
+@pytest.mark.parametrize("flag", ["--fingerprint=off", "--uxr-fingerprint-off=true",
+                                 "--uxr-webgl-real", "--uxr-disable-fingerprint-noise"])
+@pytest.mark.parametrize("fault", ["missing", "wrong", "duplicate", "conflict"])
+def test_stage10_off_markers_remain_exact_and_single(stage10_execution, media, flag, fault):
+    row = stage10_execution["scenario"]
+    if media:
+        row = row["media_control"]
+    command = row["execution"]["command_line"]
+    assert command.count(flag) == 1
+    if fault in ("missing", "wrong"):
+        command.remove(flag)
+    if fault in ("wrong", "conflict"):
+        command.append(flag.partition("=")[0] + "=false")
+    elif fault == "duplicate":
+        command.append(flag)
+    assert stage10_contract(stage10_execution, media)
+
+
+@pytest.mark.parametrize("media", [False, True], ids=["identity", "media"])
+@pytest.mark.parametrize("extra", [
+    ["--fingerprint-platform=Linux x86_64"], ["--fingerprint-platform=Win32"],
+    ["--fingerprint-platform=Linux x86_64"] * 2,
+    ["--fingerprint-platform=Linux x86_64", "--fingerprint-platform=Win32"],
+    ["--fingerprint-locale=de-DE"], ["--uxr-synthetic-device-tests=true"],
+    ["--uxr-fingerprint-enabled=true"], ["--uxr-fingerprint-seed=42"],
+    ["--uxr-platform=Linux x86_64"], ["--uxr-languages=de-DE"],
+    ["--use-fake-ui-for-media-stream=false"], ["--use-fake-device-for-media-stream"], ["--"],
+])
+def test_stage10_off_rejects_retained_platform_and_unexpected_switches(stage10_execution, media, extra):
+    row = stage10_execution["scenario"]
+    if media:
+        row = row["media_control"]
+    row["execution"]["command_line"].extend(extra)
+    assert stage10_contract(stage10_execution, media)
+
+
+@pytest.mark.parametrize("media", [False, True], ids=["identity", "media"])
+def test_stage10_off_still_requires_every_other_requested_argument(stage10_execution, media):
+    spec = stage10_execution["scenario"]
+    row = spec["media_control"] if media else spec
+    original = row["execution"]["command_line"]
+    for missing in row["args"]:
+        if missing == "--fingerprint-platform=Linux x86_64":
+            continue
+        row["execution"]["command_line"] = [arg for arg in original if arg != missing]
+        assert stage10_contract(stage10_execution, media), missing
+
+
+@pytest.mark.parametrize("media", [False, True], ids=["identity", "media"])
+@pytest.mark.parametrize("flag", ["--fingerprint=off", "--fingerprint=42",
+                                 "--fingerprint-platform=Linux x86_64", "--fingerprint-platform=Win32"])
+def test_stage10_off_rejects_duplicate_requested_scenario_switches(stage10_execution, media, flag):
+    stage10_execution["scenario"]["args"].append(flag)
+    assert stage10_contract(stage10_execution, media)
+
+
+@pytest.mark.parametrize("media", [False, True], ids=["identity", "media"])
+@pytest.mark.parametrize("platform", ["linux", "windows"])
+def test_off_platform_normalization_applies_to_both_matrix_platforms(stage10_execution, media, platform):
+    spec = stage10_execution["scenario"]
+    spec["platform"] = platform
+    spec["args"] = smoke.browser_args(spec, stage10_execution["origin"], False)
+    assert not stage10_contract(stage10_execution, media)
+
+
+@pytest.mark.parametrize("platform", ["linux", "windows"])
+@pytest.mark.parametrize("key", ["fingerprint", "fingerprint-platform", "fingerprint-locale",
+                                 "uxr-synthetic-device-tests"])
+@pytest.mark.parametrize("fault", ["missing", "wrong", "duplicate"])
+def test_on_switches_cannot_use_off_normalization(stage10_execution, platform, key, fault):
+    spec = {**stage10_execution["scenario"], "mode": "on", "platform": platform, "seed": 42}
+    args = smoke.browser_args(spec, stage10_execution["origin"], False)
+    command = normalized_command(args, spec["profile"])
+    assert not smoke.execution_contract_errors({"command_line": command}, spec["profile"], args)
+    flag = next(arg for arg in args if arg.startswith("--" + key + "="))
+    if fault in ("missing", "wrong"):
+        command.remove(flag)
+    if fault == "wrong":
+        command.append("--" + key + "=false")
+    elif fault == "duplicate":
+        command.append(flag)
+    command.extend(["--uxr-fingerprint-off=true", "--uxr-webgl-real", "--uxr-disable-fingerprint-noise"])
+    assert smoke.execution_contract_errors({"command_line": command}, spec["profile"], args)
+
+
+@pytest.mark.parametrize("platform", ["", "linux", "Win64", "MacIntel"])
+def test_off_normalization_does_not_hide_wrong_requested_platform(stage10_execution, platform):
+    spec = stage10_execution["scenario"]
+    spec["args"][-1] = "--fingerprint-platform=" + platform
+    assert stage10_contract(stage10_execution, False)
+
+
+def test_native_execution_still_rejects_unrequested_platform(stage10_execution):
+    spec = stage10_execution["scenario"]
+    spec["args"].remove("--fingerprint-platform=Linux x86_64")
+    assert not stage10_contract(stage10_execution, False)
+    spec["execution"]["command_line"].append("--fingerprint-platform=Linux x86_64")
+    assert stage10_contract(stage10_execution, False)
+
+
+def test_execution_contract_error_survives_cdp_cleanup(monkeypatch):
+    def detach():
+        raise RuntimeError('cleanup failure')
+    cdp = SimpleNamespace(send=lambda method: {'arguments': []} if method == 'Browser.getBrowserCommandLine' else {},
+                          detach=detach)
+    with pytest.raises(smoke.SmokeError, match='did not expose its executed command line'):
+        smoke.verify_execution(cdp, {}, True)
+
+
+@pytest.mark.parametrize("fault", [None, "conflict", "duplicate", "identity-alias", "resolve-error"])
+def test_execution_profile_resolves_both_windows_path_spellings(monkeypatch, fault):
+    long = Path("C:/Users/runneradmin/AppData/Local/Temp/media")
+    short = Path("C:/Users/RUNNER~1/AppData/Local/Temp/media")
+    identity = Path("C:/Users/runneradmin/AppData/Local/Temp/identity")
+    resolved = []
+    def resolve(path):
+        resolved.append(path)
+        if fault == "resolve-error" and path == identity:
+            raise OSError("filesystem unavailable")
+        return long if path == short else path
+    monkeypatch.setattr(Path, "resolve", resolve)
+    command = normalized_command(["--fingerprint=off"], short, fake=True)
+    if fault in ("conflict", "duplicate"):
+        command.append("--user-data-dir=" + str(short if fault == "duplicate" else identity))
+    errors = smoke.execution_contract_errors({"command_line": command}, long, ["--fingerprint=off"],
+                                              short if fault == "identity-alias" else identity)
+    assert bool(errors) == (fault is not None)
+    assert long in resolved
+    if fault not in ("conflict", "duplicate"):
+        assert short in resolved
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows filesystem short-name API required")
+def test_execution_profile_windows_short_name_roundtrip(tmp_path):
+    import ctypes
+    from ctypes import wintypes
+    profile = tmp_path / "long profile directory"
+    profile.mkdir()
+    get_short = ctypes.windll.kernel32.GetShortPathNameW
+    get_short.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+    get_short.restype = wintypes.DWORD
+    size = get_short(str(profile), None, 0)
+    assert size
+    output = ctypes.create_unicode_buffer(size)
+    assert get_short(str(profile), output, size)
+    if output.value == str(profile):
+        pytest.skip("8.3 name generation is disabled on this volume")
+    command = normalized_command(["--fingerprint=off"], output.value)
+    assert not smoke.execution_contract_errors({"command_line": command}, profile, ["--fingerprint=off"])
+    command.extend(["--use-fake-device-for-media-stream"])
+    assert "media control reuses the identity profile" in smoke.execution_contract_errors(
+        {"command_line": command}, profile, ["--fingerprint=off"], output.value)
+
+
+@pytest.mark.parametrize("fault", [None, "fake-ui", "fake-ui-value", "fake-missing", "fake-duplicate", "fake-value",
+                                  "fingerprint-conflict", "fingerprint-duplicate", "profile-missing",
+                                  "profile-duplicate", "profile-reused", "derived-conflict", "argument-missing",
+                                  "switch-terminator"])
+def test_media_control_cleanup_and_fake_only_launch(tmp_path, monkeypatch, fault):
+    calls = []
+    identity = {"path": "/explicit/chrome"}
+    page = SimpleNamespace(on=lambda *_: None)
+    def grant(permissions, **kwargs):
+        calls.append(("grant", permissions, kwargs))
+        raise RuntimeError("grant control failure")
+    def send(method):
+        if method == "Browser.getVersion":
+            return {"product": "mock"}
+        assert method == "Browser.getBrowserCommandLine"
+        launch = calls[0][1]
+        command = normalized_command(launch["args"], launch["user_data_dir"])
+        profile_index = command.index("--user-data-dir=" + launch["user_data_dir"])
+        extra = {"fake-ui": "--use-fake-ui-for-media-stream", "fake-ui-value": "--use-fake-ui-for-media-stream=false",
+                 "fake-duplicate": "--use-fake-device-for-media-stream", "fake-value": "--use-fake-device-for-media-stream=0",
+                 "fingerprint-conflict": "--fingerprint=999", "fingerprint-duplicate": "--fingerprint=off",
+                 "profile-duplicate": "--user-data-dir=" + launch["user_data_dir"], "switch-terminator": "--"}
+        if fault in extra:
+            command.append(extra[fault])
+        elif fault == "fake-missing":
+            command.remove("--use-fake-device-for-media-stream")
+        elif fault == "profile-missing":
+            command.pop(profile_index)
+        elif fault == "profile-reused":
+            command[profile_index] = "--user-data-dir=" + str(tmp_path / "identity")
+        elif fault == "derived-conflict":
+            command.extend(["--uxr-languages=de-DE", "--uxr-languages=en-US"])
+        elif fault == "argument-missing":
+            command.remove("--disable-background-networking")
+        calls.append("execution")
+        return {"arguments": command}
+    cdp = SimpleNamespace(send=send, detach=lambda: calls.append("detached"))
+    context = SimpleNamespace(browser=None, set_default_timeout=lambda *_: None,
+        set_default_navigation_timeout=lambda *_: None, route=lambda *_: None, route_web_socket=lambda *_: None,
+        on=lambda *_: None, new_page=lambda: page, new_cdp_session=lambda _: cdp,
+        grant_permissions=grant, clear_permissions=lambda: calls.append("cleared"), close=lambda: calls.append("closed"))
+    def launch(**kwargs):
+        calls.append(("launch", kwargs))
+        return context
+    monkeypatch.setattr(smoke, "binary_identity", lambda path: identity)
+    control = smoke.run_media_control(SimpleNamespace(chromium=SimpleNamespace(launch_persistent_context=launch)),
+        scenario(), identity, SimpleNamespace(origin="http://127.0.0.1:9876", snapshot=lambda: []),
+        options(), tmp_path / "media", tmp_path / "identity")
+    assert calls[0][1]["chromium_sandbox"] is True
+    assert calls[0][1]["args"][-1] == "--use-fake-device-for-media-stream"
+    assert "--use-fake-ui-for-media-stream" not in calls[0][1]["args"]
+    assert calls[-2:] == ["cleared", "closed"]
+    assert control["permissions_cleared"] and control["closed"]
+    if fault is None:
+        assert control["failures"][0]["message"] == "grant control failure"
+        assert control["grant_calls"] == 1 and control["granted_permissions"] == []
+        assert calls[3] == ("grant", ["camera", "microphone"], {"origin": "http://127.0.0.1:9876"})
+        assert [event[0] if isinstance(event, tuple) else event for event in calls] == [
+            "launch", "execution", "detached", "grant", "cleared", "closed"]
+    else:
+        assert control["failures"][0]["message"].startswith("media pre-grant execution contract:")
+        assert control["grant_calls"] == 0 and control["granted_permissions"] == []
+        assert [event[0] if isinstance(event, tuple) else event for event in calls] == [
+            "launch", "execution", "detached", "cleared", "closed"]
 
 
 def test_failed_json_and_exit_without_runtime(tmp_path, capsys, monkeypatch):
@@ -560,12 +912,11 @@ def normalized_command(args, profile, *, fake=False):
     command.extend(["--user-data-dir=" + str(profile), "--remote-debugging-pipe"])
     expected = dict(arg[2:].split("=", 1) for arg in args if "=" in arg)
     if expected["fingerprint"] == "off":
-        command = [arg for arg in command if not arg.startswith("--fingerprint-platform=")]
+        command = [arg for arg in command if not arg.startswith(("--fingerprint=", "--fingerprint-platform="))]
         command.extend(["--fingerprint=off", "--uxr-fingerprint-off=true", "--uxr-webgl-real",
                         "--uxr-disable-fingerprint-noise"])
     else:
         locale = expected["fingerprint-locale"]
-        command.append("--uxr-languages=" + locale)
         platform = expected["fingerprint-platform"]
         if platform == "Win32" and smoke.sys.platform != "win32":
             command.extend(["--uxr-platform=Win32", "--uxr-ua-os=Windows NT 10.0; Win64; x64",
@@ -609,54 +960,6 @@ def media_control_fixture():
     return control, args, origin
 
 
-def test_policy_control_requires_live_tracks_around_policy_only_denial():
-    control, args, origin = media_control_fixture()
-    check = lambda value: smoke.evaluate_media_control(value, "/fixture/identity", args, origin)
-    assert not failures(check(control))
-    for phase in ("before", "after"):
-        for name in ("camera", "microphone"):
-            for capture in ({"exception": {"name": "NotFoundError"}}, {"timeout": True},
-                            {"success": True, "tracks": [], "stopped": True},
-                            {"success": True, "tracks": [{"kind": "audio", "readyState": "ended", "enabled": True}], "stopped": True}):
-                broken = deepcopy(control)
-                broken["rows"][phase]["probe"]["capture"][name] = capture
-                assert f"media.control.{phase}.{name}.live" in failures(check(broken))
-    for name in ("camera", "microphone"):
-        for capture in ({"exception": {"name": "NotFoundError"}}, {"timeout": True}, {"success": True}):
-            broken = deepcopy(control)
-            broken["rows"]["denied"]["probe"]["capture"][name] = capture
-            assert f"media.denied.{name}.capture_rejected" in failures(check(broken))
-    for mutate in (
-            lambda c: c["rows"]["denied"]["headers"].pop("permissions-policy"),
-            lambda c: c["rows"]["denied"]["headers"].update({"content-security-policy": "sandbox allow-scripts"}),
-            lambda c: c["rows"]["denied"]["probe"].update(origin="null"),
-            lambda c: c["rows"]["denied"]["probe"]["policyAllows"].update(camera=True),
-            lambda c: c.update(fake_only=False), lambda c: c.update(profile="/fixture/identity"),
-            lambda c: c.update(profile_fresh=False), lambda c: c.update(grant_calls=0),
-            lambda c: c.update(permissions_cleared=False), lambda c: c.update(closed=False),
-            lambda c: c["args"].pop(), lambda c: c["execution"]["command_line"].pop()):
-        broken = deepcopy(control)
-        mutate(broken)
-        assert failures(check(broken))
-    assert failures(check(None))
-
-
-def test_no_grant_identity_denied_observation_cannot_supply_capture_proof():
-    media = {"permissions": {name: {"available": True, "state": "denied"}
-                             for name in ("camera", "microphone", "notifications")},
-             "deviceProbe": {"available": True}, "devices": [], "devicesError": None,
-             "permissionGrantsByRunner": 0, "deniedDocument": True,
-             "origin": "http://127.0.0.1:9876", "secureContext": True,
-             "policyAllows": {"camera": False, "microphone": False}, "capture": {}}
-    assert not failures(smoke.evaluate_media(media, True, capture_required=False))
-    media["capture"] = {"camera": {"exception": {"name": "NotFoundError"}}}
-    assert "media.denied.identity_capture_not_requested" in failures(
-        smoke.evaluate_media(media, True, capture_required=False))
-    media["capture"] = {}
-    media["permissionGrantsByRunner"] = 1
-    assert "media.denied.permission_grants" in failures(smoke.evaluate_media(media, True, capture_required=False))
-
-
 @pytest.fixture
 def arm64_execution():
     path = ROOT / "tools/tests/fixtures/identity_arm64_command_line.json"
@@ -664,24 +967,34 @@ def arm64_execution():
 
 
 @pytest.mark.parametrize("media", [False, True])
-def test_execution_accepts_actual_arm64_off_normalization(arm64_execution, media):
+def test_actual_arm64_evidence_records_pre_replacement_off_normalization(arm64_execution, media):
+    before = deepcopy(arm64_execution)
     identity = arm64_execution["identity"]
     row = arm64_execution["media_control"] if media else identity
     command = row["execution"]["command_line"]
     assert identity["args"].count("--fingerprint=off") == 1
     assert command.count("--fingerprint=off") == 2
-    assert not smoke.execution_contract_errors(row["execution"], row["profile"], identity["args"],
+    assert smoke.execution_contract_errors(row["execution"], row["profile"], identity["args"],
+                                          identity["profile"] if media else None) == [
+        "unexpected, conflicting, missing or duplicated scenario switch: fingerprint"]
+    # Replay the replacement contract without relabeling the old runtime evidence.
+    replay = command.copy()
+    replay.remove("--fingerprint=off")
+    assert not smoke.execution_contract_errors({"command_line": replay}, row["profile"], identity["args"],
                                                identity["profile"] if media else None)
+    assert arm64_execution == before
 
 
 @pytest.mark.parametrize("media", [False, True])
-def test_actual_arm64_command_mutations_fail_closed(arm64_execution, media):
+def test_arm64_command_replay_mutations_fail_closed(arm64_execution, media):
     identity = arm64_execution["identity"]
     row = arm64_execution["media_control"] if media else identity
-    original = row["execution"]["command_line"]
+    original = row["execution"]["command_line"].copy()
+    original.remove("--fingerprint=off")
     def check(command, args=None, profile=None):
         return smoke.execution_contract_errors({"command_line": command}, profile or row["profile"],
             identity["args"] if args is None else args, identity["profile"] if media else None)
+    assert not check(original)
     for extra in ("--fingerprint=off", "--fingerprint=999", "--fingerprint=false", "--fingerprint",
                   "--fingerprint-platform=Win32", "--fingerprint-locale=de-DE", "--fingerprint-timezone=UTC",
                   "--uxr-fingerprint-off=true", "--uxr-fingerprint-off=false", "--uxr-webgl-real",
@@ -717,32 +1030,16 @@ def test_actual_arm64_command_mutations_fail_closed(arm64_execution, media):
 def argv_normalizer(request, tmp_path_factory):
     from test_fingerprint_features import CPP_BASE, added, block, compile_cpp
 
-    stub = CPP_BASE.replace("  std::map<std::string, std::string> values;", """
-  std::vector<std::string> argv;
-  std::map<std::string, std::string> values;""", 1)
-    stub = stub.replace(
-        "void AppendSwitchASCII(const std::string& key, const std::string& value) { values[key] = value; }",
-        """void AppendSwitchASCII(const std::string& key, const std::string& value) {
-    values[key] = value;
-    argv.push_back("--" + key + (value.empty() ? "" : "=" + value));
-  }""")
-    stub = stub.replace('void AppendSwitch(const std::string& key) { values[key] = ""; }',
-                        'void AppendSwitch(const std::string& key) { AppendSwitchASCII(key, ""); }')
-    stub = stub.replace("void RemoveSwitch(const std::string& key) { values.erase(key); }", """
-  void RemoveSwitch(const std::string& key) {
-    values.erase(key);
-    std::erase_if(argv, [&](const std::string& arg) {
-      return arg == "--" + key || arg.starts_with("--" + key + "=");
-    });
-  }""")
     flags = "#define BUILDFLAG(x) x\n" + "".join(
         f"#define {flag} {int(request.param == host)}\n"
         for flag, host in (("IS_WIN", "win32"), ("IS_MAC", "darwin"), ("IS_LINUX", "linux")))
     body = block(added(36), "  if (!command_line->HasSwitch(switches::kProcessType))")
-    source = flags + stub + "\nvoid Normalize(base::CommandLine* command_line) {\n" + body + r'''
+    source = flags + CPP_BASE + "\nint Normalize(base::CommandLine* command_line) {\n" + body + r'''
+  return 0;
 }
 int main(int argc, char** argv) {
   auto* command_line = base::CommandLine::ForCurrentProcess();
+  command_line->argv_values.push_back(argv[0]);
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     const size_t separator = arg.find('=');
@@ -750,8 +1047,9 @@ int main(int argc, char** argv) {
         arg.substr(2, separator == std::string::npos ? separator : separator - 2),
         separator == std::string::npos ? "" : arg.substr(separator + 1));
   }
-  Normalize(command_line);
-  for (const auto& arg : command_line->argv) std::cout << arg << '\n';
+  if (Normalize(command_line) != 0) return 1;
+  for (size_t i = 1; i < command_line->argv().size(); ++i)
+    std::cout << command_line->argv()[i] << '\n';
 }
 '''
     binary = compile_cpp(tmp_path_factory.mktemp("argv-normalizer-" + request.param), source)
@@ -829,7 +1127,7 @@ def test_execution_locale_canonicalization_is_independent_and_exact(requested, c
     profile = "/fixture/media" if media else "/fixture/identity"
     command = normalized_command(args, profile, fake=media)
     second = len(command) - 2
-    first = command.index("--uxr-languages=" + requested)
+    first = command.index("--fingerprint-locale=" + requested)
     command[second:] = ["--uxr-languages=" + canonical, "--accept-lang=" + canonical]
     def check(value):
         return smoke.execution_contract_errors({"command_line": value}, profile, args,
@@ -851,11 +1149,9 @@ def test_execution_locale_canonicalization_is_independent_and_exact(requested, c
         assert check([*command, command[index]])
     if requested != canonical:
         mutated = command.copy()
-        mutated[first] = "--uxr-languages=" + canonical
+        mutated[first] = "--fingerprint-locale=" + canonical
         assert check(mutated)
-        mutated = command.copy()
-        mutated[first], mutated[second] = mutated[second], mutated[first]
-        assert check(mutated)
+        assert check([*command, "--uxr-languages=" + requested])
 
 
 @pytest.mark.parametrize("requested,canonical", [("iw-IL", "he-IL"), ("in-ID", "id-ID"), ("cmn-CN", "zh-CN")])
@@ -923,63 +1219,7 @@ def test_execution_profile_canonicalization_rejects_alias_to_identity(tmp_path):
     command[index] = "--user-data-dir=" + str(distinct)
     assert not smoke.execution_contract_errors({"command_line": command}, distinct, args, identity)
     command[index] = "--user-data-dir=" + str(tmp_path / "unused" / ".." / "media")
-    assert smoke.execution_contract_errors({"command_line": command}, distinct, args, identity)
-
-
-@pytest.mark.parametrize("fault", [None, "fake-ui", "fake-ui-value", "fake-duplicate", "fake-value",
-                                  "fingerprint-conflict", "fingerprint-duplicate", "profile-missing",
-                                  "profile-duplicate", "profile-reused", "derived-conflict"])
-def test_media_control_cleanup_and_fake_only_launch(tmp_path, monkeypatch, fault):
-    calls = []
-    identity = {"path": "/explicit/chrome"}
-    page = SimpleNamespace(on=lambda *_: None)
-    def grant(permissions, **kwargs):
-        calls.append(("grant", permissions, kwargs))
-        raise RuntimeError("grant control failure")
-    context = SimpleNamespace(browser=None, set_default_timeout=lambda *_: None,
-        set_default_navigation_timeout=lambda *_: None, route=lambda *_: None, route_web_socket=lambda *_: None,
-        on=lambda *_: None, new_page=lambda: page, new_cdp_session=lambda _: None,
-        grant_permissions=grant, clear_permissions=lambda: calls.append("cleared"), close=lambda: calls.append("closed"))
-    def launch(**kwargs):
-        calls.append(("launch", kwargs))
-        return context
-    def executed(*_):
-        launch = calls[0][1]
-        command = normalized_command(launch["args"], launch["user_data_dir"])
-        profile_index = command.index("--user-data-dir=" + launch["user_data_dir"])
-        extra = {"fake-ui": "--use-fake-ui-for-media-stream", "fake-ui-value": "--use-fake-ui-for-media-stream=false",
-                 "fake-duplicate": "--use-fake-device-for-media-stream", "fake-value": "--use-fake-device-for-media-stream=0",
-                 "fingerprint-conflict": "--fingerprint=999", "fingerprint-duplicate": "--fingerprint=off",
-                 "profile-duplicate": "--user-data-dir=" + launch["user_data_dir"]}
-        if fault in extra:
-            command.append(extra[fault])
-        elif fault == "profile-missing":
-            command.pop(profile_index)
-        elif fault == "profile-reused":
-            command[profile_index] = "--user-data-dir=" + str(tmp_path / "identity")
-        elif fault == "derived-conflict":
-            command.extend(["--uxr-languages=de-DE", "--uxr-languages=en-US"])
-        calls.append("execution")
-        return {"command_line": command}
-    monkeypatch.setattr(smoke, "verify_execution", executed)
-    control = smoke.run_media_control(SimpleNamespace(chromium=SimpleNamespace(launch_persistent_context=launch)),
-        scenario(), identity, SimpleNamespace(origin="http://127.0.0.1:9876", snapshot=lambda: []),
-        options(), tmp_path / "media", tmp_path / "identity")
-    assert calls[0][1]["chromium_sandbox"] is True
-    assert calls[0][1]["args"][-1] == "--use-fake-device-for-media-stream"
-    assert "--use-fake-ui-for-media-stream" not in calls[0][1]["args"]
-    assert calls[-2:] == ["cleared", "closed"]
-    assert control["permissions_cleared"] and control["closed"]
-    if fault is None:
-        assert control["failures"][0]["message"] == "grant control failure"
-        assert control["grant_calls"] == 1 and control["granted_permissions"] == []
-        assert [event[0] if isinstance(event, tuple) else event for event in calls] == [
-            "launch", "execution", "grant", "cleared", "closed"]
-    else:
-        assert control["failures"][0]["message"].startswith("media pre-grant execution contract:")
-        assert control["grant_calls"] == 0 and control["granted_permissions"] == []
-        assert [event[0] if isinstance(event, tuple) else event for event in calls] == [
-            "launch", "execution", "cleared", "closed"]
+    assert not smoke.execution_contract_errors({"command_line": command}, distinct, args, identity)
 
 
 def test_node_fake_media_control_captures_without_policy_guard():

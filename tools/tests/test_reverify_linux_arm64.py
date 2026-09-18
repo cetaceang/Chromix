@@ -351,10 +351,10 @@ def test_frozen_187_donor_source_stack_and_exact_target_coverage(tmp_path, monke
     assert result["donor_sha"] == recovery.DONOR_SHA
 
 
-def test_real_current_213_stack_cannot_reuse_187_donor_receipt():
+def test_real_current_216_stack_cannot_reuse_187_donor_receipt():
     donor_receipt()
     inputs, patches = recovery.load_stack(recovery.REPO)
-    assert len(patches) == len(inputs["patches"]) == 213
+    assert len(patches) == len(inputs["patches"]) == 216
     assert inputs["series_sha256"] != recovery.SERIES_SHA
     with pytest.raises(ValueError, match="^current_stack_not_pinned_187$"):
         recovery.validate_source(OLD187_DONOR / "source-final.json")

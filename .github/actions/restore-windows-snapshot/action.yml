@@ -1,0 +1,80 @@
+name: Restore verified Windows snapshot
+description: Validate the exact donor and artifact set before downloading a Windows source-migration snapshot.
+inputs:
+  repository:
+    description: Same-repository owner/name of the donor run.
+    required: true
+  run-id:
+    description: Exact donor workflow run ID.
+    required: true
+  stage:
+    description: Stage that produced the preserved checkpoint.
+    required: true
+  attempt:
+    description: Exact checkpoint producer attempt.
+    required: true
+  source-sha:
+    description: Full donor commit SHA.
+    required: true
+  artifact-ids:
+    description: Complete comma-separated checkpoint artifact ID set.
+    required: true
+  recovery-branch:
+    description: Exact permitted manual donor branch in addition to main.
+    required: true
+  token:
+    description: GitHub token with read access to workflow metadata and artifacts.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Validate exact Windows snapshot origin
+      id: donor
+      shell: powershell
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        SNAPSHOT_REPOSITORY: ${{ inputs.repository }}
+        SNAPSHOT_RUN: ${{ inputs.run-id }}
+        SNAPSHOT_STAGE: ${{ inputs.stage }}
+        SNAPSHOT_ATTEMPT: ${{ inputs.attempt }}
+        SNAPSHOT_SHA: ${{ inputs.source-sha }}
+        SNAPSHOT_ARTIFACT_IDS: ${{ inputs.artifact-ids }}
+        SNAPSHOT_BRANCH: ${{ inputs.recovery-branch }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        python tools/validate_windows_snapshot.py --repository "$env:SNAPSHOT_REPOSITORY" `
+          --run-id "$env:SNAPSHOT_RUN" --stage "$env:SNAPSHOT_STAGE" --attempt "$env:SNAPSHOT_ATTEMPT" `
+          --expected-sha "$env:SNAPSHOT_SHA" --artifact-ids "$env:SNAPSHOT_ARTIFACT_IDS" `
+          --recovery-branch "$env:SNAPSHOT_BRANCH" --report "$env:RUNNER_TEMP\windows-snapshot.json"
+        if ($LASTEXITCODE -ne 0) { throw 'Windows snapshot origin verification failed' }
+    - name: Checkout exact previous source identity
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.repository }}
+        ref: ${{ steps.donor.outputs.head_sha }}
+        path: .chromix-previous-repo
+        persist-credentials: false
+    - name: Isolate previous checkout from target preparation inputs
+      shell: powershell
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $previous = Join-Path $env:RUNNER_TEMP 'chromix-previous-repo'
+        if (Test-Path -LiteralPath $previous) { throw 'Previous checkout destination already exists' }
+        Move-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE '.chromix-previous-repo') -Destination $previous
+    - name: Download digest-pinned Windows snapshot
+      shell: powershell
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        python tools/download_windows_snapshot.py --manifest "$env:RUNNER_TEMP\windows-snapshot.json" `
+          --destination 'C:\restore' --report "$env:RUNNER_TEMP\windows-snapshot-download.json"
+        if ($LASTEXITCODE -ne 0) { throw 'Windows snapshot content verification failed' }
+    - name: Enable explicit verified source migration
+      shell: powershell
+      env:
+        SNAPSHOT_SHA: ${{ inputs.source-sha }}
+      run: |
+        $previous = Join-Path $env:RUNNER_TEMP 'chromix-previous-repo'
+        Add-Content -LiteralPath $env:GITHUB_ENV -Value "CHROMIX_WINDOWS_MIGRATION_REPO=$previous"
+        Add-Content -LiteralPath $env:GITHUB_ENV -Value "CHROMIX_WINDOWS_MIGRATION_SHA=$env:SNAPSHOT_SHA"

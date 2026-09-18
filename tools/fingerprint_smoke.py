@@ -1054,11 +1054,13 @@ def canonical_scenario_locale(locale: str) -> str:
 
 def normalized_scenario_switches(expected: dict[str, str]) -> dict[str, list[str]]:
     """Model patch0036 for browser_args(), not arbitrary public/SDK launches."""
-    # AppendSwitch preserves argv entries; RemoveSwitch erases the off-mode platform.
+    # Patch0036 replaces canonical switches instead of appending duplicate argv entries.
     normalized = {key: [value] for key, value in expected.items()
                   if key.startswith("fingerprint") or key.startswith("uxr-")}
+    platform = expected.get("fingerprint-platform")
+    if platform is not None and platform not in {value["platform"] for value in PLATFORMS.values()}:
+        raise SmokeError("unsupported requested scenario platform")
     if expected.get("fingerprint") == "off":
-        normalized["fingerprint"] = ["off", "off"]
         normalized.pop("fingerprint-platform", None)
         normalized.update({"uxr-fingerprint-off": ["true"], "uxr-webgl-real": [""],
                            "uxr-disable-fingerprint-noise": [""]})
@@ -1070,7 +1072,6 @@ def normalized_scenario_switches(expected: dict[str, str]) -> dict[str, list[str
     normalized.update({"uxr-fingerprint-enabled": ["true"], "uxr-webgl-fingerprint": ["true"],
                        **{key: [seed] for key in ("uxr-fingerprint-seed", "uxr-canvas-seed", "uxr-audio-seed")},
                        "uxr-storage-quota": ["102400"]})
-    platform = expected.get("fingerprint-platform")
     native_windows = sys.platform == "win32"
     if platform == "Win32":
         if not native_windows:
@@ -1086,9 +1087,8 @@ def normalized_scenario_switches(expected: dict[str, str]) -> dict[str, list[str
             normalized.update({"uxr-ua-model": [""], "uxr-ua-wow64": ["false"], "uxr-ua-platform-version": [""]})
     if "fingerprint-locale" in expected:
         locale = expected["fingerprint-locale"]
-        # The first entry is the public alias; the second is its canonical language tag.
         canonical = canonical_scenario_locale(locale)
-        normalized["uxr-languages"] = [locale, canonical]
+        normalized["uxr-languages"] = [canonical]
         normalized["accept-lang"] = [canonical]
     return normalized
 
@@ -1107,11 +1107,22 @@ def execution_contract_errors(execution, profile, expected_args: list[str], iden
             key, _, value = arg.lstrip("-").partition("=")
             switches.setdefault(key, []).append(value)
     errors = []
-    expected_profile = str(Path(profile).resolve())
-    if switches.get("user-data-dir") != [expected_profile]:
+    expected_profile = None
+    actual_profiles = switches.get("user-data-dir", [])
+    try:
+        expected_profile = Path(profile).resolve()
+        profile_matches = (len(actual_profiles) == 1 and bool(actual_profiles[0])
+                           and Path(actual_profiles[0]).resolve() == expected_profile)
+    except (OSError, ValueError, RuntimeError):
+        profile_matches = False
+    if not profile_matches:
         errors.append("executed user-data-dir differs from the canonical profile or is duplicated")
-    if identity_profile is not None and expected_profile == str(Path(identity_profile).resolve()):
-        errors.append("media control reuses the identity profile")
+    if identity_profile is not None:
+        try:
+            if expected_profile == Path(identity_profile).resolve():
+                errors.append("media control reuses the identity profile")
+        except (OSError, ValueError, RuntimeError):
+            errors.append("cannot canonicalize the identity profile")
     if "use-fake-ui-for-media-stream" in switches:
         errors.append("fake media UI is forbidden")
     fake = switches.get("use-fake-device-for-media-stream", [])
@@ -1255,6 +1266,7 @@ def evaluate_matrix(scenarios: list[dict]) -> list:
 
 
 def verify_execution(cdp, identity: dict, sandbox: bool) -> dict:
+    failed = False
     try:
         version = cdp.send("Browser.getVersion")
         command = cdp.send("Browser.getBrowserCommandLine")["arguments"]
@@ -1267,8 +1279,15 @@ def verify_execution(cdp, identity: dict, sandbox: bool) -> dict:
             raise SmokeError("browser unexpectedly launched without the sandbox")
         return {"binary": actual, "command_line": command, "version": version,
                 "source": "CDP Browser.getBrowserCommandLine (not OS process attestation)"}
+    except BaseException:
+        failed = True
+        raise
     finally:
-        cdp.detach()
+        try:
+            cdp.detach()
+        except Exception:
+            if not failed:
+                raise
 
 
 def evaluate(target, script: str, argument, timeout_ms: int):

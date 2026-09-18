@@ -18,15 +18,39 @@ index f3c06b9e10..b5bc89bcf7 100644
 +#include "base/strings/string_util.h"
  #include "base/functional/bind.h"
  #include "base/functional/callback_helpers.h"
-@@ -196,6 +202,341 @@
+@@ -196,6 +202,370 @@
  
    base::CommandLine* command_line(base::CommandLine::ForCurrentProcess());
  
-+  // UXR: normalize --fingerprint-* switches to --uxr-* equivalents so
-+  // `chrome.exe --fingerprint-*` works directly without an SDK launcher.
-+  // Only the browser process (no --process-type) performs normalization;
-+  // child processes inherit the already-converted switches.
++  // Normalize public switches only in the browser; children inherit the result.
 +  if (!command_line->HasSwitch(switches::kProcessType)) {
++    const auto set_switch = [&](const char* key, const std::string& value) {
++      command_line->RemoveSwitch(key);
++      command_line->AppendSwitchASCII(key, value);
++    };
++    // Reject conflicting caller duplicates; repeated identical values are safe.
++    base::CommandLine::SwitchMap seen;
++    for (size_t i = 1; i < command_line->argv().size(); ++i) {
++      const auto& arg = command_line->argv()[i];
++      if (arg == FILE_PATH_LITERAL("--"))
++        break;
++      const auto parsed = base::CommandLine::FromArgvWithoutProgram({arg});
++      for (const auto& [key, value] : parsed.GetSwitches()) {
++        if (key == "fingerprint" || key.starts_with("fingerprint-") ||
++            key.starts_with("uxr-")) {
++          auto found = seen.find(key);
++          if (found != seen.end() && found->second != value) {
++            std::cerr << "Conflicting fingerprint switch: " << key << std::endl;
++            return 1;
++          }
++          seen[key] = value;
++        }
++      }
++    }
++    for (const auto& [key, value] : seen) {
++      command_line->RemoveSwitch(key);
++      command_line->AppendSwitchNative(key, value);
++    }
 +    // Canonicalize public booleans identically for direct and SDK launches.
 +    for (const char* key : {"fingerprint-noise", "fingerprint-sapi-voices",
 +                            "fingerprint-allow-3p-cookies", "fingerprint-windows-font-metrics"}) {
@@ -35,10 +59,10 @@ index f3c06b9e10..b5bc89bcf7 100644
 +      const std::string value = base::ToLowerASCII(command_line->GetSwitchValueASCII(key));
 +      if (value == "off" || value == "false" || value == "0" ||
 +          value == "disable" || value == "disabled")
-+        command_line->AppendSwitchASCII(key, "false");
++        set_switch(key, "false");
 +      else if (value.empty() || value == "true" || value == "1" ||
 +               value == "on" || value == "enable" || value == "enabled")
-+        command_line->AppendSwitchASCII(key, "true");
++        set_switch(key, "true");
 +    }
 +
 +    struct Alias { const char* fp; const char* uxr; };
@@ -89,7 +113,7 @@ index f3c06b9e10..b5bc89bcf7 100644
 +          command_line->GetSwitchValueASCII("fingerprint"));
 +      if (mode == "off" || mode == "false" || mode == "0" ||
 +          mode == "disable" || mode == "disabled") {
-+        command_line->AppendSwitchASCII("fingerprint", "off");
++        set_switch("fingerprint", "off");
 +        command_line->RemoveSwitch("fingerprint-platform");
 +      }
 +    }
@@ -98,13 +122,13 @@ index f3c06b9e10..b5bc89bcf7 100644
 +      const std::string brand = base::ToLowerASCII(
 +          command_line->GetSwitchValueASCII("uxr-ua-brand"));
 +      if (brand == "chrome" || brand == "google chrome")
-+        command_line->AppendSwitchASCII("uxr-ua-brand", "Google Chrome");
++        set_switch("uxr-ua-brand", "Google Chrome");
 +      else if (brand == "edge" || brand == "microsoft edge")
-+        command_line->AppendSwitchASCII("uxr-ua-brand", "Microsoft Edge");
++        set_switch("uxr-ua-brand", "Microsoft Edge");
 +      else if (brand == "opera")
-+        command_line->AppendSwitchASCII("uxr-ua-brand", "Opera");
++        set_switch("uxr-ua-brand", "Opera");
 +      else if (brand == "vivaldi")
-+        command_line->AppendSwitchASCII("uxr-ua-brand", "Vivaldi");
++        set_switch("uxr-ua-brand", "Vivaldi");
 +    }
 +    // Chrome's brand version is its engine version. Other brands have their
 +    // own version and must not change the Chromium token or GREASE seed.
@@ -190,8 +214,8 @@ index f3c06b9e10..b5bc89bcf7 100644
 +        }
 +      }
 +      if (!seed.empty() && seed != "off") {
-+        command_line->AppendSwitchASCII("uxr-fingerprint-enabled", "true");
-+        command_line->AppendSwitchASCII("uxr-webgl-fingerprint", "true");
++        set_switch("uxr-fingerprint-enabled", "true");
++        set_switch("uxr-webgl-fingerprint", "true");
 +        if (!command_line->HasSwitch("uxr-fingerprint-seed"))
 +          command_line->AppendSwitchASCII("uxr-fingerprint-seed", seed);
 +        if (!command_line->HasSwitch("uxr-canvas-seed"))
@@ -249,7 +273,7 @@ index f3c06b9e10..b5bc89bcf7 100644
 +    if (command_line->HasSwitch("fingerprint-noise") &&
 +        command_line->GetSwitchValueASCII("fingerprint-noise") == "false") {
 +      // Disable perturbation, not persona selection. All seeds stay intact.
-+      command_line->AppendSwitch("uxr-disable-fingerprint-noise");
++      set_switch("uxr-disable-fingerprint-noise", "");
 +    }
 +
 +    if (command_line->HasSwitch("fingerprint-sapi-voices")) {
@@ -258,7 +282,7 @@ index f3c06b9e10..b5bc89bcf7 100644
 +      if (value == "false" || value == "0" || value == "off")
 +        command_line->RemoveSwitch("uxr-voices");
 +      else
-+        command_line->AppendSwitchASCII("uxr-voices", "true");
++        set_switch("uxr-voices", "true");
 +    }
 +
 +    if (command_line->HasSwitch("fingerprint") &&
@@ -284,7 +308,7 @@ index f3c06b9e10..b5bc89bcf7 100644
 +        command_line->AppendSwitchASCII("uxr-languages", languages);
 +      // GPU identity and readback noise otherwise have enabled defaults.
 +      command_line->AppendSwitch("uxr-webgl-real");
-+      command_line->AppendSwitch("uxr-disable-fingerprint-noise");
++      set_switch("uxr-disable-fingerprint-noise", "");
 +    }
 +
 +    if (command_line->HasSwitch("uxr-languages")) {
@@ -308,8 +332,8 @@ index f3c06b9e10..b5bc89bcf7 100644
 +      }
 +      if (valid && !languages.empty()) {
 +        const std::string normalized = base::JoinString(languages, ",");
-+        command_line->AppendSwitchASCII("uxr-languages", normalized);
-+        command_line->AppendSwitchASCII(switches::kAcceptLang, normalized);
++        set_switch("uxr-languages", normalized);
++        set_switch(switches::kAcceptLang, normalized);
 +      } else {
 +        command_line->RemoveSwitch("uxr-languages");
 +      }
@@ -347,9 +371,14 @@ index f3c06b9e10..b5bc89bcf7 100644
 +      // This native switch is presence-based: appending '=false' ENABLES the
 +      // phaseout. CookieSettings consumes our explicit, non-persistent opt-in.
 +      command_line->RemoveSwitch("test-third-party-cookie-phaseout");
-+      command_line->AppendSwitchASCII("uxr-allow-3p-cookies", "true");
++      set_switch("uxr-allow-3p-cookies", "true");
 +      constexpr char kDisableFeatures[] = "disable-features";
 +      std::string disabled = command_line->GetSwitchValueASCII(kDisableFeatures);
++      auto features = base::SplitString(disabled, ",", base::TRIM_WHITESPACE,
++                                        base::SPLIT_WANT_NONEMPTY);
++      std::erase(features, "ForceThirdPartyCookieBlocking");
++      disabled = base::JoinString(features, ",");
++      command_line->RemoveSwitch(kDisableFeatures);
 +      if (!disabled.empty())
 +        disabled += ",";
 +      disabled += "ForceThirdPartyCookieBlocking";

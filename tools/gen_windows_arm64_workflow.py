@@ -40,6 +40,7 @@ def workflow():
         'tools/tests/test_windows_arm64_build.py',
         'tools/tests/test_verify_windows_bundle.py',
     ]
+    result['env'].pop('CHROMIX_WINDOWS_MIGRATION_PROFILE', None)
     result['env'].update(CHROMIX_TARGET_ARCH='arm64', CHROMIX_USE_UPSTREAM_CACHE='0',
                          CHROMIX_PREFER_UPSTREAM_CACHE='0')
     for index in range(1, 13):
@@ -53,7 +54,8 @@ def workflow():
         steps = []
         for step in job['steps']:
             if step.get('name') in ('Download tree from previous run', 'Upload upstream cache diagnostics',
-                                     'Upload restored reuse evidence'):
+                                     'Upload restored reuse evidence', 'Check explicit snapshot migration inputs',
+                                     'Restore exact source-migration snapshot'):
                 continue
             if (step.get('name') == 'Ensure build tree snapshot'
                     or step.get('name', '').startswith('Upload tree part')):
