@@ -30,11 +30,6 @@ $OutDir = "$Src\out\Chromix"
 $RestoredUpstream = $false
 # CI opt-in requires a full restore, including validation and artifact resumes.
 $RequireUpstreamCache = $UseUpstreamCache -or $UpstreamRunId -or ($env:CHROMIX_USE_UPSTREAM_CACHE -eq "1")
-if ($Arch -eq "arm64") {
-  if ($RequireUpstreamCache) { throw "Windows ARM64 cannot reuse the x64 pinned upstream cache" }
-  # Optional x64 cache preference must never turn an ARM64 cold build into a restore.
-  $env:CHROMIX_PREFER_UPSTREAM_CACHE = "0"
-}
 $PartsDir = "C:\parts"
 $UpstreamCacheDir = "C:\u"
 # Standalone validation remains available; CI validates inside the first build job.
@@ -826,7 +821,10 @@ if ($env:CHROMIX_WINDOWS_MIGRATION_REPO -or $env:CHROMIX_WINDOWS_MIGRATION_SHA) 
   Write-OutVar snapshot_safe true
 }
 
-& "$PSScriptRoot\assert-target-arch.ps1" -WorkDir $WorkDir -Arch $Arch -Initialize:($Arch -eq "arm64") `
+# Cache restores establish the marker only after receipt verification.
+$InitializeTarget = $Arch -eq "arm64" -and ((Test-Path $Src) -or
+  (-not $RequireUpstreamCache -and $env:CHROMIX_PREFER_UPSTREAM_CACHE -ne "1"))
+& "$PSScriptRoot\assert-target-arch.ps1" -WorkDir $WorkDir -Arch $Arch -Initialize:$InitializeTarget `
   -RequireMarker:($FromArtifact -and $Arch -eq "arm64")
 
 $domainProgress = Join-Path $Src ".chromix-domain-substitution-in-progress"
@@ -838,7 +836,7 @@ if (Get-ChildItem -LiteralPath $WorkDir -Directory -Filter ".chromix-upstream-re
 if (Test-Path $restoreReceipt) {
   Write-Host "==> verifying restored upstream source receipt and pins"
   & python (Join-Path $Repo "tools\restore_upstream_cache.py") --phase verify `
-    --platform windows --arch x64 --workdir $WorkDir
+    --platform windows --arch $Arch --workdir $WorkDir
   if ($LASTEXITCODE -ne 0) { throw "restored upstream source verification failed (exit $LASTEXITCODE)" }
   $RestoredUpstream = $true
   $OutDir = "$Src\out\Default"
@@ -880,7 +878,7 @@ if ($StageIndex -eq 1 -and -not $FromArtifact -and
   }
   $fetchArgs = @(
     (Join-Path $Repo "tools\fetch_upstream_cache.py"),
-    "--platform", "windows", "--arch", "x64", "--destination", $UpstreamCacheDir
+    "--platform", "windows", "--arch", $Arch, "--destination", $UpstreamCacheDir
   )
   if ($UpstreamRunId) { $fetchArgs += @("--run-id", $UpstreamRunId) }
   # Bound download/extraction by both the cap and this job's remaining deadline.
@@ -912,14 +910,17 @@ if ($StageIndex -eq 1 -and -not $FromArtifact -and
            "phase=$($fetchResult.phase); duration_seconds=$($fetchResult.duration_seconds)")
   } else {
     python (Join-Path $Repo "tools\restore_upstream_cache.py") --phase restore `
-      --platform windows --arch x64 --workdir $WorkDir --cache-dir $UpstreamCacheDir
+      --platform windows --arch $Arch --workdir $WorkDir --cache-dir $UpstreamCacheDir
     if ($LASTEXITCODE -ne 0) { throw "upstream restore helper failed (exit $LASTEXITCODE)" }
     if (-not (Test-Path -LiteralPath $restoreReceipt -PathType Leaf)) {
       throw "required upstream cache: restore receipt missing after restore; refusing cold preparation or compilation"
     }
     & python (Join-Path $Repo "tools\restore_upstream_cache.py") --phase verify `
-      --platform windows --arch x64 --workdir $WorkDir
+      --platform windows --arch $Arch --workdir $WorkDir
     if ($LASTEXITCODE -ne 0) { throw "restored upstream source verification failed (exit $LASTEXITCODE)" }
+    if ($Arch -eq "arm64") {
+      & "$PSScriptRoot\assert-target-arch.ps1" -WorkDir $WorkDir -Arch $Arch -Initialize
+    }
     $RestoredUpstream = $true
     $OutDir = "$Src\out\Default"
     Write-Host "==> restored upstream source/out/Default; appending Chromix patches before incremental Ninja"
@@ -965,6 +966,9 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $gnArgs = Join-Path $OutDir "args.gn"
 $mergeArgs = @((Join-Path $Repo "tools\merge_gn_args.py"), $gnArgs)
 if ($BuildProfile -in @("fast", "release")) { $mergeArgs += @("--build-profile", $BuildProfile) }
+if ($RestoredUpstream -and $Arch -eq "arm64") {
+  $mergeArgs += @("--preserve-pgo-from", $gnArgs)
+}
 if ($RestoredUpstream) { $mergeArgs += $gnArgs }
 $mergeArgs += @(
   (Join-Path $UngoogledTooling "flags.gn"),
@@ -981,7 +985,7 @@ if ($Arch -eq "arm64") {
 $env:PATH = "$(Join-Path $Src 'third_party\ninja');$(Join-Path $Src 'third_party\node\win');$env:PATH"
 $Ninja = Join-Path $Src "third_party\ninja\ninja.exe"
 if ($RestoredUpstream) {
-  $Ninja = & python (Join-Path $Repo "tools\restore_ninja.py") --workdir $WorkDir --platform windows --arch x64
+  $Ninja = & python (Join-Path $Repo "tools\restore_ninja.py") --workdir $WorkDir --platform windows --arch $Arch
   if ($LASTEXITCODE -ne 0 -or -not $Ninja) { throw "restored Ninja compatibility check failed" }
   $env:NINJA = $Ninja
 }
@@ -1027,7 +1031,7 @@ for relative, keys in RESTORED.items():
   }
   if ($RestoredUpstream) {
     python (Join-Path $Repo "tools\prepare_restored_build.py") --phase finish `
-      --platform windows --arch x64 --workdir $WorkDir
+      --platform windows --arch $Arch --workdir $WorkDir
     if ($LASTEXITCODE -ne 0) { throw "restored build preparation failed (exit $LASTEXITCODE)" }
   }
   $gn = Join-Path $OutDir "gn.exe"
@@ -1095,7 +1099,7 @@ if ($ninjaBudget -lt 20) {
 if ($RestoredUpstream) {
   # The collector preserves the initial baseline across artifact resumes.
   & python (Join-Path $Repo "tools\restored_reuse_evidence.py") --phase before `
-    --workdir $WorkDir --platform windows --arch x64 --ninja $Ninja --target chrome
+    --workdir $WorkDir --platform windows --arch $Arch --ninja $Ninja --target chrome
   if ($LASTEXITCODE -ne 0) { throw "restored reuse evidence collection failed before Ninja (exit $LASTEXITCODE)" }
 }
 $CompileJobs = 4
@@ -1112,7 +1116,7 @@ $rc = Invoke-Tracked -File $Ninja `
 if ($RestoredUpstream) {
   try {
     & python (Join-Path $Repo "tools\restored_reuse_evidence.py") --phase after `
-      --workdir $WorkDir --platform windows --arch x64 --ninja $Ninja --target chrome --exit-code $rc
+      --workdir $WorkDir --platform windows --arch $Arch --ninja $Ninja --target chrome --exit-code $rc
     if ($LASTEXITCODE -ne 0) { throw "restored reuse evidence collection failed after Ninja (exit $LASTEXITCODE)" }
   } catch {
     if ($rc -ne 0) { throw "ninja failed (exit $rc); $($_.Exception.Message)" }

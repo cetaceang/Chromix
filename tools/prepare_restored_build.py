@@ -18,7 +18,7 @@ import subprocess
 import sys
 
 try:
-    from .import_upstream_cache import CLANG, RUST, Miss, digest_file
+    from .import_upstream_cache import CLANG, RUST, Miss, digest_file, validate_rust_libraries
     from .macos_runtime import bindgen_environment, runtime_environment
     from .macos_sdk_identity import sdk_content_identity, validated_sdk_content
     from .platform_pins import load_pins
@@ -26,7 +26,7 @@ try:
     from .upstream_object_cache import ninja_deps, ninja_log, write_json
     from .upstream_script_identity import ENDPOINTS
 except ImportError:
-    from import_upstream_cache import CLANG, RUST, Miss, digest_file
+    from import_upstream_cache import CLANG, RUST, Miss, digest_file, validate_rust_libraries
     from macos_runtime import bindgen_environment, runtime_environment
     from macos_sdk_identity import sdk_content_identity, validated_sdk_content
     from platform_pins import load_pins
@@ -167,11 +167,12 @@ def tool_paths(platform: str, arch: str, *, host_arch: str | None = None) -> dic
 def inspect_native_tools(src: Path, platform: str, arch: str) -> dict:
     system, machine = host_identity()
     if (platform, arch) not in (("linux", "x64"), ("linux", "arm64"), ("macos", "x64"),
-                                ("macos", "arm64"), ("windows", "x64")):
+                                ("macos", "arm64"), ("windows", "x64"), ("windows", "arm64")):
         raise ValueError("unsupported restored build target")
-    if ((system, machine) != (platform, arch)
+    native_arch = "x64" if platform == "windows" else arch
+    if ((system, machine) != (platform, native_arch)
             and (platform, arch, system, machine) != ("linux", "arm64", "linux", "x64")):
-        raise ValueError(f"a native {platform} {arch} runner is required (Linux ARM64 also supports Linux x64 hosts)")
+        raise ValueError(f"a native {platform} {native_arch} runner is required (Linux ARM64 also supports Linux x64 hosts)")
     probe_env = runtime_environment(src, machine) if platform == "macos" else None
     tools = {}
     for name, relative in tool_paths(platform, arch, host_arch=machine).items():
@@ -934,6 +935,9 @@ def _prepare(workdir: Path, platform: str, arch: str, *, phase: str, repo: Path,
     data["operation"] = "inspect_native_tools"
     inspection = validate_native_tools(src, platform, arch)
     data.update(inspection)
+    if (platform, arch) == ("windows", "arm64"):
+        data["operation"] = "validate_rust_libraries"
+        data["rust_libraries"] = validate_rust_libraries(src, platform, arch)
     incompatible = (not inspection["toolchains_native"] or any(
         entry.get("wrong_host", False) for name, entry in inspection["tools"].items()
         if name not in ("node", "gn")))
@@ -941,7 +945,9 @@ def _prepare(workdir: Path, platform: str, arch: str, *, phase: str, repo: Path,
         pending.get("tools", {}).get(name, {}).get("file_identity") != entry.get("file_identity")
         for name, entry in inspection["tools"].items() if name not in ("node", "gn")))
     needs_invalidation = (incompatible or changed_since_inspect
-                          or bool(pending and pending.get("needs_invalidation")))
+                          or bool(pending and pending.get("needs_invalidation"))
+                          or bool(pending and (platform, arch) == ("windows", "arm64")
+                                  and pending.get("rust_libraries") != data["rust_libraries"]))
     data["operation"] = "generator_fingerprint"
     generators = generator_fingerprint(src, platform, arch, host_arch=inspection["host"]["arch"])
     if platform == "linux":
